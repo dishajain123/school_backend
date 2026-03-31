@@ -24,6 +24,9 @@ def create_app() -> FastAPI:
     from app.api.v1.router import api_router
     app.include_router(api_router, prefix="/api/v1")
 
+    from app.ws.chat_router import ws_router
+    app.include_router(ws_router, prefix="/api/v1")
+
     return app
 
 

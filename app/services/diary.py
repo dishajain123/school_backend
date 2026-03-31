@@ -3,89 +3,33 @@ import math
 from datetime import date, datetime, timezone
 from typing import Optional
 
-from fastapi import BackgroundTasks
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import CurrentUser
 from app.core.exceptions import ForbiddenException, ConflictException, ValidationException
-from app.repositories.homework import HomeworkRepository
-from app.repositories.notification import NotificationRepository
-from app.schemas.homework import HomeworkCreate, HomeworkResponse, HomeworkListResponse
+from app.repositories.diary import DiaryRepository
+from app.schemas.diary import DiaryCreate, DiaryResponse, DiaryListResponse
 from app.services.academic_year import get_active_year
 from app.services.assignment import _get_teacher_id, _assert_teacher_owns_class_subject
-from app.utils.enums import RoleEnum, NotificationType, NotificationPriority
+from app.utils.enums import RoleEnum
 
 
-async def _notify_homework_created(
-    db: AsyncSession,
-    school_id: uuid.UUID,
-    standard_id: uuid.UUID,
-    homework_id: uuid.UUID,
-    record_date: date,
-) -> None:
-    from app.models.student import Student
-    from app.models.parent import Parent
-
-    result = await db.execute(
-        select(Student.user_id, Student.parent_id).where(
-            and_(
-                Student.standard_id == standard_id,
-                Student.school_id == school_id,
-            )
-        )
-    )
-    rows = result.all()
-
-    user_ids_to_notify: set[uuid.UUID] = set()
-    parent_ids: set[uuid.UUID] = set()
-
-    for student_user_id, parent_id in rows:
-        if student_user_id:
-            user_ids_to_notify.add(student_user_id)
-        if parent_id:
-            parent_ids.add(parent_id)
-
-    if parent_ids:
-        parent_result = await db.execute(
-            select(Parent.user_id).where(Parent.id.in_(list(parent_ids)))
-        )
-        for (parent_user_id,) in parent_result:
-            if parent_user_id:
-                user_ids_to_notify.add(parent_user_id)
-
-    notification_repo = NotificationRepository(db)
-    for user_id in user_ids_to_notify:
-        await notification_repo.create(
-            {
-                "user_id": user_id,
-                "title": "New Homework Posted",
-                "body": f"New homework has been posted for {record_date.isoformat()}",
-                "type": NotificationType.HOMEWORK,
-                "priority": NotificationPriority.LOW,
-                "reference_id": homework_id,
-            }
-        )
-
-    await db.commit()
-
-
-class HomeworkService:
+class DiaryService:
     def __init__(self, db: AsyncSession):
         self.db = db
-        self.repo = HomeworkRepository(db)
+        self.repo = DiaryRepository(db)
 
     def _ensure_school(self, current_user: CurrentUser) -> uuid.UUID:
         if not current_user.school_id:
             raise ValidationException("school_id is required")
         return current_user.school_id
 
-    async def create_homework(
+    async def create_entry(
         self,
-        body: HomeworkCreate,
+        body: DiaryCreate,
         current_user: CurrentUser,
-        background_tasks: BackgroundTasks,
-    ) -> HomeworkResponse:
+    ) -> DiaryResponse:
         school_id = self._ensure_school(current_user)
 
         record_date = body.date or datetime.now(timezone.utc).date()
@@ -110,11 +54,12 @@ class HomeworkService:
             academic_year_id=academic_year_id,
         )
         if existing:
-            raise ConflictException("Homework already exists for this class and date")
+            raise ConflictException("Diary entry already exists for this class and date")
 
-        homework = await self.repo.create(
+        entry = await self.repo.create(
             {
-                "description": body.description,
+                "topic_covered": body.topic_covered,
+                "homework_note": body.homework_note,
                 "date": record_date,
                 "teacher_id": teacher_id,
                 "standard_id": body.standard_id,
@@ -124,20 +69,10 @@ class HomeworkService:
             }
         )
         await self.db.commit()
-        await self.db.refresh(homework)
+        await self.db.refresh(entry)
+        return DiaryResponse.model_validate(entry)
 
-        background_tasks.add_task(
-            _notify_homework_created,
-            self.db,
-            school_id,
-            body.standard_id,
-            homework.id,
-            record_date,
-        )
-
-        return HomeworkResponse.model_validate(homework)
-
-    async def list_homework(
+    async def list_entries(
         self,
         current_user: CurrentUser,
         record_date: Optional[date],
@@ -146,7 +81,7 @@ class HomeworkService:
         academic_year_id: Optional[uuid.UUID],
         page: int,
         page_size: int,
-    ) -> HomeworkListResponse:
+    ) -> DiaryListResponse:
         school_id = self._ensure_school(current_user)
 
         resolved_date = record_date or datetime.now(timezone.utc).date()
@@ -178,7 +113,7 @@ class HomeworkService:
             if not own_standard_id:
                 raise ForbiddenException("Student profile not found or class not assigned")
             if standard_id and standard_id != own_standard_id:
-                raise ForbiddenException("You can only view homework for your own class")
+                raise ForbiddenException("You can only view diary for your own class")
             standard_ids_filter = [own_standard_id]
             resolved_standard_id = None
 
@@ -222,8 +157,8 @@ class HomeworkService:
             page_size=page_size,
         )
 
-        return HomeworkListResponse(
-            items=[HomeworkResponse.model_validate(h) for h in items],
+        return DiaryListResponse(
+            items=[DiaryResponse.model_validate(d) for d in items],
             total=total,
             page=page,
             page_size=page_size,

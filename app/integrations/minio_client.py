@@ -95,3 +95,38 @@ def file_exists(bucket: str, key: str) -> bool:
         return True
     except S3Error:
         return False
+
+
+class _MinioClientFacade:
+    def get_minio_client(self) -> Minio:
+        return get_minio_client()
+
+    async def ensure_buckets_exist(self) -> None:
+        await ensure_buckets_exist()
+
+    def upload_file(
+        self,
+        bucket: str,
+        key: str,
+        file_bytes: bytes,
+        content_type: str = "application/octet-stream",
+    ) -> str:
+        return upload_file(bucket=bucket, key=key, file_bytes=file_bytes, content_type=content_type)
+
+    def generate_presigned_url(
+        self,
+        bucket: str,
+        key: str,
+        expiry: int = PRESIGNED_URL_EXPIRY,
+    ) -> str:
+        return generate_presigned_url(bucket=bucket, key=key, expiry=expiry)
+
+    def delete_file(self, bucket: str, key: str) -> None:
+        delete_file(bucket=bucket, key=key)
+
+    def file_exists(self, bucket: str, key: str) -> bool:
+        return file_exists(bucket=bucket, key=key)
+
+
+# Backward-compatible facade used by services
+minio_client = _MinioClientFacade()

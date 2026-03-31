@@ -5,25 +5,27 @@ from typing import Optional
 from pydantic import BaseModel, field_validator
 
 
-class HomeworkCreate(BaseModel):
+class DiaryCreate(BaseModel):
     standard_id: uuid.UUID
     subject_id: uuid.UUID
-    description: str
+    topic_covered: str
+    homework_note: Optional[str] = None
     date: Optional[date] = None
     academic_year_id: Optional[uuid.UUID] = None
 
-    @field_validator("description")
+    @field_validator("topic_covered")
     @classmethod
-    def description_not_empty(cls, v: str) -> str:
+    def topic_not_empty(cls, v: str) -> str:
         v = v.strip()
         if not v:
-            raise ValueError("Description cannot be empty")
+            raise ValueError("Topic covered cannot be empty")
         return v
 
 
-class HomeworkResponse(BaseModel):
+class DiaryResponse(BaseModel):
     id: uuid.UUID
-    description: str
+    topic_covered: str
+    homework_note: Optional[str] = None
     date: date
     teacher_id: uuid.UUID
     standard_id: uuid.UUID
@@ -36,8 +38,8 @@ class HomeworkResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class HomeworkListResponse(BaseModel):
-    items: list[HomeworkResponse]
+class DiaryListResponse(BaseModel):
+    items: list[DiaryResponse]
     total: int
     page: int
     page_size: int
