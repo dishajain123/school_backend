@@ -23,68 +23,69 @@ ANNOUNCEMENT_BUCKET = "documents"
 
 
 async def _notify_announcement(
-    db: AsyncSession,
     school_id: uuid.UUID,
     announcement_id: uuid.UUID,
     title: str,
     target_role: Optional[RoleEnum],
     target_standard_id: Optional[uuid.UUID],
 ) -> None:
+    """Opens its own DB session — never reuses the request session."""
+    from app.db.session import AsyncSessionLocal
     from app.models.user import User
     from app.models.student import Student
     from app.models.parent import Parent
 
-    user_ids: set[uuid.UUID] = set()
+    async with AsyncSessionLocal() as db:
+        user_ids: set[uuid.UUID] = set()
 
-    if target_role in (RoleEnum.STUDENT, RoleEnum.PARENT) and target_standard_id:
-        result = await db.execute(
-            select(Student.user_id, Student.parent_id).where(
-                and_(
-                    Student.school_id == school_id,
-                    Student.standard_id == target_standard_id,
+        if target_role in (RoleEnum.STUDENT, RoleEnum.PARENT) and target_standard_id:
+            result = await db.execute(
+                select(Student.user_id, Student.parent_id).where(
+                    and_(
+                        Student.school_id == school_id,
+                        Student.standard_id == target_standard_id,
+                    )
                 )
             )
-        )
-        rows = result.all()
-        parent_ids: set[uuid.UUID] = set()
-        for student_user_id, parent_id in rows:
-            if target_role == RoleEnum.STUDENT and student_user_id:
-                user_ids.add(student_user_id)
-            if target_role == RoleEnum.PARENT and parent_id:
-                parent_ids.add(parent_id)
+            rows = result.all()
+            parent_ids: set[uuid.UUID] = set()
+            for student_user_id, parent_id in rows:
+                if target_role == RoleEnum.STUDENT and student_user_id:
+                    user_ids.add(student_user_id)
+                if target_role == RoleEnum.PARENT and parent_id:
+                    parent_ids.add(parent_id)
 
-        if target_role == RoleEnum.PARENT and parent_ids:
-            parent_result = await db.execute(
-                select(Parent.user_id).where(Parent.id.in_(list(parent_ids)))
+            if target_role == RoleEnum.PARENT and parent_ids:
+                parent_result = await db.execute(
+                    select(Parent.user_id).where(Parent.id.in_(list(parent_ids)))
+                )
+                for (parent_user_id,) in parent_result:
+                    if parent_user_id:
+                        user_ids.add(parent_user_id)
+
+        else:
+            stmt = select(User.id).where(User.school_id == school_id)
+            if target_role:
+                stmt = stmt.where(User.role == target_role)
+            result = await db.execute(stmt)
+            user_ids.update([row[0] for row in result.all()])
+
+        if not user_ids:
+            return
+
+        notification_repo = NotificationRepository(db)
+        for user_id in user_ids:
+            await notification_repo.create(
+                {
+                    "user_id": user_id,
+                    "title": "Announcement",
+                    "body": title,
+                    "type": NotificationType.ANNOUNCEMENT,
+                    "priority": NotificationPriority.MEDIUM,
+                    "reference_id": announcement_id,
+                }
             )
-            for (parent_user_id,) in parent_result:
-                if parent_user_id:
-                    user_ids.add(parent_user_id)
-
-    else:
-        # General announcement or role-targeted without standard
-        stmt = select(User.id).where(User.school_id == school_id)
-        if target_role:
-            stmt = stmt.where(User.role == target_role)
-        result = await db.execute(stmt)
-        user_ids.update([row[0] for row in result.all()])
-
-    if not user_ids:
-        return
-
-    notification_repo = NotificationRepository(db)
-    for user_id in user_ids:
-        await notification_repo.create(
-            {
-                "user_id": user_id,
-                "title": "Announcement",
-                "body": title,
-                "type": NotificationType.ANNOUNCEMENT,
-                "priority": NotificationPriority.MEDIUM,
-                "reference_id": announcement_id,
-            }
-        )
-    await db.commit()
+        await db.commit()
 
 
 class AnnouncementService:
@@ -113,10 +114,6 @@ class AnnouncementService:
     ) -> AnnouncementResponse:
         school_id = self._ensure_school(current_user)
 
-        if body.target_standard_id and not body.target_role:
-            # standard-specific without a role is allowed (all roles in that standard)
-            pass
-
         announcement = await self.repo.create(
             {
                 "title": body.title,
@@ -136,7 +133,6 @@ class AnnouncementService:
 
         background_tasks.add_task(
             _notify_announcement,
-            self.db,
             school_id,
             announcement.id,
             announcement.title,

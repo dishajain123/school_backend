@@ -24,50 +24,61 @@ DOCUMENTS_BUCKET = "documents"
 
 
 async def _generate_document(
-    db: AsyncSession,
     doc_id: uuid.UUID,
     school_id: uuid.UUID,
     document_type: DocumentType,
     student_id: uuid.UUID,
     academic_year_id: uuid.UUID,
 ) -> None:
-    repo = DocumentRepository(db)
-    doc = await repo.get_by_id(doc_id, school_id)
-    if not doc:
-        return
-
-    await repo.update(doc, {"status": DocumentStatus.PROCESSING})
-    await db.commit()
-
-    html = f"""
-    <html><body>
-    <h2>{document_type.replace('_', ' ').title()}</h2>
-    <p>Student ID: {student_id}</p>
-    <p>Academic Year ID: {academic_year_id}</p>
-    <p>Generated at: {datetime.now(timezone.utc).isoformat()}</p>
-    </body></html>
     """
-    try:
-        pdf_bytes = pdf_service.generate_pdf(html)
-        file_key = f"{school_id}/{student_id}/{uuid.uuid4()}_{document_type}.pdf"
-        minio_client.upload_file(
-            bucket=DOCUMENTS_BUCKET,
-            key=file_key,
-            file_bytes=pdf_bytes,
-            content_type="application/pdf",
-        )
-        await repo.update(
-            doc,
-            {
-                "file_key": file_key,
-                "status": DocumentStatus.READY,
-                "generated_at": datetime.now(timezone.utc),
-            },
-        )
+    Background task: opens its own DB session.
+    Never reuses the request-scoped session.
+    """
+    from app.db.session import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as db:
+        repo = DocumentRepository(db)
+        doc = await repo.get_by_id(doc_id, school_id)
+        if not doc:
+            return
+
+        await repo.update(doc, {"status": DocumentStatus.PROCESSING})
         await db.commit()
-    except Exception:
-        await repo.update(doc, {"status": DocumentStatus.FAILED})
-        await db.commit()
+
+        html = f"""
+        <html><body>
+        <h2>{document_type.replace('_', ' ').title()}</h2>
+        <p>Student ID: {student_id}</p>
+        <p>Academic Year ID: {academic_year_id}</p>
+        <p>Generated at: {datetime.now(timezone.utc).isoformat()}</p>
+        </body></html>
+        """
+        try:
+            pdf_bytes = pdf_service.generate_pdf(html)
+            file_key = f"{school_id}/{student_id}/{uuid.uuid4()}_{document_type}.pdf"
+            minio_client.upload_file(
+                bucket=DOCUMENTS_BUCKET,
+                key=file_key,
+                file_bytes=pdf_bytes,
+                content_type="application/pdf",
+            )
+            # Re-fetch doc after commit to avoid stale state
+            doc = await repo.get_by_id(doc_id, school_id)
+            if doc:
+                await repo.update(
+                    doc,
+                    {
+                        "file_key": file_key,
+                        "status": DocumentStatus.READY,
+                        "generated_at": datetime.now(timezone.utc),
+                    },
+                )
+                await db.commit()
+        except Exception:
+            doc = await repo.get_by_id(doc_id, school_id)
+            if doc:
+                await repo.update(doc, {"status": DocumentStatus.FAILED})
+                await db.commit()
 
 
 class DocumentService:
@@ -135,7 +146,6 @@ class DocumentService:
 
         background_tasks.add_task(
             _generate_document,
-            self.db,
             doc.id,
             school_id,
             body.document_type,

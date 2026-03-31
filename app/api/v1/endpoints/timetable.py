@@ -17,6 +17,7 @@ router = APIRouter(prefix="/timetable", tags=["Timetable"])
 async def upload_timetable(
     standard_id: uuid.UUID = Form(...),
     academic_year_id: Optional[uuid.UUID] = Form(None),
+    section: Optional[str] = Form(None, description="Section (e.g. A, B). Leave blank for all sections."),
     file: UploadFile = File(..., description="Timetable file (PDF or image)"),
     current_user: CurrentUser = Depends(require_roles(RoleEnum.PRINCIPAL)),
     db: AsyncSession = Depends(get_db),
@@ -30,6 +31,7 @@ async def upload_timetable(
         academic_year_id=academic_year_id,
         current_user=current_user,
         file=file,
+        section=section,
     )
 
 
@@ -37,6 +39,7 @@ async def upload_timetable(
 async def get_timetable(
     standard_id: uuid.UUID,
     academic_year_id: Optional[uuid.UUID] = Query(None),
+    section: Optional[str] = Query(None, description="Section filter"),
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -48,4 +51,5 @@ async def get_timetable(
         standard_id=standard_id,
         academic_year_id=academic_year_id,
         current_user=current_user,
+        section=section,
     )

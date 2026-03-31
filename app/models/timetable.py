@@ -1,7 +1,8 @@
 import uuid
-from typing import TYPE_CHECKING
+from datetime import date
+from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import String, ForeignKey, UniqueConstraint
+from sqlalchemy import String, Date, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -20,8 +21,9 @@ class Timetable(BaseModel):
         UniqueConstraint(
             "school_id",
             "standard_id",
+            "section",
             "academic_year_id",
-            name="uq_timetable_standard_year_school",
+            name="uq_timetable_standard_section_year_school",
         ),
     )
 
@@ -31,6 +33,7 @@ class Timetable(BaseModel):
         nullable=False,
         index=True,
     )
+    section: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
     academic_year_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("academic_years.id", ondelete="CASCADE"),
@@ -38,6 +41,8 @@ class Timetable(BaseModel):
         index=True,
     )
     file_key: Mapped[str] = mapped_column(String(500), nullable=False)
+    effective_from: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    effective_to: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     uploaded_by: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),

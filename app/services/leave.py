@@ -27,32 +27,34 @@ async def _notify_principal(
     leave_id: uuid.UUID,
     title: str,
     body: str,
-    db: AsyncSession,
 ) -> None:
+    """Opens its own DB session — never reuses the request session."""
+    from app.db.session import AsyncSessionLocal
     from app.models.user import User
 
-    result = await db.execute(
-        select(User.id).where(
-            and_(
-                User.school_id == school_id,
-                User.role == RoleEnum.PRINCIPAL,
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(User.id).where(
+                and_(
+                    User.school_id == school_id,
+                    User.role == RoleEnum.PRINCIPAL,
+                )
             )
         )
-    )
-    user_ids = [row[0] for row in result.all()]
-    repo = NotificationRepository(db)
-    for user_id in user_ids:
-        await repo.create(
-            {
-                "user_id": user_id,
-                "title": title,
-                "body": body,
-                "type": NotificationType.LEAVE,
-                "priority": NotificationPriority.MEDIUM,
-                "reference_id": leave_id,
-            }
-        )
-    await db.commit()
+        user_ids = [row[0] for row in result.all()]
+        repo = NotificationRepository(db)
+        for user_id in user_ids:
+            await repo.create(
+                {
+                    "user_id": user_id,
+                    "title": title,
+                    "body": body,
+                    "type": NotificationType.LEAVE,
+                    "priority": NotificationPriority.MEDIUM,
+                    "reference_id": leave_id,
+                }
+            )
+        await db.commit()
 
 
 async def _notify_teacher(
@@ -60,33 +62,35 @@ async def _notify_teacher(
     teacher_id: uuid.UUID,
     title: str,
     body: str,
-    db: AsyncSession,
 ) -> None:
+    """Opens its own DB session — never reuses the request session."""
+    from app.db.session import AsyncSessionLocal
     from app.models.teacher import Teacher
 
-    result = await db.execute(
-        select(Teacher.user_id).where(
-            and_(
-                Teacher.id == teacher_id,
-                Teacher.school_id == school_id,
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(Teacher.user_id).where(
+                and_(
+                    Teacher.id == teacher_id,
+                    Teacher.school_id == school_id,
+                )
             )
         )
-    )
-    user_id = result.scalar_one_or_none()
-    if not user_id:
-        return
-    repo = NotificationRepository(db)
-    await repo.create(
-        {
-            "user_id": user_id,
-            "title": title,
-            "body": body,
-            "type": NotificationType.LEAVE,
-            "priority": NotificationPriority.MEDIUM,
-            "reference_id": teacher_id,
-        }
-    )
-    await db.commit()
+        user_id = result.scalar_one_or_none()
+        if not user_id:
+            return
+        repo = NotificationRepository(db)
+        await repo.create(
+            {
+                "user_id": user_id,
+                "title": title,
+                "body": body,
+                "type": NotificationType.LEAVE,
+                "priority": NotificationPriority.MEDIUM,
+                "reference_id": teacher_id,
+            }
+        )
+        await db.commit()
 
 
 class LeaveService:
@@ -145,14 +149,12 @@ class LeaveService:
         await self.db.commit()
         await self.db.refresh(leave)
 
-        # Notify principal(s)
         background_tasks.add_task(
             _notify_principal,
             school_id,
             leave.id,
             "New Leave Request",
             f"Leave request from teacher {teacher_id}",
-            self.db,
         )
 
         return LeaveResponse.model_validate(leave)
@@ -200,12 +202,12 @@ class LeaveService:
         await self.db.commit()
         await self.db.refresh(updated)
 
+        # Notify teacher synchronously (small payload, no background task needed)
         await _notify_teacher(
             school_id,
             updated.teacher_id,
             "Leave Decision",
             f"Your leave request is {updated.status.value}",
-            self.db,
         )
 
         return LeaveResponse.model_validate(updated)

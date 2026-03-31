@@ -44,7 +44,7 @@ class FeeLedgerResponse(BaseModel):
     fee_structure_id: uuid.UUID
     total_amount: float
     paid_amount: float
-    outstanding_amount: float
+    outstanding_amount: float = 0.0  # computed field — not in DB, set by service
     status: FeeStatus
     school_id: uuid.UUID
     created_at: datetime

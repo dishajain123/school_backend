@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 
 from pydantic import BaseModel
@@ -8,9 +8,12 @@ from pydantic import BaseModel
 class TimetableUploadResponse(BaseModel):
     id: uuid.UUID
     standard_id: uuid.UUID
+    section: Optional[str] = None
     academic_year_id: uuid.UUID
     file_key: str
-    file_url: str
+    file_url: Optional[str] = None
+    effective_from: Optional[date] = None
+    effective_to: Optional[date] = None
     uploaded_by: Optional[uuid.UUID] = None
     school_id: uuid.UUID
     created_at: datetime
@@ -22,9 +25,12 @@ class TimetableUploadResponse(BaseModel):
 class TimetableResponse(BaseModel):
     id: uuid.UUID
     standard_id: uuid.UUID
+    section: Optional[str] = None
     academic_year_id: uuid.UUID
     file_key: str
-    file_url: str
+    file_url: Optional[str] = None
+    effective_from: Optional[date] = None
+    effective_to: Optional[date] = None
     uploaded_by: Optional[uuid.UUID] = None
     school_id: uuid.UUID
     created_at: datetime

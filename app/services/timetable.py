@@ -33,6 +33,7 @@ class TimetableService:
         academic_year_id: Optional[uuid.UUID],
         current_user: CurrentUser,
         file: UploadFile,
+        section: Optional[str] = None,
     ) -> TimetableUploadResponse:
         school_id = self._ensure_school(current_user)
 
@@ -67,6 +68,7 @@ class TimetableService:
             school_id=school_id,
             standard_id=standard_id,
             academic_year_id=resolved_year_id,
+            section=section,
         )
         if existing:
             updated = await self.repo.update(
@@ -80,6 +82,7 @@ class TimetableService:
             created = await self.repo.create(
                 {
                     "standard_id": standard_id,
+                    "section": section,
                     "academic_year_id": resolved_year_id,
                     "file_key": file_key,
                     "uploaded_by": current_user.id,
@@ -100,6 +103,7 @@ class TimetableService:
         standard_id: uuid.UUID,
         academic_year_id: Optional[uuid.UUID],
         current_user: CurrentUser,
+        section: Optional[str] = None,
     ) -> TimetableResponse:
         school_id = self._ensure_school(current_user)
 
@@ -139,6 +143,7 @@ class TimetableService:
             school_id=school_id,
             standard_id=standard_id,
             academic_year_id=resolved_year_id,
+            section=section,
         )
         if not timetable:
             raise NotFoundException("Timetable")

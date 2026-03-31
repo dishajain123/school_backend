@@ -18,56 +18,58 @@ from app.utils.enums import RoleEnum, NotificationType, NotificationPriority
 
 
 async def _notify_homework_created(
-    db: AsyncSession,
     school_id: uuid.UUID,
     standard_id: uuid.UUID,
     homework_id: uuid.UUID,
     record_date: date,
 ) -> None:
+    """Opens its own DB session — never reuses the request session."""
+    from app.db.session import AsyncSessionLocal
     from app.models.student import Student
     from app.models.parent import Parent
 
-    result = await db.execute(
-        select(Student.user_id, Student.parent_id).where(
-            and_(
-                Student.standard_id == standard_id,
-                Student.school_id == school_id,
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(Student.user_id, Student.parent_id).where(
+                and_(
+                    Student.standard_id == standard_id,
+                    Student.school_id == school_id,
+                )
             )
         )
-    )
-    rows = result.all()
+        rows = result.all()
 
-    user_ids_to_notify: set[uuid.UUID] = set()
-    parent_ids: set[uuid.UUID] = set()
+        user_ids_to_notify: set[uuid.UUID] = set()
+        parent_ids: set[uuid.UUID] = set()
 
-    for student_user_id, parent_id in rows:
-        if student_user_id:
-            user_ids_to_notify.add(student_user_id)
-        if parent_id:
-            parent_ids.add(parent_id)
+        for student_user_id, parent_id in rows:
+            if student_user_id:
+                user_ids_to_notify.add(student_user_id)
+            if parent_id:
+                parent_ids.add(parent_id)
 
-    if parent_ids:
-        parent_result = await db.execute(
-            select(Parent.user_id).where(Parent.id.in_(list(parent_ids)))
-        )
-        for (parent_user_id,) in parent_result:
-            if parent_user_id:
-                user_ids_to_notify.add(parent_user_id)
+        if parent_ids:
+            parent_result = await db.execute(
+                select(Parent.user_id).where(Parent.id.in_(list(parent_ids)))
+            )
+            for (parent_user_id,) in parent_result:
+                if parent_user_id:
+                    user_ids_to_notify.add(parent_user_id)
 
-    notification_repo = NotificationRepository(db)
-    for user_id in user_ids_to_notify:
-        await notification_repo.create(
-            {
-                "user_id": user_id,
-                "title": "New Homework Posted",
-                "body": f"New homework has been posted for {record_date.isoformat()}",
-                "type": NotificationType.HOMEWORK,
-                "priority": NotificationPriority.LOW,
-                "reference_id": homework_id,
-            }
-        )
+        notification_repo = NotificationRepository(db)
+        for user_id in user_ids_to_notify:
+            await notification_repo.create(
+                {
+                    "user_id": user_id,
+                    "title": "New Homework Posted",
+                    "body": f"New homework has been posted for {record_date.isoformat()}",
+                    "type": NotificationType.HOMEWORK,
+                    "priority": NotificationPriority.LOW,
+                    "reference_id": homework_id,
+                }
+            )
 
-    await db.commit()
+        await db.commit()
 
 
 class HomeworkService:
@@ -128,7 +130,6 @@ class HomeworkService:
 
         background_tasks.add_task(
             _notify_homework_created,
-            self.db,
             school_id,
             body.standard_id,
             homework.id,

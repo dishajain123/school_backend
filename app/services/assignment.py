@@ -69,7 +69,6 @@ async def _assert_teacher_owns_class_subject(
 # ── Background task ───────────────────────────────────────────────────────────
 
 async def _notify_assignment_created(
-    db: AsyncSession,
     school_id: uuid.UUID,
     standard_id: uuid.UUID,
     assignment_id: uuid.UUID,
@@ -77,54 +76,54 @@ async def _notify_assignment_created(
 ) -> None:
     """
     Runs as a BackgroundTask after assignment creation.
-    Notifies all students in the standard and their parents.
+    Opens its own DB session — never reuses the request session.
     """
+    from app.db.session import AsyncSessionLocal
     from app.models.student import Student
     from app.models.parent import Parent
 
-    # Collect student user_ids and parent_ids in the standard
-    result = await db.execute(
-        select(Student.user_id, Student.parent_id).where(
-            and_(
-                Student.standard_id == standard_id,
-                Student.school_id == school_id,
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(Student.user_id, Student.parent_id).where(
+                and_(
+                    Student.standard_id == standard_id,
+                    Student.school_id == school_id,
+                )
             )
         )
-    )
-    rows = result.all()
+        rows = result.all()
 
-    user_ids_to_notify: set[uuid.UUID] = set()
-    parent_ids: set[uuid.UUID] = set()
+        user_ids_to_notify: set[uuid.UUID] = set()
+        parent_ids: set[uuid.UUID] = set()
 
-    for student_user_id, parent_id in rows:
-        if student_user_id:
-            user_ids_to_notify.add(student_user_id)
-        if parent_id:
-            parent_ids.add(parent_id)
+        for student_user_id, parent_id in rows:
+            if student_user_id:
+                user_ids_to_notify.add(student_user_id)
+            if parent_id:
+                parent_ids.add(parent_id)
 
-    # Resolve parent user_ids (parent login is always mandatory)
-    if parent_ids:
-        parent_result = await db.execute(
-            select(Parent.user_id).where(Parent.id.in_(list(parent_ids)))
-        )
-        for (parent_user_id,) in parent_result:
-            if parent_user_id:
-                user_ids_to_notify.add(parent_user_id)
+        if parent_ids:
+            parent_result = await db.execute(
+                select(Parent.user_id).where(Parent.id.in_(list(parent_ids)))
+            )
+            for (parent_user_id,) in parent_result:
+                if parent_user_id:
+                    user_ids_to_notify.add(parent_user_id)
 
-    notification_repo = NotificationRepository(db)
-    for user_id in user_ids_to_notify:
-        await notification_repo.create(
-            {
-                "user_id": user_id,
-                "title": "New Assignment Posted",
-                "body": f"A new assignment '{assignment_title}' has been posted for your class.",
-                "type": NotificationType.ASSIGNMENT,
-                "priority": NotificationPriority.MEDIUM,
-                "reference_id": assignment_id,
-            }
-        )
+        notification_repo = NotificationRepository(db)
+        for user_id in user_ids_to_notify:
+            await notification_repo.create(
+                {
+                    "user_id": user_id,
+                    "title": "New Assignment Posted",
+                    "body": f"A new assignment '{assignment_title}' has been posted for your class.",
+                    "type": NotificationType.ASSIGNMENT,
+                    "priority": NotificationPriority.MEDIUM,
+                    "reference_id": assignment_id,
+                }
+            )
 
-    await db.commit()
+        await db.commit()
 
 
 # ── Service ───────────────────────────────────────────────────────────────────
@@ -196,7 +195,6 @@ class AssignmentService:
 
         background_tasks.add_task(
             _notify_assignment_created,
-            self.db,
             current_user.school_id,
             body.standard_id,
             assignment.id,
@@ -223,13 +221,11 @@ class AssignmentService:
         resolved_standard_id: Optional[uuid.UUID] = standard_id
 
         if current_user.role == RoleEnum.TEACHER:
-            # Scope to this teacher's own assignments only
             teacher_id_filter = await _get_teacher_id(
                 self.db, current_user.id, current_user.school_id
             )
 
         elif current_user.role == RoleEnum.STUDENT:
-            # Resolve student's own standard; reject mismatched filter
             result = await self.db.execute(
                 select(Student.standard_id).where(
                     Student.user_id == current_user.id
@@ -241,7 +237,6 @@ class AssignmentService:
             resolved_standard_id = own_standard_id or standard_id
 
         elif current_user.role == RoleEnum.PARENT:
-            # Verify the requested standard has a child belonging to this parent
             if standard_id:
                 result = await self.db.execute(
                     select(Student.id).where(
@@ -326,7 +321,6 @@ class AssignmentService:
         if not assignment:
             raise NotFoundException("Assignment not found")
 
-        # Only the teacher who created it may update it
         teacher_id = await _get_teacher_id(
             self.db, current_user.id, current_user.school_id
         )

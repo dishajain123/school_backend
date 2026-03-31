@@ -113,6 +113,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "behaviour_log:read",
     ],
 
+    # STUDENT: no result:create — students do not enter exam marks
     RoleEnum.STUDENT.value: [
         "attendance:read",
         "assignment:read",
@@ -121,7 +122,6 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "diary:read",
         "exam_schedule:read",
         "fee:read",
-        "result:create",
         "gallery:read",
         "chat:message",
         "document:generate",

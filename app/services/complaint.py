@@ -24,22 +24,25 @@ COMPLAINTS_BUCKET = "documents"
 
 
 async def _notify_complaint_resolved(
-    db: AsyncSession,
     user_id: uuid.UUID,
     complaint_id: uuid.UUID,
 ) -> None:
-    repo = NotificationRepository(db)
-    await repo.create(
-        {
-            "user_id": user_id,
-            "title": "Complaint अपडेट",
-            "body": "Your complaint status has been updated.",
-            "type": NotificationType.COMPLAINT,
-            "priority": NotificationPriority.MEDIUM,
-            "reference_id": complaint_id,
-        }
-    )
-    await db.commit()
+    """Opens its own DB session — never reuses the request session."""
+    from app.db.session import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as db:
+        repo = NotificationRepository(db)
+        await repo.create(
+            {
+                "user_id": user_id,
+                "title": "Complaint Update",
+                "body": "Your complaint status has been updated.",
+                "type": NotificationType.COMPLAINT,
+                "priority": NotificationPriority.MEDIUM,
+                "reference_id": complaint_id,
+            }
+        )
+        await db.commit()
 
 
 class ComplaintService:
@@ -121,7 +124,6 @@ class ComplaintService:
         if not complaint:
             raise NotFoundException("Complaint")
 
-        # Enforce status transitions
         transitions = {
             ComplaintStatus.OPEN: ComplaintStatus.IN_PROGRESS,
             ComplaintStatus.IN_PROGRESS: ComplaintStatus.RESOLVED,
@@ -144,7 +146,6 @@ class ComplaintService:
         if updated.submitted_by:
             background_tasks.add_task(
                 _notify_complaint_resolved,
-                self.db,
                 updated.submitted_by,
                 updated.id,
             )

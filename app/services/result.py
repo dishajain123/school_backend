@@ -28,56 +28,58 @@ DOCUMENTS_BUCKET = "documents"
 
 
 async def _notify_results_published(
-    db: AsyncSession,
     school_id: uuid.UUID,
     standard_id: uuid.UUID,
     exam_id: uuid.UUID,
     exam_name: str,
 ) -> None:
+    """Opens its own DB session — never reuses the request session."""
+    from app.db.session import AsyncSessionLocal
     from app.models.student import Student
     from app.models.parent import Parent
 
-    result = await db.execute(
-        select(Student.user_id, Student.parent_id).where(
-            and_(
-                Student.standard_id == standard_id,
-                Student.school_id == school_id,
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(Student.user_id, Student.parent_id).where(
+                and_(
+                    Student.standard_id == standard_id,
+                    Student.school_id == school_id,
+                )
             )
         )
-    )
-    rows = result.all()
+        rows = result.all()
 
-    user_ids_to_notify: set[uuid.UUID] = set()
-    parent_ids: set[uuid.UUID] = set()
+        user_ids_to_notify: set[uuid.UUID] = set()
+        parent_ids: set[uuid.UUID] = set()
 
-    for student_user_id, parent_id in rows:
-        if student_user_id:
-            user_ids_to_notify.add(student_user_id)
-        if parent_id:
-            parent_ids.add(parent_id)
+        for student_user_id, parent_id in rows:
+            if student_user_id:
+                user_ids_to_notify.add(student_user_id)
+            if parent_id:
+                parent_ids.add(parent_id)
 
-    if parent_ids:
-        parent_result = await db.execute(
-            select(Parent.user_id).where(Parent.id.in_(list(parent_ids)))
-        )
-        for (parent_user_id,) in parent_result:
-            if parent_user_id:
-                user_ids_to_notify.add(parent_user_id)
+        if parent_ids:
+            parent_result = await db.execute(
+                select(Parent.user_id).where(Parent.id.in_(list(parent_ids)))
+            )
+            for (parent_user_id,) in parent_result:
+                if parent_user_id:
+                    user_ids_to_notify.add(parent_user_id)
 
-    notification_repo = NotificationRepository(db)
-    for user_id in user_ids_to_notify:
-        await notification_repo.create(
-            {
-                "user_id": user_id,
-                "title": "Results Published",
-                "body": f"Results for '{exam_name}' have been published.",
-                "type": NotificationType.RESULT,
-                "priority": NotificationPriority.MEDIUM,
-                "reference_id": exam_id,
-            }
-        )
+        notification_repo = NotificationRepository(db)
+        for user_id in user_ids_to_notify:
+            await notification_repo.create(
+                {
+                    "user_id": user_id,
+                    "title": "Results Published",
+                    "body": f"Results for '{exam_name}' have been published.",
+                    "type": NotificationType.RESULT,
+                    "priority": NotificationPriority.MEDIUM,
+                    "reference_id": exam_id,
+                }
+            )
 
-    await db.commit()
+        await db.commit()
 
 
 class ResultService:
@@ -146,7 +148,6 @@ class ResultService:
         from app.models.masters import GradeMaster
 
         for entry in body.entries:
-            # Scope: teacher must own class+subject for this exam
             await _assert_teacher_owns_class_subject(
                 self.db,
                 teacher_id=teacher_id,
@@ -226,7 +227,6 @@ class ResultService:
 
         background_tasks.add_task(
             _notify_results_published,
-            self.db,
             school_id,
             exam.standard_id,
             exam.id,
@@ -335,7 +335,6 @@ class ResultService:
         if not exam:
             raise NotFoundException("Exam")
 
-        # Render a very simple HTML report
         rows = "".join(
             f"<tr><td>{r.subject_id}</td><td>{r.marks_obtained}</td><td>{r.max_marks}</td>"
             f"<td>{r.percentage}</td></tr>"

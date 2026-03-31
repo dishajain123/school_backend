@@ -31,16 +31,21 @@ class TimetableRepository:
         school_id: uuid.UUID,
         standard_id: uuid.UUID,
         academic_year_id: uuid.UUID,
+        section: Optional[str] = None,
     ) -> Optional[Timetable]:
+        conditions = [
+            Timetable.school_id == school_id,
+            Timetable.standard_id == standard_id,
+            Timetable.academic_year_id == academic_year_id,
+        ]
+        if section is not None:
+            conditions.append(Timetable.section == section)
+        else:
+            conditions.append(Timetable.section.is_(None))
+
         result = await self.db.execute(
             _with_relations(
-                select(Timetable).where(
-                    and_(
-                        Timetable.school_id == school_id,
-                        Timetable.standard_id == standard_id,
-                        Timetable.academic_year_id == academic_year_id,
-                    )
-                )
+                select(Timetable).where(and_(*conditions))
             )
         )
         return result.scalar_one_or_none()
