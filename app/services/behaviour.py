@@ -56,46 +56,53 @@ async def _assert_teacher_owns_student_class(
         raise ForbiddenException("You are not assigned to this student's class")
 
 
+# FIX: _notify_parent must open its own DB session.
+# The previous version accepted `db: AsyncSession` as a parameter and was
+# called via background_tasks.add_task(self.db, ...). By the time the
+# background task runs the request session is already closed, causing
+# DetachedInstanceError or silent notification failures.
 async def _notify_parent(
-    db: AsyncSession,
     student_id: uuid.UUID,
     school_id: uuid.UUID,
     log_id: uuid.UUID,
 ) -> None:
+    """Opens its own DB session — never reuses the request session."""
+    from app.db.session import AsyncSessionLocal
     from app.models.student import Student
     from app.models.parent import Parent
 
-    result = await db.execute(
-        select(Student.parent_id).where(
-            and_(
-                Student.id == student_id,
-                Student.school_id == school_id,
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(Student.parent_id).where(
+                and_(
+                    Student.id == student_id,
+                    Student.school_id == school_id,
+                )
             )
         )
-    )
-    parent_id = result.scalar_one_or_none()
-    if not parent_id:
-        return
+        parent_id = result.scalar_one_or_none()
+        if not parent_id:
+            return
 
-    parent_result = await db.execute(
-        select(Parent.user_id).where(Parent.id == parent_id)
-    )
-    parent_user_id = parent_result.scalar_one_or_none()
-    if not parent_user_id:
-        return
+        parent_result = await db.execute(
+            select(Parent.user_id).where(Parent.id == parent_id)
+        )
+        parent_user_id = parent_result.scalar_one_or_none()
+        if not parent_user_id:
+            return
 
-    repo = NotificationRepository(db)
-    await repo.create(
-        {
-            "user_id": parent_user_id,
-            "title": "Behaviour Update",
-            "body": "A new behaviour log was recorded for your child.",
-            "type": NotificationType.BEHAVIOUR,
-            "priority": NotificationPriority.MEDIUM,
-            "reference_id": log_id,
-        }
-    )
-    await db.commit()
+        repo = NotificationRepository(db)
+        await repo.create(
+            {
+                "user_id": parent_user_id,
+                "title": "Behaviour Update",
+                "body": "A new behaviour log was recorded for your child.",
+                "type": NotificationType.BEHAVIOUR,
+                "priority": NotificationPriority.MEDIUM,
+                "reference_id": log_id,
+            }
+        )
+        await db.commit()
 
 
 class BehaviourService:
@@ -145,10 +152,10 @@ class BehaviourService:
         await self.db.commit()
         await self.db.refresh(log)
 
+        # FIX: pass only plain serialisable arguments — no db session.
         if body.incident_type == IncidentType.NEGATIVE:
             background_tasks.add_task(
                 _notify_parent,
-                self.db,
                 body.student_id,
                 school_id,
                 log.id,

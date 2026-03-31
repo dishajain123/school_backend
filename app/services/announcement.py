@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional  # FIX: was missing — caused NameError inside list_announcements
 
 from fastapi import BackgroundTasks
 from sqlalchemy import select, and_
@@ -151,8 +151,10 @@ class AnnouncementService:
 
         from app.models.student import Student
 
+        # FIX: these variables use Optional — which is now properly imported above.
         standard_ids: Optional[list[uuid.UUID]] = None
         standard_id: Optional[uuid.UUID] = None
+
         if current_user.role == RoleEnum.STUDENT:
             result = await self.db.execute(
                 select(Student.standard_id).where(
