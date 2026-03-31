@@ -3,6 +3,7 @@ from app.api.v1.endpoints.academic_years import router as academic_years_router
 from app.api.v1.endpoints.attendance import router as attendance_router
 from app.api.v1.endpoints.auth import router as auth_router
 from app.api.v1.endpoints.announcements import router as announcements_router
+from app.api.v1.endpoints.behaviour import router as behaviour_router
 from app.api.v1.endpoints.diary import router as diary_router
 from app.api.v1.endpoints.chat import router as chat_router
 from app.api.v1.endpoints.complaints import router as complaints_router
@@ -17,6 +18,7 @@ from app.api.v1.endpoints.notifications import router as notifications_router
 from app.api.v1.endpoints.parents import router as parents_router
 from app.api.v1.endpoints.results import router as results_router
 from app.api.v1.endpoints.schools import router as schools_router
+from app.api.v1.endpoints.settings import router as settings_router
 from app.api.v1.endpoints.students import router as students_router
 from app.api.v1.endpoints.timetable import router as timetable_router
 from app.api.v1.endpoints.teacher_assignments import router as teacher_assignments_router
@@ -28,6 +30,7 @@ api_router.include_router(academic_years_router)
 api_router.include_router(attendance_router)
 api_router.include_router(auth_router)
 api_router.include_router(announcements_router)
+api_router.include_router(behaviour_router)
 api_router.include_router(chat_router)
 api_router.include_router(complaints_router)
 api_router.include_router(diary_router)
@@ -42,6 +45,7 @@ api_router.include_router(notifications_router)
 api_router.include_router(parents_router)
 api_router.include_router(results_router)
 api_router.include_router(schools_router)
+api_router.include_router(settings_router)
 api_router.include_router(users_router)
 api_router.include_router(students_router)
 api_router.include_router(timetable_router)

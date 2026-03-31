@@ -1,14 +1,17 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 def setup_cors(app: FastAPI) -> None:
-    origins = (
-        settings.ALLOWED_ORIGINS.split(",")
-        if settings.ALLOWED_ORIGINS != "*"
-        else ["*"]
-    )
+    if settings.ALLOWED_ORIGINS == "*":
+        logger.warning("CORS is set to '*'. For production, set explicit origins.")
+        origins: list[str] = []
+    else:
+        origins = [o.strip() for o in settings.ALLOWED_ORIGINS.split(",") if o.strip()]
 
     app.add_middleware(
         CORSMiddleware,

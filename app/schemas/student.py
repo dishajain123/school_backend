@@ -26,8 +26,11 @@ class StudentUpdate(BaseModel):
     user_id: Optional[uuid.UUID] = None
 
 
+from app.utils.enums import PromotionStatus
+
+
 class StudentPromotionUpdate(BaseModel):
-    is_promoted: bool
+    promotion_status: PromotionStatus
 
 
 class StudentResponse(BaseModel):

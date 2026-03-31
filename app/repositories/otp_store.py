@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
-from sqlalchemy import select, update
+from sqlalchemy import select, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.otp_store import OtpStore
 
@@ -49,3 +49,11 @@ class OtpStoreRepository:
             .values(is_used=True)
         )
         await self.db.flush()
+
+    async def purge_expired(self) -> int:
+        now = datetime.now(timezone.utc)
+        result = await self.db.execute(
+            delete(OtpStore).where(OtpStore.expires_at < now)
+        )
+        await self.db.flush()
+        return result.rowcount

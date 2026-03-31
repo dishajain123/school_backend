@@ -12,7 +12,7 @@ from app.core.exceptions import (
     ConflictException,
     ForbiddenException,
 )
-from app.utils.enums import RoleEnum
+from app.utils.enums import RoleEnum, PromotionStatus
 
 
 async def assert_parent_owns_student(
@@ -148,6 +148,27 @@ class StudentService:
         student = await self.repo.get_by_id(student_id, school_id)
         if not student:
             raise NotFoundException("Student")
-        await self.repo.update_promotion_status(student_id, data.is_promoted)
+        # Map status to is_promoted flag
+        is_promoted = data.promotion_status == PromotionStatus.PROMOTED
+        await self.repo.update_promotion_status(student_id, is_promoted)
+
+        # If held back, record history entry for current year
+        if data.promotion_status == PromotionStatus.HELD_BACK:
+            from app.repositories.promotion import PromotionRepository
+            promo_repo = PromotionRepository(self.db)
+            if student.standard_id and student.academic_year_id:
+                await promo_repo.create_history(
+                    {
+                        "student_id": student.id,
+                        "standard_id": student.standard_id,
+                        "section": student.section,
+                        "academic_year_id": student.academic_year_id,
+                        "promoted_to_standard_id": None,
+                        "promotion_status": PromotionStatus.HELD_BACK,
+                        "school_id": school_id,
+                    }
+                )
+                await self.db.commit()
+
         updated = await self.repo.get_by_id(student_id, school_id)
         return updated

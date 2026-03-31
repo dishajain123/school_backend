@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.services.academic_year import AcademicYearService
+from app.services.promotion import PromotionService
 from app.schemas.academic_year import (
     AcademicYearCreate,
     AcademicYearUpdate,
@@ -19,6 +20,10 @@ router = APIRouter(prefix="/academic-years", tags=["Academic Years"])
 
 def get_service(db: AsyncSession = Depends(get_db)) -> AcademicYearService:
     return AcademicYearService(db)
+
+
+def get_promotion_service(db: AsyncSession = Depends(get_db)) -> PromotionService:
+    return PromotionService(db)
 
 
 @router.post("", response_model=AcademicYearResponse, status_code=201)
@@ -75,3 +80,16 @@ async def activate_academic_year(
     if not current_user.school_id:
         raise ForbiddenException("School context required")
     return await service.activate_academic_year(year_id, current_user.school_id)
+
+
+@router.post("/{old_year_id}/rollover")
+async def rollover_students(
+    old_year_id: uuid.UUID,
+    new_year_id: uuid.UUID | None = None,
+    current_user: CurrentUser = Depends(require_permission("academic_year:manage")),
+    service: PromotionService = Depends(get_promotion_service),
+):
+    if not current_user.school_id:
+        raise ForbiddenException("School context required")
+    result = await service.rollover(old_year_id, new_year_id, current_user)
+    return result
