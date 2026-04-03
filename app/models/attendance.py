@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date
-from sqlalchemy import Date, ForeignKey, UniqueConstraint, Enum as SAEnum
+from sqlalchemy import Date, ForeignKey, UniqueConstraint, Enum as SAEnum, String, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import BaseModel
@@ -13,8 +13,8 @@ class Attendance(BaseModel):
     __tablename__ = "attendance"
     __table_args__ = (
         UniqueConstraint(
-            "student_id", "subject_id", "date",
-            name="uq_attendance_student_subject_date",
+            "student_id", "subject_id", "date", "lecture_number",
+            name="uq_attendance_student_subject_date_lecture",
         ),
     )
 
@@ -36,6 +36,11 @@ class Attendance(BaseModel):
         nullable=False,
         index=True,
     )
+    section: Mapped[str] = mapped_column(
+        String(10),
+        nullable=False,
+        index=True,
+    )
     subject_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("subjects.id", ondelete="RESTRICT"),
@@ -46,6 +51,13 @@ class Attendance(BaseModel):
         UUID(as_uuid=True),
         ForeignKey("academic_years.id", ondelete="RESTRICT"),
         nullable=False,
+        index=True,
+    )
+    lecture_number: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=1,
+        server_default="1",
         index=True,
     )
     date: Mapped[date] = mapped_column(Date, nullable=False, index=True)

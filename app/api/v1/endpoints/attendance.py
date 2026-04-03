@@ -5,14 +5,13 @@ from fastapi import APIRouter, Depends, Query, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.core.dependencies import CurrentUser, get_current_user, require_permission
+from app.core.dependencies import CurrentUser, require_permission
 from app.core.exceptions import ValidationException
 from app.services.attendance import AttendanceService
 from app.schemas.attendance import (
     MarkAttendanceRequest,
     MarkAttendanceResponse,
     AttendanceListResponse,
-    AttendanceResponse,
     StudentAttendanceAnalytics,
     ClassAttendanceSnapshot,
     BelowThresholdResponse,
@@ -42,10 +41,13 @@ async def mark_attendance(
 async def list_attendance(
     student_id: Optional[uuid.UUID] = Query(None),
     standard_id: Optional[uuid.UUID] = Query(None),
+    section: Optional[str] = Query(None),
+    academic_year_id: Optional[uuid.UUID] = Query(None),
     date: Optional[date] = Query(None),
     month: Optional[int] = Query(None, ge=1, le=12),
     year: Optional[int] = Query(None, ge=2000),
     subject_id: Optional[uuid.UUID] = Query(None),
+    lecture_number: Optional[int] = Query(None, ge=1, le=12),
     current_user: CurrentUser = Depends(require_permission("attendance:read")),
     db: AsyncSession = Depends(get_db),
 ):
@@ -54,10 +56,13 @@ async def list_attendance(
         current_user=current_user,
         student_id=student_id,
         standard_id=standard_id,
+        section=section,
+        academic_year_id=academic_year_id,
         record_date=date,
         month=month,
         year=year,
         subject_id=subject_id,
+        lecture_number=lecture_number,
     )
     return AttendanceListResponse(**result)
 
@@ -79,11 +84,45 @@ async def class_snapshot(
     standard_id: uuid.UUID,
     academic_year_id: uuid.UUID = Query(...),
     date: date = Query(...),
+    section: Optional[str] = Query(None),
+    subject_id: Optional[uuid.UUID] = Query(None),
+    lecture_number: Optional[int] = Query(None, ge=1, le=12),
     current_user: CurrentUser = Depends(require_permission("attendance:analytics")),
     db: AsyncSession = Depends(get_db),
 ):
     service = AttendanceService(db)
-    return await service.class_snapshot(standard_id, academic_year_id, date, current_user)
+    return await service.class_snapshot(
+        standard_id,
+        academic_year_id,
+        date,
+        current_user,
+        section=section,
+        subject_id=subject_id,
+        lecture_number=lecture_number,
+    )
+
+
+@router.get("/analytics/class", response_model=ClassAttendanceSnapshot)
+async def class_snapshot_query(
+    standard_id: uuid.UUID = Query(...),
+    academic_year_id: uuid.UUID = Query(...),
+    date: date = Query(...),
+    section: Optional[str] = Query(None),
+    subject_id: Optional[uuid.UUID] = Query(None),
+    lecture_number: Optional[int] = Query(None, ge=1, le=12),
+    current_user: CurrentUser = Depends(require_permission("attendance:analytics")),
+    db: AsyncSession = Depends(get_db),
+):
+    service = AttendanceService(db)
+    return await service.class_snapshot(
+        standard_id,
+        academic_year_id,
+        date,
+        current_user,
+        section=section,
+        subject_id=subject_id,
+        lecture_number=lecture_number,
+    )
 
 
 @router.get("/analytics/below-threshold", response_model=BelowThresholdResponse)

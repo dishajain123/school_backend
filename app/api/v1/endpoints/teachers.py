@@ -40,6 +40,9 @@ async def create_teacher(
 @router.get("", response_model=TeacherListResponse)
 async def list_teachers(
     academic_year_id: Optional[uuid.UUID] = Query(None),
+    standard_id: Optional[uuid.UUID] = Query(None),
+    subject_id: Optional[uuid.UUID] = Query(None),
+    subject_name: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     current_user: CurrentUser = Depends(get_current_user),
@@ -52,6 +55,9 @@ async def list_teachers(
     teachers, total = await service.list_teachers(
         school_id=current_user.school_id,
         academic_year_id=academic_year_id,
+        standard_id=standard_id,
+        subject_id=subject_id,
+        subject_name=subject_name,
         page=page,
         page_size=page_size,
     )

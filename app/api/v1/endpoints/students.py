@@ -66,6 +66,23 @@ async def list_students(
     )
 
 
+@router.get("/sections", response_model=list[str])
+async def list_student_sections(
+    standard_id: Optional[uuid.UUID] = Query(None),
+    academic_year_id: Optional[uuid.UUID] = Query(None),
+    current_user: CurrentUser = Depends(get_current_user),
+    service: StudentService = Depends(get_service),
+):
+    if not current_user.school_id:
+        raise ForbiddenException("School context required")
+    return await service.list_sections(
+        school_id=current_user.school_id,
+        current_user=current_user,
+        standard_id=standard_id,
+        academic_year_id=academic_year_id,
+    )
+
+
 @router.get("/{student_id}", response_model=StudentResponse)
 async def get_student(
     student_id: uuid.UUID,

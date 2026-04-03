@@ -135,6 +135,21 @@ class TeacherClassSubjectService:
 
         return await self.repo.list_by_class(standard_id, section, academic_year_id)
 
+    async def list_mine(
+        self,
+        current_user: CurrentUser,
+        school_id: uuid.UUID,
+        academic_year_id: Optional[uuid.UUID],
+    ) -> tuple[list[TeacherClassSubject], int]:
+        if current_user.role != RoleEnum.TEACHER:
+            raise ForbiddenException(detail="Only teachers can access own assignments")
+
+        teacher = await self.teacher_repo.get_by_user_id(current_user.id)
+        if not teacher or teacher.school_id != school_id:
+            raise NotFoundException(detail="Teacher profile not found in this school")
+
+        return await self.repo.list_by_teacher(teacher.id, academic_year_id)
+
     # ── Reusable guard — imported by Attendance, Assignments, Homework, etc. ─
 
     async def assert_teacher_owns_class_subject(

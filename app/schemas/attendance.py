@@ -14,8 +14,10 @@ class AttendanceRecord(BaseModel):
 
 class MarkAttendanceRequest(BaseModel):
     standard_id: uuid.UUID
+    section: str = Field(..., max_length=10)
     subject_id: uuid.UUID
     academic_year_id: uuid.UUID
+    lecture_number: int = Field(1, ge=1, le=12)
     date: date
     records: list[AttendanceRecord] = Field(..., min_length=1)
 
@@ -29,8 +31,10 @@ class AttendanceResponse(BaseModel):
     student_id: uuid.UUID
     teacher_id: uuid.UUID
     standard_id: uuid.UUID
+    section: str
     subject_id: uuid.UUID
     academic_year_id: uuid.UUID
+    lecture_number: int
     date: date
     status: AttendanceStatus
     created_at: datetime
@@ -44,6 +48,7 @@ class MarkAttendanceResponse(BaseModel):
     updated: int
     total: int
     date: date
+    lecture_number: int
 
 
 class AttendanceListResponse(BaseModel):
@@ -75,6 +80,7 @@ class StudentAttendanceAnalytics(BaseModel):
 class ClassSnapshotRecord(BaseModel):
     student_id: uuid.UUID
     admission_number: str
+    roll_number: Optional[str]
     section: str
     status: Optional[AttendanceStatus]
 

@@ -97,12 +97,18 @@ class TeacherService:
         self,
         school_id: uuid.UUID,
         academic_year_id: Optional[uuid.UUID],
+        standard_id: Optional[uuid.UUID],
+        subject_id: Optional[uuid.UUID],
+        subject_name: Optional[str],
         page: int,
         page_size: int,
     ) -> tuple[list[Teacher], int]:
         return await self.teacher_repo.list_by_school(
             school_id=school_id,
             academic_year_id=academic_year_id,
+            standard_id=standard_id,
+            subject_id=subject_id,
+            subject_name=subject_name,
             page=page,
             page_size=page_size,
         )

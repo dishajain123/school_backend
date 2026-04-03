@@ -105,6 +105,28 @@ class StudentRepository:
         result = await self.db.execute(query.order_by(Student.roll_number.asc()))
         return list(result.scalars().all())
 
+    async def list_sections_by_school(
+        self,
+        school_id: uuid.UUID,
+        standard_id: Optional[uuid.UUID] = None,
+        academic_year_id: Optional[uuid.UUID] = None,
+    ) -> list[str]:
+        query = select(Student.section).where(
+            Student.school_id == school_id,
+            Student.section.is_not(None),
+            Student.section != "",
+        )
+
+        if standard_id is not None:
+            query = query.where(Student.standard_id == standard_id)
+
+        if academic_year_id is not None:
+            query = query.where(Student.academic_year_id == academic_year_id)
+
+        query = query.distinct().order_by(func.lower(Student.section))
+        result = await self.db.execute(query)
+        return [row[0].strip() for row in result.all() if row[0] and row[0].strip()]
+
     async def update(self, student: Student, data: dict) -> Student:
         for key, value in data.items():
             setattr(student, key, value)

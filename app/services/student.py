@@ -1,8 +1,11 @@
 import uuid
 import math
+from datetime import datetime, timezone
 from typing import Optional
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.masters import Standard
 from app.repositories.student import StudentRepository
 from app.schemas.student import StudentCreate, StudentUpdate, StudentPromotionUpdate
 from app.models.student import Student
@@ -11,6 +14,7 @@ from app.core.exceptions import (
     NotFoundException,
     ConflictException,
     ForbiddenException,
+    ValidationException,
 )
 from app.utils.enums import RoleEnum, PromotionStatus
 
@@ -138,6 +142,42 @@ class StudentService:
 
         return await self.repo.update(student, update_data)
 
+    async def list_sections(
+        self,
+        school_id: uuid.UUID,
+        current_user: CurrentUser,
+        standard_id: Optional[uuid.UUID] = None,
+        academic_year_id: Optional[uuid.UUID] = None,
+    ) -> list[str]:
+        # Scope restrictions for parent/student.
+        if current_user.role == RoleEnum.PARENT:
+            students = await self.repo.list_by_parent(current_user.parent_id, school_id)
+            sections = {
+                (s.section or "").strip()
+                for s in students
+                if (not standard_id or s.standard_id == standard_id)
+                and (not academic_year_id or s.academic_year_id == academic_year_id)
+                and s.section
+                and s.section.strip()
+            }
+            return sorted(sections, key=lambda x: x.lower())
+
+        if current_user.role == RoleEnum.STUDENT:
+            own = await self.repo.get_by_user_id(current_user.id)
+            if not own or not own.section or not own.section.strip():
+                return []
+            if standard_id and own.standard_id != standard_id:
+                return []
+            if academic_year_id and own.academic_year_id != academic_year_id:
+                return []
+            return [own.section.strip()]
+
+        return await self.repo.list_sections_by_school(
+            school_id=school_id,
+            standard_id=standard_id,
+            academic_year_id=academic_year_id,
+        )
+
     async def update_promotion_status(
         self,
         student_id: uuid.UUID,
@@ -148,27 +188,81 @@ class StudentService:
         student = await self.repo.get_by_id(student_id, school_id)
         if not student:
             raise NotFoundException("Student")
-        # Map status to is_promoted flag
-        is_promoted = data.promotion_status == PromotionStatus.PROMOTED
-        await self.repo.update_promotion_status(student_id, is_promoted)
 
-        # If held back, record history entry for current year
-        if data.promotion_status == PromotionStatus.HELD_BACK:
-            from app.repositories.promotion import PromotionRepository
-            promo_repo = PromotionRepository(self.db)
-            if student.standard_id and student.academic_year_id:
+        update_payload: dict = {
+            "is_promoted": data.promotion_status == PromotionStatus.PROMOTED
+        }
+
+        # When promoted manually, move student to the next class immediately.
+        if data.promotion_status == PromotionStatus.PROMOTED:
+            if not student.standard_id:
+                raise ValidationException("Student class is not set")
+            if not student.academic_year_id:
+                raise ValidationException("Student academic year is not set")
+
+            current_standard_result = await self.db.execute(
+                select(Standard).where(
+                    and_(
+                        Standard.id == student.standard_id,
+                        Standard.school_id == school_id,
+                    )
+                )
+            )
+            current_standard = current_standard_result.scalar_one_or_none()
+            if not current_standard:
+                raise ValidationException("Current class not found for student")
+
+            next_standard_result = await self.db.execute(
+                select(Standard).where(
+                    and_(
+                        Standard.school_id == school_id,
+                        Standard.level == current_standard.level + 1,
+                        Standard.academic_year_id == student.academic_year_id,
+                    )
+                )
+            )
+            next_standard = next_standard_result.scalar_one_or_none()
+            if not next_standard:
+                raise ValidationException(
+                    "Next class is not configured for this academic year"
+                )
+
+            update_payload["standard_id"] = next_standard.id
+
+        student = await self.repo.update(student, update_payload)
+
+        # Record/update yearly promotion history for both statuses.
+        from app.repositories.promotion import PromotionRepository
+        promo_repo = PromotionRepository(self.db)
+        if student.standard_id and student.academic_year_id:
+            latest = await promo_repo.get_latest_history(
+                student.id, student.academic_year_id
+            )
+            promoted_to_standard_id = (
+                student.standard_id
+                if data.promotion_status == PromotionStatus.PROMOTED
+                else None
+            )
+            if latest:
+                latest.standard_id = student.standard_id
+                latest.section = student.section
+                latest.promoted_to_standard_id = promoted_to_standard_id
+                latest.promotion_status = data.promotion_status
+                latest.recorded_at = datetime.now(timezone.utc)
+                latest.school_id = school_id
+            else:
                 await promo_repo.create_history(
                     {
                         "student_id": student.id,
                         "standard_id": student.standard_id,
                         "section": student.section,
                         "academic_year_id": student.academic_year_id,
-                        "promoted_to_standard_id": None,
-                        "promotion_status": PromotionStatus.HELD_BACK,
+                        "promoted_to_standard_id": promoted_to_standard_id,
+                        "promotion_status": data.promotion_status,
                         "school_id": school_id,
                     }
                 )
-                await self.db.commit()
+            await self.db.commit()
 
         updated = await self.repo.get_by_id(student_id, school_id)
         return updated

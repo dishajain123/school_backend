@@ -49,7 +49,6 @@ class PromotionService:
                 and_(
                     Student.school_id == school_id,
                     Student.academic_year_id == old_year_id,
-                    Student.is_promoted == False,  # noqa: E712
                 )
             )
         )
@@ -61,6 +60,10 @@ class PromotionService:
         for student in students:
             # Check if held back via latest history record
             latest = await self.repo.get_latest_history(student.id, old_year_id)
+            if latest and latest.promotion_status == PromotionStatus.PROMOTED:
+                # Already processed for this academic year.
+                skipped += 1
+                continue
             if latest and latest.promotion_status == PromotionStatus.HELD_BACK:
                 skipped += 1
                 continue
@@ -109,7 +112,8 @@ class PromotionService:
             if next_standard:
                 student.standard_id = next_standard.id
                 student.academic_year_id = new_year_id
-                student.is_promoted = True
+                # Reset yearly flag in new academic year.
+                student.is_promoted = False
                 processed += 1
             else:
                 student.is_promoted = False

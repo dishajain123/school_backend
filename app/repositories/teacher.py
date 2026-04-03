@@ -5,6 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.teacher import Teacher
+from app.models.teacher_class_subject import TeacherClassSubject
+from app.models.masters import Subject
 
 
 class TeacherRepository:
@@ -51,6 +53,9 @@ class TeacherRepository:
         self,
         school_id: uuid.UUID,
         academic_year_id: Optional[uuid.UUID] = None,
+        standard_id: Optional[uuid.UUID] = None,
+        subject_id: Optional[uuid.UUID] = None,
+        subject_name: Optional[str] = None,
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list[Teacher], int]:
@@ -60,6 +65,45 @@ class TeacherRepository:
         if academic_year_id is not None:
             base = base.where(Teacher.academic_year_id == academic_year_id)
             count_q = count_q.where(Teacher.academic_year_id == academic_year_id)
+
+        if standard_id is not None:
+            standard_teacher_ids = select(TeacherClassSubject.teacher_id).where(
+                TeacherClassSubject.standard_id == standard_id
+            )
+            if academic_year_id is not None:
+                standard_teacher_ids = standard_teacher_ids.where(
+                    TeacherClassSubject.academic_year_id == academic_year_id
+                )
+            base = base.where(Teacher.id.in_(standard_teacher_ids))
+            count_q = count_q.where(Teacher.id.in_(standard_teacher_ids))
+
+        if subject_id is not None:
+            subject_teacher_ids = select(TeacherClassSubject.teacher_id).where(
+                TeacherClassSubject.subject_id == subject_id
+            )
+            if academic_year_id is not None:
+                subject_teacher_ids = subject_teacher_ids.where(
+                    TeacherClassSubject.academic_year_id == academic_year_id
+                )
+            base = base.where(Teacher.id.in_(subject_teacher_ids))
+            count_q = count_q.where(Teacher.id.in_(subject_teacher_ids))
+
+        if subject_name is not None and subject_name.strip():
+            normalized_subject_name = subject_name.strip().lower()
+            subject_name_teacher_ids = (
+                select(TeacherClassSubject.teacher_id)
+                .join(Subject, TeacherClassSubject.subject_id == Subject.id)
+                .where(
+                    Subject.school_id == school_id,
+                    func.lower(Subject.name) == normalized_subject_name,
+                )
+            )
+            if academic_year_id is not None:
+                subject_name_teacher_ids = subject_name_teacher_ids.where(
+                    TeacherClassSubject.academic_year_id == academic_year_id
+                )
+            base = base.where(Teacher.id.in_(subject_name_teacher_ids))
+            count_q = count_q.where(Teacher.id.in_(subject_name_teacher_ids))
 
         total = (await self.db.execute(count_q)).scalar_one()
 

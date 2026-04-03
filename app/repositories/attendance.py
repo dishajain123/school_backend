@@ -1,7 +1,7 @@
 import uuid
 from datetime import date
 from typing import Optional
-from sqlalchemy import select, func, case, text, and_, insert
+from sqlalchemy import select, func, case
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -21,7 +21,7 @@ class AttendanceRepository:
         records: list[dict],
     ) -> tuple[int, int]:
         """
-        INSERT ... ON CONFLICT (student_id, subject_id, date)
+        INSERT ... ON CONFLICT (student_id, subject_id, date, lecture_number)
         DO UPDATE SET status = EXCLUDED.status, updated_at = now()
         Returns (inserted_count, updated_count) approximation via rowcount.
         """
@@ -30,10 +30,11 @@ class AttendanceRepository:
 
         stmt = pg_insert(Attendance).values(records)
         stmt = stmt.on_conflict_do_update(
-            constraint="uq_attendance_student_subject_date",
+            constraint="uq_attendance_student_subject_date_lecture",
             set_={
                 "status": stmt.excluded.status,
                 "teacher_id": stmt.excluded.teacher_id,
+                "section": stmt.excluded.section,
                 "updated_at": func.now(),
             },
         )
@@ -49,6 +50,7 @@ class AttendanceRepository:
         month: Optional[int] = None,
         year: Optional[int] = None,
         subject_id: Optional[uuid.UUID] = None,
+        lecture_number: Optional[int] = None,
     ) -> tuple[list[Attendance], int]:
         stmt = (
             select(Attendance)
@@ -65,21 +67,26 @@ class AttendanceRepository:
             stmt = stmt.where(func.extract("year", Attendance.date) == year)
         if subject_id is not None:
             stmt = stmt.where(Attendance.subject_id == subject_id)
+        if lecture_number is not None:
+            stmt = stmt.where(Attendance.lecture_number == lecture_number)
 
         count_q = select(func.count()).select_from(stmt.subquery())
         total = (await self.db.execute(count_q)).scalar_one()
 
         rows = await self.db.execute(
-            stmt.order_by(Attendance.date.desc())
+            stmt.order_by(Attendance.date.desc(), Attendance.lecture_number.desc())
         )
         return list(rows.scalars().all()), total
 
     async def list_by_class_date(
         self,
         standard_id: uuid.UUID,
+        section: str,
         school_id: uuid.UUID,
         record_date: date,
+        academic_year_id: Optional[uuid.UUID] = None,
         subject_id: Optional[uuid.UUID] = None,
+        lecture_number: Optional[int] = None,
     ) -> list[Attendance]:
         stmt = (
             select(Attendance)
@@ -87,12 +94,17 @@ class AttendanceRepository:
             .join(Student, Student.id == Attendance.student_id)
             .where(
                 Attendance.standard_id == standard_id,
+                Attendance.section == section,
                 Attendance.date == record_date,
                 Student.school_id == school_id,
             )
         )
+        if academic_year_id is not None:
+            stmt = stmt.where(Attendance.academic_year_id == academic_year_id)
         if subject_id is not None:
             stmt = stmt.where(Attendance.subject_id == subject_id)
+        if lecture_number is not None:
+            stmt = stmt.where(Attendance.lecture_number == lecture_number)
 
         rows = await self.db.execute(stmt)
         return list(rows.scalars().all())
@@ -141,9 +153,12 @@ class AttendanceRepository:
     async def get_class_snapshot(
         self,
         standard_id: uuid.UUID,
+        section: Optional[str],
         school_id: uuid.UUID,
         record_date: date,
         academic_year_id: uuid.UUID,
+        subject_id: Optional[uuid.UUID] = None,
+        lecture_number: Optional[int] = None,
     ) -> list[dict]:
         """Returns per-student status for a class on a given date."""
         # All students in the class
@@ -152,6 +167,8 @@ class AttendanceRepository:
             Student.school_id == school_id,
             Student.academic_year_id == academic_year_id,
         )
+        if section is not None:
+            students_q = students_q.where(Student.section == section)
         student_rows = await self.db.execute(students_q)
         students = student_rows.scalars().all()
 
@@ -159,7 +176,14 @@ class AttendanceRepository:
         att_q = select(Attendance).where(
             Attendance.standard_id == standard_id,
             Attendance.date == record_date,
+            Attendance.academic_year_id == academic_year_id,
         )
+        if section is not None:
+            att_q = att_q.where(Attendance.section == section)
+        if subject_id is not None:
+            att_q = att_q.where(Attendance.subject_id == subject_id)
+        if lecture_number is not None:
+            att_q = att_q.where(Attendance.lecture_number == lecture_number)
         att_rows = await self.db.execute(att_q)
         att_map: dict[uuid.UUID, AttendanceStatus] = {
             a.student_id: a.status for a in att_rows.scalars().all()
@@ -169,6 +193,7 @@ class AttendanceRepository:
             {
                 "student_id": s.id,
                 "admission_number": s.admission_number,
+                "roll_number": s.roll_number,
                 "section": s.section or "",
                 "status": att_map.get(s.id),
             }

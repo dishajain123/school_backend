@@ -4,8 +4,8 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.core.dependencies import CurrentUser, get_current_user, require_permission
-from app.core.exceptions import ValidationException
+from app.core.dependencies import CurrentUser, get_current_user
+from app.core.exceptions import ValidationException, ForbiddenException
 from app.services.teacher_class_subject import TeacherClassSubjectService
 from app.schemas.teacher_class_subject import (
     TeacherAssignmentCreate,
@@ -16,6 +16,7 @@ from app.schemas.teacher_class_subject import (
     SubjectSummary,
     AcademicYearSummary,
 )
+from app.utils.enums import RoleEnum
 
 router = APIRouter(prefix="/teacher-assignments", tags=["Teacher Assignments"])
 
@@ -24,6 +25,12 @@ def _require_school(current_user: CurrentUser) -> uuid.UUID:
     if not current_user.school_id:
         raise ValidationException("school_id is required")
     return current_user.school_id
+
+
+def _can_manage_assignments(current_user: CurrentUser) -> bool:
+    if "teacher_assignment:manage" in current_user.permissions:
+        return True
+    return current_user.role in (RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN)
 
 
 def _to_response(obj) -> TeacherAssignmentResponse:
@@ -57,21 +64,48 @@ def _to_response(obj) -> TeacherAssignmentResponse:
 @router.post("", response_model=TeacherAssignmentResponse, status_code=201)
 async def create_assignment(
     payload: TeacherAssignmentCreate,
-    current_user: CurrentUser = Depends(require_permission("teacher_assignment:manage")),
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    if not _can_manage_assignments(current_user):
+        raise ForbiddenException(
+            detail="Only principal/superadmin or users with 'teacher_assignment:manage' can assign teachers"
+        )
     school_id = _require_school(current_user)
     service = TeacherClassSubjectService(db)
     obj = await service.create_assignment(payload, school_id)
     return _to_response(obj)
 
 
+@router.get("/mine", response_model=TeacherAssignmentListResponse)
+async def list_my_assignments(
+    academic_year_id: Optional[uuid.UUID] = Query(None),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    school_id = _require_school(current_user)
+    service = TeacherClassSubjectService(db)
+    items, total = await service.list_mine(
+        current_user=current_user,
+        school_id=school_id,
+        academic_year_id=academic_year_id,
+    )
+    return TeacherAssignmentListResponse(
+        items=[_to_response(i) for i in items],
+        total=total,
+    )
+
+
 @router.delete("/{assignment_id}", status_code=204)
 async def delete_assignment(
     assignment_id: uuid.UUID,
-    current_user: CurrentUser = Depends(require_permission("teacher_assignment:manage")),
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    if not _can_manage_assignments(current_user):
+        raise ForbiddenException(
+            detail="Only principal/superadmin or users with 'teacher_assignment:manage' can remove assignments"
+        )
     school_id = _require_school(current_user)
     service = TeacherClassSubjectService(db)
     await service.delete_assignment(assignment_id, school_id)
