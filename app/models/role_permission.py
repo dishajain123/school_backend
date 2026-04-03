@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import uuid
 from sqlalchemy import ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID

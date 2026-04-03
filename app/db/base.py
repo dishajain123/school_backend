@@ -34,3 +34,6 @@ class UUIDMixin:
 
 class BaseModel(UUIDMixin, TimestampMixin, Base):
     __abstract__ = True
+
+
+import app.models  # noqa: E402,F401

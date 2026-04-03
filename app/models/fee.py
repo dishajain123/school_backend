@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 import uuid
 from datetime import date
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy import String, Date, Numeric, ForeignKey, Enum, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
@@ -48,7 +50,7 @@ class FeeStructure(BaseModel):
     )
     amount: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     due_date: Mapped[date] = mapped_column(Date, nullable=False)
-    description: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     school_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("schools.id", ondelete="CASCADE"),

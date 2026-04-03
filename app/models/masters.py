@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import uuid
 from typing import Optional
 from sqlalchemy import String, Integer, Numeric, ForeignKey, UniqueConstraint

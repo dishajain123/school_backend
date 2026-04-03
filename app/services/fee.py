@@ -17,7 +17,8 @@ from app.schemas.fee import (
     PaymentCreate,
     PaymentResponse,
     FeeLedgerResponse,
-    FeeDashboardResponse,\n    PaymentListResponse,
+    FeeDashboardResponse,
+    PaymentListResponse,
 )
 from app.services.academic_year import get_active_year
 from app.integrations.minio_client import minio_client
@@ -343,6 +344,5 @@ class FeeService:
         return minio_client.generate_presigned_url(
             RECEIPTS_BUCKET, payment.receipt_key
         )
-
 
 

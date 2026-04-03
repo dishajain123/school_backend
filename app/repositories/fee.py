@@ -162,7 +162,9 @@ class FeeRepository:
                 )
             )
         )
-        return result.scalar_one_or_none()\r\n\r\n    async def list_payments_for_ledger(
+        return result.scalar_one_or_none()
+
+    async def list_payments_for_ledger(
         self, school_id: uuid.UUID, fee_ledger_id: uuid.UUID
     ) -> list[Payment]:
         result = await self.db.execute(
@@ -176,5 +178,4 @@ class FeeRepository:
             .order_by(Payment.created_at.desc())
         )
         return list(result.scalars().all())
-
 

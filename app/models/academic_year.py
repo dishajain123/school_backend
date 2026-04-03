@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import uuid
 from datetime import date
 from sqlalchemy import String, Boolean, ForeignKey, Date, UniqueConstraint

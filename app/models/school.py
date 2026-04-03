@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import uuid
+from typing import Optional
 from sqlalchemy import String, Text, Boolean, Enum as SAEnum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -10,9 +13,9 @@ class School(BaseModel):
     __tablename__ = "schools"
 
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    address: Mapped[str | None] = mapped_column(Text, nullable=True)
+    address: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     contact_email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
-    contact_phone: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    contact_phone: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     subscription_plan: Mapped[SubscriptionPlan] = mapped_column(
         SAEnum(SubscriptionPlan, name="subscriptionplan", create_type=False),
         nullable=False,

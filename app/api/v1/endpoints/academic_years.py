@@ -1,4 +1,5 @@
 import uuid
+from typing import Optional
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -85,7 +86,7 @@ async def activate_academic_year(
 @router.post("/{old_year_id}/rollover")
 async def rollover_students(
     old_year_id: uuid.UUID,
-    new_year_id: uuid.UUID | None = None,
+    new_year_id: Optional[uuid.UUID] = None,
     current_user: CurrentUser = Depends(require_permission("academic_year:manage")),
     service: PromotionService = Depends(get_promotion_service),
 ):

@@ -1,5 +1,13 @@
 import io
+import socket
+import warnings
 from typing import Optional
+
+warnings.filterwarnings(
+    "ignore",
+    message=r"urllib3 v2 only supports OpenSSL 1\.1\.1\+.*",
+)
+
 from minio import Minio
 from minio.error import S3Error
 from app.core.config import settings
@@ -10,6 +18,23 @@ from datetime import timedelta
 logger = get_logger(__name__)
 
 _client: Optional[Minio] = None
+
+
+def _endpoint_host_port() -> tuple[str, int]:
+    endpoint = settings.MINIO_ENDPOINT.strip()
+    if "://" in endpoint:
+        endpoint = endpoint.split("://", 1)[1]
+    host, _, port = endpoint.partition(":")
+    return host, int(port or 9000)
+
+
+def _is_minio_reachable(timeout: float = 0.5) -> bool:
+    host, port = _endpoint_host_port()
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
 
 
 def get_minio_client() -> Minio:
@@ -25,6 +50,14 @@ def get_minio_client() -> Minio:
 
 
 async def ensure_buckets_exist() -> None:
+    if not settings.MINIO_ENABLED:
+        logger.info("MinIO is disabled; skipping bucket verification")
+        return
+    if not _is_minio_reachable():
+        logger.warning(
+            f"MinIO is not reachable at {settings.MINIO_ENDPOINT}; skipping bucket verification"
+        )
+        return
     client = get_minio_client()
     for bucket in MINIO_BUCKETS:
         try:

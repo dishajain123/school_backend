@@ -10,6 +10,7 @@ Usage:
 # second copy is removed here.
 import argparse
 import asyncio
+from typing import Optional
 
 from app.db.session import AsyncSessionLocal
 from app.repositories.user import UserRepository
@@ -17,7 +18,7 @@ from app.core.security import hash_password
 from app.utils.enums import RoleEnum
 
 
-async def create_superadmin(email: str, phone: str | None, password: str) -> None:
+async def create_superadmin(email: str, phone: Optional[str], password: str) -> None:
     async with AsyncSessionLocal() as db:
         repo = UserRepository(db)
         existing = await repo.get_by_email_or_phone(email, phone)

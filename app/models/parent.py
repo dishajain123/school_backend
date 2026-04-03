@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import uuid
+from typing import Optional
 from sqlalchemy import String, ForeignKey, Enum as SAEnum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -22,7 +25,7 @@ class Parent(BaseModel):
         nullable=False,
         index=True,
     )
-    occupation: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    occupation: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     relation: Mapped[RelationType] = mapped_column(
         SAEnum(RelationType, name="relationtype", create_type=False),
         nullable=False,

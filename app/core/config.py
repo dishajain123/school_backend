@@ -1,6 +1,11 @@
+from pathlib import Path
 from pydantic_settings import BaseSettings
 from pydantic import field_validator
 from typing import Optional
+
+
+BASE_DIR = Path(__file__).resolve().parents[2]
+ENV_FILE = BASE_DIR / ".env"
 
 
 class Settings(BaseSettings):
@@ -42,7 +47,22 @@ class Settings(BaseSettings):
     # App
     APP_NAME: str = "SMS Backend"
     DEBUG: bool = False
+    SQL_ECHO: bool = False
     ALLOWED_ORIGINS: str = "*"
+    MINIO_ENABLED: bool = True
+
+    @field_validator("DEBUG", "SQL_ECHO", "MINIO_ENABLED", mode="before")
+    @classmethod
+    def validate_boolish(cls, v):
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, str):
+            normalized = v.strip().lower()
+            if normalized in {"true", "1", "yes", "on", "debug", "development", "dev"}:
+                return True
+            if normalized in {"false", "0", "no", "off", "release", "production", "prod"}:
+                return False
+        return v
 
     @field_validator("DATABASE_URL")
     @classmethod
@@ -53,7 +73,7 @@ class Settings(BaseSettings):
             v = v.replace("postgresql://", "postgresql+asyncpg://", 1)
         return v
 
-    model_config = {"env_file": ".env", "case_sensitive": True}
+    model_config = {"env_file": str(ENV_FILE), "case_sensitive": True}
 
 
 settings = Settings()
