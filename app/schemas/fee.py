@@ -98,6 +98,11 @@ class PaymentResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class PaymentListResponse(BaseModel):
+    items: list[PaymentResponse]
+    total: int
+
 class FeeDashboardResponse(BaseModel):
     items: list[FeeLedgerResponse]
     total: int
+

@@ -17,7 +17,7 @@ from app.schemas.fee import (
     PaymentCreate,
     PaymentResponse,
     FeeLedgerResponse,
-    FeeDashboardResponse,
+    FeeDashboardResponse,\n    PaymentListResponse,
 )
 from app.services.academic_year import get_active_year
 from app.integrations.minio_client import minio_client
@@ -253,6 +253,52 @@ class FeeService:
 
         return FeeDashboardResponse(items=items, total=len(items))
 
+    
+    async def list_payments(
+        self,
+        fee_ledger_id: uuid.UUID,
+        current_user: CurrentUser,
+    ) -> PaymentListResponse:
+        school_id = self._ensure_school(current_user)
+
+        ledger = await self.repo.get_ledger_by_id(fee_ledger_id, school_id)
+        if not ledger:
+            raise NotFoundException("Fee ledger")
+
+        from app.models.student import Student
+
+        if current_user.role == RoleEnum.STUDENT:
+            result = await self.db.execute(
+                select(Student.id).where(
+                    and_(
+                        Student.user_id == current_user.id,
+                        Student.school_id == school_id,
+                    )
+                )
+            )
+            own_student_id = result.scalar_one_or_none()
+            if not own_student_id or own_student_id != ledger.student_id:
+                raise ForbiddenException("You can only view your own payments")
+
+        elif current_user.role == RoleEnum.PARENT:
+            result = await self.db.execute(
+                select(Student.id).where(
+                    and_(
+                        Student.id == ledger.student_id,
+                        Student.parent_id == current_user.parent_id,
+                        Student.school_id == school_id,
+                    )
+                )
+            )
+            if not result.scalar_one_or_none():
+                raise ForbiddenException("Not your child")
+
+        payments = await self.repo.list_payments_for_ledger(
+            school_id, fee_ledger_id
+        )
+        items = [PaymentResponse.model_validate(p) for p in payments]
+        return PaymentListResponse(items=items, total=len(items))
+
     async def get_receipt_url(
         self,
         payment_id: uuid.UUID,
@@ -297,3 +343,6 @@ class FeeService:
         return minio_client.generate_presigned_url(
             RECEIPTS_BUCKET, payment.receipt_key
         )
+
+
+

@@ -13,6 +13,7 @@ from app.schemas.fee import (
     PaymentCreate,
     PaymentResponse,
     FeeDashboardResponse,
+    PaymentListResponse,
 )
 from app.services.fee import FeeService
 
@@ -55,6 +56,16 @@ async def fee_dashboard(
     return await FeeService(db).fee_dashboard(student_id, current_user)
 
 
+
+@router.get("/payments", response_model=PaymentListResponse)
+async def list_payments(
+    fee_ledger_id: uuid.UUID = Query(...),
+    current_user: CurrentUser = Depends(require_permission("fee:read")),
+    db: AsyncSession = Depends(get_db),
+):
+    # NOTE: This endpoint was added to support payment history by ledger.
+    return await FeeService(db).list_payments(fee_ledger_id, current_user)
+
 @router.get("/payments/{payment_id}/receipt")
 async def get_receipt(
     payment_id: uuid.UUID,
@@ -63,3 +74,4 @@ async def get_receipt(
 ):
     url = await FeeService(db).get_receipt_url(payment_id, current_user)
     return {"url": url}
+
