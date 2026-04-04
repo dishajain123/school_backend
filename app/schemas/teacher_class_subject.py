@@ -16,6 +16,15 @@ class TeacherAssignmentCreate(BaseModel):
     model_config = {"str_strip_whitespace": True}
 
 
+class TeacherAssignmentUpdate(BaseModel):
+    standard_id: uuid.UUID
+    section: str = Field(..., max_length=10)
+    subject_id: uuid.UUID
+    academic_year_id: uuid.UUID
+
+    model_config = {"str_strip_whitespace": True}
+
+
 # ── Nested responses ──────────────────────────────────────────────────────────
 
 class TeacherSummary(BaseModel):

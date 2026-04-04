@@ -108,6 +108,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "gallery:create",
         "gallery:read",
         "leave:apply",
+        "leave:read",
         "chat:message",
         "behaviour_log:create",
         "behaviour_log:read",

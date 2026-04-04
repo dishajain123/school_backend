@@ -63,6 +63,31 @@ async def init_db() -> None:
                     """
                 )
             )
+            # Runtime-safe patch for submission review workflow.
+            await conn.execute(
+                text(
+                    """
+                    ALTER TABLE IF EXISTS submissions
+                    ADD COLUMN IF NOT EXISTS is_approved BOOLEAN NOT NULL DEFAULT FALSE
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    ALTER TABLE IF EXISTS submissions
+                    ADD COLUMN IF NOT EXISTS approved_by UUID NULL
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    ALTER TABLE IF EXISTS submissions
+                    ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ NULL
+                    """
+                )
+            )
         logger.info("Database tables created/verified successfully")
     except Exception as e:
         logger.error(f"Failed to initialize database: {e}")

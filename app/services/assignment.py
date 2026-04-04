@@ -7,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 
 from app.repositories.assignment import AssignmentRepository
-from app.repositories.teacher_class_subject import TeacherClassSubjectRepository
 from app.repositories.notification import NotificationRepository
 from app.schemas.assignment import (
     AssignmentCreate,
@@ -71,6 +70,7 @@ async def _assert_teacher_owns_class_subject(
 async def _notify_assignment_created(
     school_id: uuid.UUID,
     standard_id: uuid.UUID,
+    academic_year_id: uuid.UUID,
     assignment_id: uuid.UUID,
     assignment_title: str,
 ) -> None:
@@ -87,6 +87,7 @@ async def _notify_assignment_created(
             select(Student.user_id, Student.parent_id).where(
                 and_(
                     Student.standard_id == standard_id,
+                    Student.academic_year_id == academic_year_id,
                     Student.school_id == school_id,
                 )
             )
@@ -197,6 +198,7 @@ class AssignmentService:
             _notify_assignment_created,
             current_user.school_id,
             body.standard_id,
+            body.academic_year_id,
             assignment.id,
             assignment.title,
         )
@@ -212,6 +214,7 @@ class AssignmentService:
         subject_id: Optional[uuid.UUID],
         academic_year_id: Optional[uuid.UUID],
         is_active: Optional[bool],
+        is_overdue: Optional[bool],
         page: int,
         page_size: int,
     ) -> AssignmentListResponse:
@@ -228,7 +231,10 @@ class AssignmentService:
         elif current_user.role == RoleEnum.STUDENT:
             result = await self.db.execute(
                 select(Student.standard_id).where(
-                    Student.user_id == current_user.id
+                    and_(
+                        Student.user_id == current_user.id,
+                        Student.school_id == current_user.school_id,
+                    )
                 )
             )
             own_standard_id = result.scalar_one_or_none()
@@ -257,6 +263,8 @@ class AssignmentService:
             academic_year_id=academic_year_id,
             teacher_id=teacher_id_filter,
             is_active=is_active,
+            is_overdue=is_overdue,
+            reference_date=datetime.now(tz=timezone.utc).date(),
             page=page,
             page_size=page_size,
         )
@@ -287,7 +295,9 @@ class AssignmentService:
                 select(Student.id).where(
                     and_(
                         Student.user_id == current_user.id,
+                        Student.school_id == current_user.school_id,
                         Student.standard_id == assignment.standard_id,
+                        Student.academic_year_id == assignment.academic_year_id,
                     )
                 )
             )
@@ -299,6 +309,7 @@ class AssignmentService:
                 select(Student.id).where(
                     and_(
                         Student.standard_id == assignment.standard_id,
+                        Student.academic_year_id == assignment.academic_year_id,
                         Student.parent_id == current_user.parent_id,
                         Student.school_id == current_user.school_id,
                     )

@@ -12,12 +12,21 @@ from app.core.dependencies import (
 )
 from app.core.exceptions import ValidationException
 from app.services.teacher import TeacherService
+from app.services.teacher_class_subject import TeacherClassSubjectService
 from app.schemas.teacher import (
     TeacherCreate,
     TeacherUpdate,
     TeacherResponse,
     TeacherListResponse,
     TeacherUserResponse,
+)
+from app.schemas.teacher_class_subject import (
+    AcademicYearSummary,
+    StandardSummary,
+    SubjectSummary,
+    TeacherAssignmentListResponse,
+    TeacherAssignmentResponse,
+    TeacherSummary,
 )
 
 router = APIRouter(prefix="/teachers", tags=["Teachers"])
@@ -70,6 +79,27 @@ async def list_teachers(
     )
 
 
+@router.get("/me/assignments", response_model=TeacherAssignmentListResponse)
+async def list_my_teacher_assignments(
+    academic_year_id: Optional[uuid.UUID] = Query(None),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not current_user.school_id:
+        raise ValidationException("school_id is required")
+
+    service = TeacherClassSubjectService(db)
+    items, total = await service.list_mine(
+        current_user=current_user,
+        school_id=current_user.school_id,
+        academic_year_id=academic_year_id,
+    )
+    return TeacherAssignmentListResponse(
+        items=[_to_assignment_response(i) for i in items],
+        total=total,
+    )
+
+
 @router.get("/{teacher_id}", response_model=TeacherResponse)
 async def get_teacher(
     teacher_id: uuid.UUID,
@@ -114,4 +144,32 @@ def _to_response(teacher) -> TeacherResponse:
         user=user_resp,
         created_at=teacher.created_at,
         updated_at=teacher.updated_at,
+    )
+
+
+def _to_assignment_response(obj) -> TeacherAssignmentResponse:
+    return TeacherAssignmentResponse(
+        id=obj.id,
+        section=obj.section,
+        teacher=TeacherSummary(
+            id=obj.teacher.id,
+            employee_code=obj.teacher.employee_code,
+            user_id=obj.teacher.user_id,
+        ),
+        standard=StandardSummary(
+            id=obj.standard.id,
+            name=obj.standard.name,
+            level=obj.standard.level,
+        ),
+        subject=SubjectSummary(
+            id=obj.subject.id,
+            name=obj.subject.name,
+            code=obj.subject.code,
+        ),
+        academic_year=AcademicYearSummary(
+            id=obj.academic_year.id,
+            name=obj.academic_year.name,
+        ),
+        created_at=obj.created_at,
+        updated_at=obj.updated_at,
     )

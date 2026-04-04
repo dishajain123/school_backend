@@ -23,6 +23,7 @@ from app.api.v1.endpoints.settings import router as settings_router
 from app.api.v1.endpoints.students import router as students_router
 from app.api.v1.endpoints.timetable import router as timetable_router
 from app.api.v1.endpoints.teacher_assignments import router as teacher_assignments_router
+from app.api.v1.endpoints.teacher_class_subjects import router as teacher_class_subjects_router
 from app.api.v1.endpoints.teachers import router as teachers_router
 from app.api.v1.endpoints.users import router as users_router
 
@@ -52,4 +53,5 @@ api_router.include_router(users_router)
 api_router.include_router(students_router)
 api_router.include_router(timetable_router)
 api_router.include_router(teacher_assignments_router)
+api_router.include_router(teacher_class_subjects_router)
 api_router.include_router(teachers_router)

@@ -11,15 +11,18 @@ class SubmissionCreate(BaseModel):
 
 
 class SubmissionGrade(BaseModel):
-    grade: str
+    grade: Optional[str] = None
     feedback: Optional[str] = None
+    is_approved: Optional[bool] = None
 
     @field_validator("grade")
     @classmethod
-    def grade_not_empty(cls, v: str) -> str:
+    def grade_not_empty(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
         v = v.strip()
         if not v:
-            raise ValueError("Grade cannot be empty")
+            raise ValueError("Grade cannot be blank")
         return v
 
 
@@ -35,6 +38,12 @@ class SubmissionResponse(BaseModel):
     grade: Optional[str] = None
     feedback: Optional[str] = None
     is_graded: bool
+    is_approved: bool = False
+    approved_by: Optional[uuid.UUID] = None
+    approved_at: Optional[datetime] = None
+    student_admission_number: Optional[str] = None
+    student_roll_number: Optional[str] = None
+    student_section: Optional[str] = None
     is_late: bool
     school_id: uuid.UUID
     created_at: datetime

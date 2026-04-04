@@ -50,7 +50,9 @@ async def _notify_submission_graded(
     school_id: uuid.UUID,
     submission_id: uuid.UUID,
     assignment_title: str,
-    grade: str,
+    grade: Optional[str],
+    feedback: Optional[str],
+    is_approved: Optional[bool],
 ) -> None:
     """Opens its own DB session — never reuses the request session."""
     from app.db.session import AsyncSessionLocal
@@ -86,14 +88,31 @@ async def _notify_submission_graded(
 
         notification_repo = NotificationRepository(db)
         for user_id in user_ids_to_notify:
+            if grade:
+                body = (
+                    f"Your submission for '{assignment_title}' "
+                    f"has been graded. Grade: {grade}"
+                )
+            elif feedback:
+                body = (
+                    f"Your submission for '{assignment_title}' "
+                    f"has received teacher feedback."
+                )
+            elif is_approved:
+                body = (
+                    f"Your submission for '{assignment_title}' "
+                    f"has been approved by your teacher."
+                )
+            else:
+                body = (
+                    f"Your submission for '{assignment_title}' "
+                    f"has been reviewed by your teacher."
+                )
             await notification_repo.create(
                 {
                     "user_id": user_id,
-                    "title": "Assignment Graded",
-                    "body": (
-                        f"Your submission for '{assignment_title}' "
-                        f"has been graded. Grade: {grade}"
-                    ),
+                    "title": "Assignment Reviewed",
+                    "body": body,
                     "type": NotificationType.SUBMISSION,
                     "priority": NotificationPriority.MEDIUM,
                     "reference_id": submission_id,
@@ -115,6 +134,11 @@ class SubmissionService:
             data.file_url = minio_client.generate_presigned_url(
                 SUBMISSION_BUCKET, submission.file_key
             )
+        student = getattr(submission, "student", None)
+        if student is not None:
+            data.student_admission_number = student.admission_number
+            data.student_roll_number = student.roll_number
+            data.student_section = student.section
         return data
 
     async def create_submission(
@@ -142,6 +166,18 @@ class SubmissionService:
             if not own_student_id or own_student_id != body.student_id:
                 raise ForbiddenException("You can only submit for yourself")
 
+        student_row = await self.db.execute(
+            select(Student).where(
+                and_(
+                    Student.id == body.student_id,
+                    Student.school_id == current_user.school_id,
+                )
+            )
+        )
+        student = student_row.scalar_one_or_none()
+        if not student:
+            raise NotFoundException("Student not found")
+
         assignment = await self.assignment_repo.get_by_id(
             body.assignment_id, current_user.school_id
         )
@@ -149,6 +185,14 @@ class SubmissionService:
             raise NotFoundException("Assignment not found")
         if not assignment.is_active:
             raise ForbiddenException("This assignment is no longer accepting submissions")
+
+        if (
+            student.standard_id != assignment.standard_id
+            or student.academic_year_id != assignment.academic_year_id
+        ):
+            raise ForbiddenException(
+                "Student does not belong to this assignment's class/year"
+            )
 
         existing = await self.repo.get_existing(body.assignment_id, body.student_id)
         if existing:
@@ -221,13 +265,33 @@ class SubmissionService:
                 "You can only grade submissions for your own assignments"
             )
 
+        grade = body.grade.strip() if isinstance(body.grade, str) else None
+        feedback = body.feedback.strip() if isinstance(body.feedback, str) else None
+        approve_flag = body.is_approved
+
+        if grade is None and (feedback is None or not feedback) and approve_flag is None:
+            raise HTTPException(
+                status_code=422,
+                detail="Provide at least one review action: grade, feedback, or approval",
+            )
+
+        update_data = {"is_graded": True}
+        if grade is not None:
+            update_data["grade"] = grade
+        if feedback is not None:
+            update_data["feedback"] = feedback if feedback else None
+        if approve_flag is not None:
+            update_data["is_approved"] = approve_flag
+            if approve_flag:
+                update_data["approved_by"] = current_user.id
+                update_data["approved_at"] = datetime.now(tz=timezone.utc)
+            else:
+                update_data["approved_by"] = None
+                update_data["approved_at"] = None
+
         updated = await self.repo.update(
             submission,
-            {
-                "grade": body.grade,
-                "feedback": body.feedback,
-                "is_graded": True,
-            },
+            update_data,
         )
         await self.db.commit()
         await self.db.refresh(updated)
@@ -238,7 +302,9 @@ class SubmissionService:
             current_user.school_id,
             submission_id,
             assignment.title,
-            body.grade,
+            grade,
+            feedback,
+            approve_flag,
         )
 
         return self._build_response(updated)
@@ -264,6 +330,8 @@ class SubmissionService:
                     and_(
                         Student.user_id == current_user.id,
                         Student.school_id == current_user.school_id,
+                        Student.standard_id == assignment.standard_id,
+                        Student.academic_year_id == assignment.academic_year_id,
                     )
                 )
             )
@@ -290,6 +358,7 @@ class SubmissionService:
                         Student.parent_id == current_user.parent_id,
                         Student.school_id == current_user.school_id,
                         Student.standard_id == assignment.standard_id,
+                        Student.academic_year_id == assignment.academic_year_id,
                     )
                 )
             )

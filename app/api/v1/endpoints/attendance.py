@@ -47,7 +47,6 @@ async def list_attendance(
     month: Optional[int] = Query(None, ge=1, le=12),
     year: Optional[int] = Query(None, ge=2000),
     subject_id: Optional[uuid.UUID] = Query(None),
-    lecture_number: Optional[int] = Query(None, ge=1, le=12),
     current_user: CurrentUser = Depends(require_permission("attendance:read")),
     db: AsyncSession = Depends(get_db),
 ):
@@ -62,7 +61,6 @@ async def list_attendance(
         month=month,
         year=year,
         subject_id=subject_id,
-        lecture_number=lecture_number,
     )
     return AttendanceListResponse(**result)
 
@@ -86,7 +84,6 @@ async def class_snapshot(
     date: date = Query(...),
     section: Optional[str] = Query(None),
     subject_id: Optional[uuid.UUID] = Query(None),
-    lecture_number: Optional[int] = Query(None, ge=1, le=12),
     current_user: CurrentUser = Depends(require_permission("attendance:analytics")),
     db: AsyncSession = Depends(get_db),
 ):
@@ -98,7 +95,6 @@ async def class_snapshot(
         current_user,
         section=section,
         subject_id=subject_id,
-        lecture_number=lecture_number,
     )
 
 
@@ -109,7 +105,6 @@ async def class_snapshot_query(
     date: date = Query(...),
     section: Optional[str] = Query(None),
     subject_id: Optional[uuid.UUID] = Query(None),
-    lecture_number: Optional[int] = Query(None, ge=1, le=12),
     current_user: CurrentUser = Depends(require_permission("attendance:analytics")),
     db: AsyncSession = Depends(get_db),
 ):
@@ -121,7 +116,6 @@ async def class_snapshot_query(
         current_user,
         section=section,
         subject_id=subject_id,
-        lecture_number=lecture_number,
     )
 
 

@@ -1,4 +1,5 @@
 import uuid
+from datetime import date
 from typing import Optional
 from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -50,6 +51,8 @@ class AssignmentRepository:
         academic_year_id: Optional[uuid.UUID] = None,
         teacher_id: Optional[uuid.UUID] = None,
         is_active: Optional[bool] = None,
+        is_overdue: Optional[bool] = None,
+        reference_date: Optional[date] = None,
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list[Assignment], int]:
@@ -65,6 +68,12 @@ class AssignmentRepository:
             base_where.append(Assignment.teacher_id == teacher_id)
         if is_active is not None:
             base_where.append(Assignment.is_active == is_active)
+        if is_overdue is not None:
+            today = reference_date or date.today()
+            if is_overdue:
+                base_where.append(Assignment.due_date < today)
+            else:
+                base_where.append(Assignment.due_date >= today)
 
         stmt = select(Assignment).where(and_(*base_where))
         count_q = select(func.count(Assignment.id)).where(and_(*base_where))

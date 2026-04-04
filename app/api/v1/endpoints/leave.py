@@ -4,7 +4,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import CurrentUser, require_permission
+from app.core.dependencies import CurrentUser, get_current_user, require_permission
+from app.core.exceptions import ForbiddenException
 from app.db.session import get_db
 from app.schemas.leave import (
     LeaveApplyRequest,
@@ -14,7 +15,7 @@ from app.schemas.leave import (
     LeaveBalanceResponse,
 )
 from app.services.leave import LeaveService
-from app.utils.enums import LeaveStatus
+from app.utils.enums import LeaveStatus, RoleEnum
 
 router = APIRouter(prefix="/leave", tags=["Leave"])
 
@@ -43,9 +44,18 @@ async def decide_leave(
 async def list_leaves(
     status: Optional[LeaveStatus] = Query(None),
     academic_year_id: Optional[uuid.UUID] = Query(None),
-    current_user: CurrentUser = Depends(require_permission("leave:read")),
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    # Backward-compatible access:
+    # - Preferred: users with explicit leave:read.
+    # - Teacher fallback: allow own-leave listing if leave:apply exists.
+    can_read = "leave:read" in current_user.permissions
+    teacher_fallback = current_user.role == RoleEnum.TEACHER
+    if not can_read and not teacher_fallback:
+        raise ForbiddenException(
+            detail="Permission 'leave:read' is required to access this resource"
+        )
     return await LeaveService(db).list_leaves(current_user, status, academic_year_id)
 
 

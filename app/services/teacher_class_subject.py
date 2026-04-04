@@ -6,7 +6,10 @@ from app.repositories.teacher_class_subject import TeacherClassSubjectRepository
 from app.repositories.teacher import TeacherRepository
 from app.repositories.masters import StandardRepository, SubjectRepository
 from app.repositories.academic_year import AcademicYearRepository
-from app.schemas.teacher_class_subject import TeacherAssignmentCreate
+from app.schemas.teacher_class_subject import (
+    TeacherAssignmentCreate,
+    TeacherAssignmentUpdate,
+)
 from app.models.teacher_class_subject import TeacherClassSubject
 from app.core.exceptions import (
     NotFoundException,
@@ -100,6 +103,62 @@ class TeacherClassSubjectService:
 
         await self.repo.delete(obj)
         await self.db.commit()
+
+    async def update_assignment(
+        self,
+        assignment_id: uuid.UUID,
+        payload: TeacherAssignmentUpdate,
+        school_id: uuid.UUID,
+    ) -> TeacherClassSubject:
+        obj = await self.repo.get_by_id(assignment_id)
+        if not obj:
+            raise NotFoundException(detail="Assignment not found")
+
+        teacher = await self.teacher_repo.get_by_id(obj.teacher_id, school_id)
+        if not teacher:
+            raise NotFoundException(detail="Assignment not found in this school")
+
+        standard = await self.std_repo.get_by_id(payload.standard_id, school_id)
+        if not standard:
+            raise NotFoundException(detail="Standard not found in this school")
+
+        subject = await self.sub_repo.get_by_id(payload.subject_id, school_id)
+        if not subject:
+            raise NotFoundException(detail="Subject not found in this school")
+
+        if subject.standard_id != payload.standard_id:
+            raise ValidationException(
+                detail="Subject does not belong to the specified standard"
+            )
+
+        year = await self.year_repo.get_by_id(payload.academic_year_id, school_id)
+        if not year:
+            raise NotFoundException(detail="Academic year not found in this school")
+
+        duplicate = await self.repo.get_duplicate_excluding(
+            assignment_id=assignment_id,
+            teacher_id=obj.teacher_id,
+            standard_id=payload.standard_id,
+            section=payload.section,
+            subject_id=payload.subject_id,
+            academic_year_id=payload.academic_year_id,
+        )
+        if duplicate:
+            raise ConflictException(
+                detail="This teacher is already assigned to this class-subject for the academic year"
+            )
+
+        updated = await self.repo.update(
+            obj,
+            {
+                "standard_id": payload.standard_id,
+                "section": payload.section,
+                "subject_id": payload.subject_id,
+                "academic_year_id": payload.academic_year_id,
+            },
+        )
+        await self.db.commit()
+        return await self.repo.get_by_id(updated.id)  # type: ignore[return-value]
 
     async def list_by_teacher(
         self,

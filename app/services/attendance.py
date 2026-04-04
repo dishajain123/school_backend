@@ -29,6 +29,8 @@ from app.utils.enums import RoleEnum, AttendanceStatus, NotificationType, Notifi
 
 
 class AttendanceService:
+    _DEFAULT_LECTURE_NUMBER = 1
+
     def __init__(self, db: AsyncSession):
         self.db = db
         self.repo = AttendanceRepository(db)
@@ -93,7 +95,7 @@ class AttendanceService:
                 "section": payload.section,
                 "subject_id": payload.subject_id,
                 "academic_year_id": payload.academic_year_id,
-                "lecture_number": payload.lecture_number,
+                "lecture_number": self._DEFAULT_LECTURE_NUMBER,
                 "date": payload.date,
                 "status": r.status,
             }
@@ -110,7 +112,6 @@ class AttendanceService:
                 payload.records,
                 school_id,
                 payload.date,
-                payload.lecture_number,
             )
 
         return MarkAttendanceResponse(
@@ -118,7 +119,6 @@ class AttendanceService:
             updated=0,
             total=len(records),
             date=payload.date,
-            lecture_number=payload.lecture_number,
         )
 
     async def _notify_attendance_updates(
@@ -126,7 +126,6 @@ class AttendanceService:
         records,
         school_id: uuid.UUID,
         attendance_date: date,
-        lecture_number: int,
     ) -> None:
         for row in records:
             try:
@@ -143,9 +142,7 @@ class AttendanceService:
                     if is_high
                     else NotificationPriority.MEDIUM
                 )
-                when_text = (
-                    f"{attendance_date.strftime('%d %b %Y')} • Lecture {lecture_number}"
-                )
+                when_text = attendance_date.strftime("%d %b %Y")
 
                 if student.parent and student.parent.user_id:
                     await self.notif_service.create(
@@ -199,7 +196,6 @@ class AttendanceService:
         month: Optional[int],
         year: Optional[int],
         subject_id: Optional[uuid.UUID],
-        lecture_number: Optional[int],
     ):
         school_id = current_user.school_id
         if not school_id:
@@ -226,7 +222,6 @@ class AttendanceService:
                 month=month,
                 year=year,
                 subject_id=subject_id,
-                lecture_number=lecture_number,
             )
             return {"items": items, "total": total}
 
@@ -259,7 +254,6 @@ class AttendanceService:
             record_date=record_date,
             academic_year_id=academic_year_id,
             subject_id=subject_id,
-            lecture_number=lecture_number,
         )
         return {"items": items, "total": len(items)}
 
@@ -338,7 +332,6 @@ class AttendanceService:
         current_user: CurrentUser,
         section: Optional[str] = None,
         subject_id: Optional[uuid.UUID] = None,
-        lecture_number: Optional[int] = None,
     ) -> ClassAttendanceSnapshot:
         school_id = current_user.school_id
         if not school_id:
@@ -351,7 +344,6 @@ class AttendanceService:
             record_date=record_date,
             academic_year_id=academic_year_id,
             subject_id=subject_id,
-            lecture_number=lecture_number,
         )
 
         records = [ClassSnapshotRecord(**r) for r in rows]

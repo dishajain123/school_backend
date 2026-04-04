@@ -1,25 +1,26 @@
 import uuid
 from typing import Optional
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.session import get_db
 from app.core.dependencies import CurrentUser, get_current_user
-from app.core.exceptions import ValidationException, ForbiddenException
-from app.services.teacher_class_subject import TeacherClassSubjectService
+from app.core.exceptions import ForbiddenException, ValidationException
+from app.db.session import get_db
 from app.schemas.teacher_class_subject import (
-    TeacherAssignmentCreate,
-    TeacherAssignmentUpdate,
-    TeacherAssignmentResponse,
-    TeacherAssignmentListResponse,
-    TeacherSummary,
+    AcademicYearSummary,
     StandardSummary,
     SubjectSummary,
-    AcademicYearSummary,
+    TeacherAssignmentCreate,
+    TeacherAssignmentListResponse,
+    TeacherAssignmentResponse,
+    TeacherAssignmentUpdate,
+    TeacherSummary,
 )
+from app.services.teacher_class_subject import TeacherClassSubjectService
 from app.utils.enums import RoleEnum
 
-router = APIRouter(prefix="/teacher-assignments", tags=["Teacher Assignments"])
+router = APIRouter(prefix="/teacher-class-subjects", tags=["Teacher Assignments"])
 
 
 def _require_school(current_user: CurrentUser) -> uuid.UUID:

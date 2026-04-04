@@ -60,6 +60,29 @@ class TeacherClassSubjectRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_duplicate_excluding(
+        self,
+        assignment_id: uuid.UUID,
+        teacher_id: uuid.UUID,
+        standard_id: uuid.UUID,
+        section: str,
+        subject_id: uuid.UUID,
+        academic_year_id: uuid.UUID,
+    ) -> Optional[TeacherClassSubject]:
+        result = await self.db.execute(
+            select(TeacherClassSubject).where(
+                and_(
+                    TeacherClassSubject.id != assignment_id,
+                    TeacherClassSubject.teacher_id == teacher_id,
+                    TeacherClassSubject.standard_id == standard_id,
+                    TeacherClassSubject.section == section,
+                    TeacherClassSubject.subject_id == subject_id,
+                    TeacherClassSubject.academic_year_id == academic_year_id,
+                )
+            )
+        )
+        return result.scalar_one_or_none()
+
     async def list_by_teacher(
         self,
         teacher_id: uuid.UUID,
@@ -156,3 +179,10 @@ class TeacherClassSubjectRepository:
     async def delete(self, obj: TeacherClassSubject) -> None:
         await self.db.delete(obj)
         await self.db.flush()
+
+    async def update(self, obj: TeacherClassSubject, data: dict) -> TeacherClassSubject:
+        for key, value in data.items():
+            setattr(obj, key, value)
+        await self.db.flush()
+        await self.db.refresh(obj)
+        return obj

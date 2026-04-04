@@ -80,3 +80,23 @@ async def grade_submission(
     return await SubmissionService(db).grade_submission(
         submission_id, body, current_user, background_tasks
     )
+
+
+@router.patch("/{submission_id}/review", response_model=SubmissionResponse)
+async def review_submission(
+    submission_id: uuid.UUID,
+    body: SubmissionGrade,
+    background_tasks: BackgroundTasks,
+    current_user: CurrentUser = Depends(require_permission("submission:grade")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Teacher review endpoint with flexible actions:
+    - set grade (optional)
+    - add feedback (optional)
+    - approve/unapprove (optional)
+    At least one action is required.
+    """
+    return await SubmissionService(db).grade_submission(
+        submission_id, body, current_user, background_tasks
+    )
