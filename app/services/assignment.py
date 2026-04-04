@@ -8,6 +8,7 @@ from sqlalchemy import select, and_
 
 from app.repositories.assignment import AssignmentRepository
 from app.repositories.notification import NotificationRepository
+from app.repositories.teacher_class_subject import TeacherClassSubjectRepository
 from app.schemas.assignment import (
     AssignmentCreate,
     AssignmentUpdate,
