@@ -1,7 +1,7 @@
 import uuid
 from typing import Optional
 
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -56,3 +56,24 @@ class TimetableRepository:
         await self.db.flush()
         await self.db.refresh(timetable)
         return timetable
+
+    async def list_sections_by_standard(
+        self,
+        school_id: uuid.UUID,
+        standard_id: uuid.UUID,
+        academic_year_id: uuid.UUID,
+    ) -> list[str]:
+        section_expr = func.trim(Timetable.section)
+        result = await self.db.execute(
+            select(section_expr.label("section"))
+            .where(
+                Timetable.school_id == school_id,
+                Timetable.standard_id == standard_id,
+                Timetable.academic_year_id == academic_year_id,
+                Timetable.section.is_not(None),
+                section_expr != "",
+            )
+            .group_by(section_expr)
+            .order_by(func.lower(section_expr))
+        )
+        return [row[0] for row in result.all() if row[0]]

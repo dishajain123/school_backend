@@ -10,8 +10,10 @@ from app.schemas.student import (
     StudentCreate,
     StudentUpdate,
     StudentPromotionUpdate,
+    StudentBulkPromotionUpdate,
     StudentResponse,
     StudentListResponse,
+    StudentBulkPromotionResponse,
 )
 from app.core.dependencies import get_current_user, require_permission, CurrentUser
 from app.core.exceptions import ForbiddenException
@@ -83,6 +85,19 @@ async def list_student_sections(
     )
 
 
+@router.get("/me", response_model=StudentResponse)
+async def get_my_student_profile(
+    current_user: CurrentUser = Depends(get_current_user),
+    service: StudentService = Depends(get_service),
+):
+    if not current_user.school_id:
+        raise ForbiddenException("School context required")
+    return await service.get_my_student_profile(
+        school_id=current_user.school_id,
+        current_user=current_user,
+    )
+
+
 @router.get("/{student_id}", response_model=StudentResponse)
 async def get_student(
     student_id: uuid.UUID,
@@ -119,4 +134,24 @@ async def update_promotion_status(
         raise ForbiddenException("School context required")
     return await service.update_promotion_status(
         student_id, current_user.school_id, data, current_user
+    )
+
+
+@router.patch("/promotion-status/bulk", response_model=StudentBulkPromotionResponse)
+async def bulk_update_promotion_status(
+    data: StudentBulkPromotionUpdate,
+    current_user: CurrentUser = Depends(require_permission("student:promote")),
+    service: StudentService = Depends(get_service),
+):
+    if not current_user.school_id:
+        raise ForbiddenException("School context required")
+    items = await service.bulk_update_promotion_status(
+        student_ids=data.student_ids,
+        school_id=current_user.school_id,
+        data=StudentPromotionUpdate(promotion_status=data.promotion_status),
+        current_user=current_user,
+    )
+    return StudentBulkPromotionResponse(
+        updated_count=len(items),
+        items=items,
     )

@@ -4,13 +4,18 @@ from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.models.assignment import Assignment
+from app.models.student import Student
 from app.models.submission import Submission
 
 
 def _with_relations(stmt):
     return stmt.options(
         selectinload(Submission.student),
+        selectinload(Submission.student).selectinload(Student.user),
         selectinload(Submission.performer),
+        selectinload(Submission.assignment).selectinload(Assignment.standard),
+        selectinload(Submission.assignment).selectinload(Assignment.subject),
     )
 
 
@@ -58,18 +63,35 @@ class SubmissionRepository:
         assignment_id: uuid.UUID,
         school_id: uuid.UUID,
         student_id: Optional[uuid.UUID] = None,
+        standard_id: Optional[uuid.UUID] = None,
+        subject_id: Optional[uuid.UUID] = None,
+        section: Optional[str] = None,
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list[Submission], int]:
-        base_where = [
-            Submission.assignment_id == assignment_id,
-            Submission.school_id == school_id,
-        ]
+        base_where = [Submission.assignment_id == assignment_id, Submission.school_id == school_id]
         if student_id:
             base_where.append(Submission.student_id == student_id)
+        if section:
+            base_where.append(Student.section == section)
+        if standard_id:
+            base_where.append(Assignment.standard_id == standard_id)
+        if subject_id:
+            base_where.append(Assignment.subject_id == subject_id)
 
-        stmt = select(Submission).where(and_(*base_where))
-        count_q = select(func.count(Submission.id)).where(and_(*base_where))
+        stmt = (
+            select(Submission)
+            .join(Assignment, Assignment.id == Submission.assignment_id)
+            .join(Student, Student.id == Submission.student_id)
+            .where(and_(*base_where))
+        )
+        count_q = (
+            select(func.count(Submission.id))
+            .select_from(Submission)
+            .join(Assignment, Assignment.id == Submission.assignment_id)
+            .join(Student, Student.id == Submission.student_id)
+            .where(and_(*base_where))
+        )
 
         total = (await self.db.execute(count_q)).scalar_one()
         offset = (page - 1) * page_size

@@ -21,6 +21,24 @@ class DiaryCreate(BaseModel):
             raise ValueError("Topic covered cannot be empty")
         return v
 
+    @field_validator("academic_year_id", mode="before")
+    @classmethod
+    def empty_year_to_none(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
+    @field_validator("date", mode="before")
+    @classmethod
+    def empty_date_to_none(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
 
 class DiaryResponse(BaseModel):
     id: uuid.UUID

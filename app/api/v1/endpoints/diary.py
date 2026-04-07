@@ -1,8 +1,8 @@
 import uuid
 from datetime import date
-from typing import Any, Optional
+from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,21 +15,41 @@ from app.services.diary import DiaryService
 router = APIRouter(prefix="/diary", tags=["Diary"])
 
 
+async def _parse_diary_body(request: Request) -> DiaryCreate:
+    try:
+        payload = await request.json()
+    except Exception:
+        raise ValidationException("Request body must be valid JSON")
+
+    if payload is None:
+        raise ValidationException("Request body is required")
+    if not isinstance(payload, dict):
+        raise ValidationException("Request body must be a JSON object")
+
+    try:
+        return DiaryCreate.model_validate(payload)
+    except ValidationError as exc:
+        first_error = exc.errors()[0] if exc.errors() else {}
+        message = first_error.get("msg") or "Validation failed"
+        raise ValidationException(message)
+
+
 @router.post("/create", response_model=DiaryResponse, status_code=201)
 async def create_diary_entry_explicit(
-    body: DiaryCreate,
+    request: Request,
     current_user: CurrentUser = Depends(require_permission("diary:create")),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Explicit typed create route kept for compatibility with strict body validators.
     """
+    body = await _parse_diary_body(request)
     return await DiaryService(db).create_entry(body, current_user)
 
 
 @router.post("", response_model=DiaryResponse, status_code=201)
 async def create_diary_entry(
-    payload: Any = Body(None),
+    request: Request,
     current_user: CurrentUser = Depends(require_permission("diary:create")),
     db: AsyncSession = Depends(get_db),
 ):
@@ -37,30 +57,7 @@ async def create_diary_entry(
     TEACHER only (`diary:create`).
     Creates a daily class diary entry for a subject.
     """
-    if payload is None:
-        raise ValidationException("Diary payload is required")
-
-    # Support both payload shapes:
-    # 1) { ...fields... }
-    # 2) { "payload": { ...fields... } }
-    normalized: Any = payload
-    if isinstance(payload, dict):
-        raw_payload = payload.get("payload")
-        if isinstance(raw_payload, dict):
-            normalized = raw_payload
-
-    if isinstance(normalized, DiaryCreate):
-        body = normalized
-    elif isinstance(normalized, dict) and normalized:
-        try:
-            body = DiaryCreate.model_validate(normalized)
-        except ValidationError as exc:
-            first = exc.errors()[0] if exc.errors() else {}
-            msg = first.get("msg") or "Invalid diary payload"
-            raise ValidationException(msg)
-    else:
-        raise ValidationException("Invalid diary payload")
-
+    body = await _parse_diary_body(request)
     return await DiaryService(db).create_entry(body, current_user)
 
 

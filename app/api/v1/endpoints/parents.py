@@ -16,6 +16,8 @@ from app.services.parent import ParentService
 from app.schemas.parent import (
     ParentCreate,
     ParentUpdate,
+    ParentAssignChildrenRequest,
+    ParentLinkChildRequest,
     ParentResponse,
     ParentListResponse,
     ParentChildrenResponse,
@@ -105,6 +107,50 @@ async def get_parent_children(
 ):
     service = ParentService(db)
     pid, children = await service.get_children(parent_id, current_user)
+    return ParentChildrenResponse(
+        parent_id=pid,
+        children=[ChildSummary.model_validate(c) for c in children],
+        total=len(children),
+    )
+
+
+@router.patch("/{parent_id}/children", response_model=ParentChildrenResponse)
+async def assign_parent_children(
+    parent_id: uuid.UUID,
+    payload: ParentAssignChildrenRequest,
+    current_user: CurrentUser = Depends(require_permission("user:manage")),
+    db: AsyncSession = Depends(get_db),
+):
+    service = ParentService(db)
+    pid, children = await service.assign_children(
+        parent_id=parent_id,
+        student_ids=payload.student_ids,
+        current_user=current_user,
+    )
+    return ParentChildrenResponse(
+        parent_id=pid,
+        children=[ChildSummary.model_validate(c) for c in children],
+        total=len(children),
+    )
+
+
+@router.post("/me/children/link", response_model=ParentChildrenResponse)
+async def link_my_child(
+    payload: ParentLinkChildRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    service = ParentService(db)
+    pid, children = await service.link_child_for_current_parent(
+        current_user=current_user,
+        student_id=payload.student_id,
+        admission_number=payload.admission_number,
+        student_email=str(payload.student_email).lower().strip()
+        if payload.student_email
+        else None,
+        student_phone=payload.student_phone,
+        student_password=payload.student_password,
+    )
     return ParentChildrenResponse(
         parent_id=pid,
         children=[ChildSummary.model_validate(c) for c in children],

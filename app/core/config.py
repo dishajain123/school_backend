@@ -46,6 +46,8 @@ class Settings(BaseSettings):
 
     # App
     APP_NAME: str = "SMS Backend"
+    BACKEND_BASE_URL: str = "http://localhost:8000"
+    APP_TIMEZONE: str = "Asia/Kolkata"
     DEBUG: bool = False
     SQL_ECHO: bool = False
     ALLOWED_ORIGINS: str = "*"

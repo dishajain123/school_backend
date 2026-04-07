@@ -44,6 +44,11 @@ class SubmissionResponse(BaseModel):
     student_admission_number: Optional[str] = None
     student_roll_number: Optional[str] = None
     student_section: Optional[str] = None
+    student_name: Optional[str] = None
+    standard_id: Optional[uuid.UUID] = None
+    standard_name: Optional[str] = None
+    subject_id: Optional[uuid.UUID] = None
+    subject_name: Optional[str] = None
     is_late: bool
     school_id: uuid.UUID
     created_at: datetime

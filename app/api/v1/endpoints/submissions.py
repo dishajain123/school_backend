@@ -46,6 +46,9 @@ async def create_submission(
 @router.get("", response_model=SubmissionListResponse)
 async def list_submissions(
     assignment_id: uuid.UUID = Query(..., description="Filter submissions by assignment"),
+    standard_id: Optional[uuid.UUID] = Query(None, description="Optional class/standard filter"),
+    subject_id: Optional[uuid.UUID] = Query(None, description="Optional subject filter"),
+    section: Optional[str] = Query(None, description="Optional section filter"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     current_user: CurrentUser = Depends(require_permission("assignment:read")),
@@ -58,6 +61,9 @@ async def list_submissions(
     """
     return await SubmissionService(db).list_submissions(
         assignment_id=assignment_id,
+        standard_id=standard_id,
+        subject_id=subject_id,
+        section=section,
         current_user=current_user,
         page=page,
         page_size=page_size,

@@ -1,4 +1,5 @@
 import uuid
+from typing import Optional
 
 from fastapi import APIRouter, Depends, BackgroundTasks, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +25,22 @@ async def create_exam(
     db: AsyncSession = Depends(get_db),
 ):
     return await ResultService(db).create_exam(payload, current_user)
+
+
+@router.get("/exams", response_model=list[ExamResponse])
+async def list_exams(
+    student_id: Optional[uuid.UUID] = Query(None),
+    academic_year_id: Optional[uuid.UUID] = Query(None),
+    standard_id: Optional[uuid.UUID] = Query(None),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await ResultService(db).list_exams(
+        current_user=current_user,
+        student_id=student_id,
+        academic_year_id=academic_year_id,
+        standard_id=standard_id,
+    )
 
 
 @router.post("/entries", response_model=ResultListResponse, status_code=201)

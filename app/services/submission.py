@@ -18,6 +18,7 @@ from app.schemas.submission import (
 from app.core.dependencies import CurrentUser
 from app.core.exceptions import NotFoundException, ForbiddenException
 from app.utils.enums import RoleEnum, NotificationType, NotificationPriority
+from app.utils.date_utils import today_in_app_timezone
 from app.integrations.minio_client import minio_client
 
 SUBMISSION_BUCKET = "submissions"
@@ -139,6 +140,19 @@ class SubmissionService:
             data.student_admission_number = student.admission_number
             data.student_roll_number = student.roll_number
             data.student_section = student.section
+            student_user = getattr(student, "user", None)
+            if student_user is not None:
+                data.student_name = student_user.email or student_user.phone
+        assignment = getattr(submission, "assignment", None)
+        if assignment is not None:
+            data.standard_id = assignment.standard_id
+            data.subject_id = assignment.subject_id
+            standard = getattr(assignment, "standard", None)
+            if standard is not None:
+                data.standard_name = standard.name
+            subject = getattr(assignment, "subject", None)
+            if subject is not None:
+                data.subject_name = subject.name
         return data
 
     async def create_submission(
@@ -221,7 +235,7 @@ class SubmissionService:
                 content_type=file.content_type or "application/octet-stream",
             )
 
-        is_late = datetime.now(tz=timezone.utc).date() > assignment.due_date
+        is_late = today_in_app_timezone() > assignment.due_date
 
         submission = await self.repo.create(
             {
@@ -312,17 +326,30 @@ class SubmissionService:
     async def list_submissions(
         self,
         assignment_id: uuid.UUID,
+        standard_id: Optional[uuid.UUID],
+        subject_id: Optional[uuid.UUID],
+        section: Optional[str],
         current_user: CurrentUser,
         page: int,
         page_size: int,
     ) -> SubmissionListResponse:
         from app.models.student import Student
+        from app.services.assignment import _get_teacher_id
 
         assignment = await self.assignment_repo.get_by_id(
             assignment_id, current_user.school_id
         )
         if not assignment:
             raise NotFoundException("Assignment not found")
+
+        if current_user.role == RoleEnum.TEACHER:
+            teacher_id = await _get_teacher_id(
+                self.db, current_user.id, current_user.school_id
+            )
+            if assignment.teacher_id != teacher_id:
+                raise ForbiddenException(
+                    "You can only view submissions for your own assignments"
+                )
 
         if current_user.role == RoleEnum.STUDENT:
             result = await self.db.execute(
@@ -340,6 +367,9 @@ class SubmissionService:
                 assignment_id=assignment_id,
                 school_id=current_user.school_id,
                 student_id=own_student_id,
+                standard_id=standard_id,
+                subject_id=subject_id,
+                section=section,
                 page=page,
                 page_size=page_size,
             )
@@ -379,6 +409,9 @@ class SubmissionService:
         items, total = await self.repo.list_by_assignment(
             assignment_id=assignment_id,
             school_id=current_user.school_id,
+            standard_id=standard_id,
+            subject_id=subject_id,
+            section=section,
             page=page,
             page_size=page_size,
         )

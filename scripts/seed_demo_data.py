@@ -47,6 +47,7 @@ from app.models.submission import Submission
 from app.models.teacher import Teacher
 from app.models.teacher_class_subject import TeacherClassSubject
 from app.models.teacher_leave import TeacherLeave
+from app.models.timetable import Timetable
 from app.models.user import User
 from app.utils.enums import (
     AnnouncementType,
@@ -549,15 +550,31 @@ async def seed_demo(db: AsyncSession) -> dict[str, str]:
 
     await db.flush()
 
-    today = date(2026, 4, 1)
-    attendance_rows = [
-        (students[0], teacher_math, class8, math08, today - timedelta(days=3), AttendanceStatus.PRESENT),
-        (students[1], teacher_math, class8, math08, today - timedelta(days=3), AttendanceStatus.LATE),
-        (students[2], teacher_math, class8, math08, today - timedelta(days=3), AttendanceStatus.ABSENT),
-        (students[3], teacher_science, class10, sci10, today - timedelta(days=2), AttendanceStatus.PRESENT),
-        (students[4], teacher_science, class10, sci10, today - timedelta(days=2), AttendanceStatus.PRESENT),
-        (students[5], teacher_science, class10, sci10, today - timedelta(days=2), AttendanceStatus.LATE),
-    ]
+    today = date.today()
+    attendance_rows = []
+    class_subject_map = {
+        class8.id: (teacher_math, class8, math08),
+        class10.id: (teacher_science, class10, sci10),
+    }
+    for day_offset in range(0, 14):
+        attendance_date = today - timedelta(days=day_offset)
+        if attendance_date.weekday() >= 5:
+            continue
+        for idx, student in enumerate(students):
+            class_tuple = class_subject_map.get(student.standard_id)
+            if not class_tuple:
+                continue
+            teacher_ref, standard_ref, subject_ref = class_tuple
+            if day_offset % 9 == (idx % 3):
+                status = AttendanceStatus.ABSENT
+            elif day_offset % 4 == (idx % 2):
+                status = AttendanceStatus.LATE
+            else:
+                status = AttendanceStatus.PRESENT
+            attendance_rows.append(
+                (student, teacher_ref, standard_ref, subject_ref, attendance_date, status)
+            )
+
     for student, teacher, standard, subject, attendance_date, status in attendance_rows:
         exists = await first_or_none(
             db,
@@ -573,6 +590,7 @@ async def seed_demo(db: AsyncSession) -> dict[str, str]:
                     student_id=student.id,
                     teacher_id=teacher.id,
                     standard_id=standard.id,
+                    section=(student.section or "").strip(),
                     subject_id=subject.id,
                     academic_year_id=year.id,
                     date=attendance_date,
@@ -582,8 +600,37 @@ async def seed_demo(db: AsyncSession) -> dict[str, str]:
 
     content_dates = {
         "class8": today - timedelta(days=1),
-        "class10": today,
+        "class10": today - timedelta(days=2),
     }
+
+    timetable_rows = [
+        (class8.id, "A", "demo/timetables/class8a_2025_26.pdf"),
+        (class10.id, "B", "demo/timetables/class10b_2025_26.pdf"),
+    ]
+    for standard_id, section_value, file_key in timetable_rows:
+        existing = await first_or_none(
+            db,
+            select(Timetable).where(
+                Timetable.school_id == school.id,
+                Timetable.standard_id == standard_id,
+                Timetable.section == section_value,
+                Timetable.academic_year_id == year.id,
+            ),
+        )
+        if not existing:
+            db.add(
+                Timetable(
+                    standard_id=standard_id,
+                    section=section_value,
+                    academic_year_id=year.id,
+                    file_key=file_key,
+                    effective_from=year.start_date,
+                    effective_to=year.end_date,
+                    uploaded_by=principal_user.id,
+                    school_id=school.id,
+                )
+            )
+
     homework_rows = [
         (
             "class8-math",
@@ -607,6 +654,32 @@ async def seed_demo(db: AsyncSession) -> dict[str, str]:
                 teacher_id=teacher_science.id,
                 standard_id=class10.id,
                 subject_id=sci10.id,
+                academic_year_id=year.id,
+                school_id=school.id,
+            ),
+        ),
+        (
+            "class8-english",
+            Homework,
+            dict(
+                description="Read chapter 7 and write a 250-word character sketch of the protagonist.",
+                date=today - timedelta(days=3),
+                teacher_id=teacher_english.id,
+                standard_id=class8.id,
+                subject_id=eng08.id,
+                academic_year_id=year.id,
+                school_id=school.id,
+            ),
+        ),
+        (
+            "class10-math",
+            Homework,
+            dict(
+                description="Solve trigonometry worksheet set C before the weekend revision class.",
+                date=today - timedelta(days=4),
+                teacher_id=teacher_math.id,
+                standard_id=class10.id,
+                subject_id=math10.id,
                 academic_year_id=year.id,
                 school_id=school.id,
             ),
@@ -662,15 +735,8 @@ async def seed_demo(db: AsyncSession) -> dict[str, str]:
         if not exists:
             db.add(StudentDiary(**payload))
 
-    assignment = await first_or_none(
-        db,
-        select(Assignment).where(
-            Assignment.school_id == school.id,
-            Assignment.title == "Linear Equations Worksheet",
-        ),
-    )
-    if not assignment:
-        assignment = Assignment(
+    assignment_specs = [
+        dict(
             title="Linear Equations Worksheet",
             description="Complete the worksheet and upload scanned solutions by Friday evening.",
             teacher_id=teacher_math.id,
@@ -678,18 +744,91 @@ async def seed_demo(db: AsyncSession) -> dict[str, str]:
             subject_id=math08.id,
             due_date=today + timedelta(days=2),
             file_key="demo/assignments/linear_equations_worksheet.pdf",
-            is_active=True,
-            academic_year_id=year.id,
-            school_id=school.id,
+        ),
+        dict(
+            title="Acids, Bases and Salts Revision",
+            description="Submit concise revision notes and 15 objective questions.",
+            teacher_id=teacher_science.id,
+            standard_id=class10.id,
+            subject_id=sci10.id,
+            due_date=today + timedelta(days=1),
+            file_key="demo/assignments/acids_bases_revision.pdf",
+        ),
+    ]
+    assignments_by_title: dict[str, Assignment] = {}
+    for spec in assignment_specs:
+        assignment = await first_or_none(
+            db,
+            select(Assignment).where(
+                Assignment.school_id == school.id,
+                Assignment.title == spec["title"],
+            ),
         )
-        db.add(assignment)
-        await db.flush()
+        if not assignment:
+            assignment = Assignment(
+                title=spec["title"],
+                description=spec["description"],
+                teacher_id=spec["teacher_id"],
+                standard_id=spec["standard_id"],
+                subject_id=spec["subject_id"],
+                due_date=spec["due_date"],
+                file_key=spec["file_key"],
+                is_active=True,
+                academic_year_id=year.id,
+                school_id=school.id,
+            )
+            db.add(assignment)
+            await db.flush()
+        assignments_by_title[spec["title"]] = assignment
 
     submission_specs = [
-        (students[0], "Completed all 10 problems and attached rough work.", "A", "Good structure and neat working."),
-        (students[1], "Attached worksheet with one incomplete answer.", "B+", "Recheck question 7."),
+        (
+            "Linear Equations Worksheet",
+            students[0],
+            "Completed all 10 problems and attached rough work.",
+            "A",
+            "Good structure and neat working.",
+            True,
+            False,
+        ),
+        (
+            "Linear Equations Worksheet",
+            students[1],
+            "Attached worksheet with one incomplete answer.",
+            "B+",
+            "Recheck question 7.",
+            True,
+            False,
+        ),
+        (
+            "Acids, Bases and Salts Revision",
+            students[3],
+            "Shared revision notes with all objective answers.",
+            "A-",
+            "Good understanding. Add more balanced equations.",
+            True,
+            False,
+        ),
+        (
+            "Acids, Bases and Salts Revision",
+            students[5],
+            "Submitted after deadline due to internet issue.",
+            None,
+            None,
+            False,
+            True,
+        ),
     ]
-    for student, text_response, grade, feedback in submission_specs:
+    for (
+        assignment_title,
+        student,
+        text_response,
+        grade,
+        feedback,
+        is_graded,
+        is_late,
+    ) in submission_specs:
+        assignment = assignments_by_title[assignment_title]
         existing = await first_or_none(
             db,
             select(Submission).where(
@@ -703,12 +842,12 @@ async def seed_demo(db: AsyncSession) -> dict[str, str]:
                     assignment_id=assignment.id,
                     student_id=student.id,
                     performed_by=student.user_id,
-                    file_key=f"demo/submissions/{student.admission_number.lower()}.pdf",
+                    file_key=f"demo/submissions/{student.admission_number.lower()}_{assignment.id}.pdf",
                     text_response=text_response,
                     grade=grade,
                     feedback=feedback,
-                    is_graded=True,
-                    is_late=False,
+                    is_graded=is_graded,
+                    is_late=is_late,
                     school_id=school.id,
                 )
             )
@@ -727,6 +866,20 @@ async def seed_demo(db: AsyncSession) -> dict[str, str]:
             AnnouncementType.EXAM,
             RoleEnum.STUDENT,
             class10.id,
+        ),
+        (
+            "Fee Counter Extended Hours",
+            "School fee office will remain open till 5:30 PM on Friday for quarter-end settlements.",
+            AnnouncementType.GENERAL,
+            RoleEnum.PARENT,
+            None,
+        ),
+        (
+            "Holiday Notice - School Foundation Day",
+            "School will remain closed on Monday for Foundation Day celebrations and staff development activities.",
+            AnnouncementType.HOLIDAY,
+            None,
+            None,
         ),
     ]
     for title, body, ann_type, target_role, target_standard_id in announcements:
@@ -754,7 +907,9 @@ async def seed_demo(db: AsyncSession) -> dict[str, str]:
     fee_structure_specs = [
         (class8.id, FeeCategory.TUITION, Decimal("45000.00"), date(2025, 7, 10), "Annual tuition for Class 8"),
         (class8.id, FeeCategory.TRANSPORT, Decimal("12000.00"), date(2025, 7, 10), "Bus transport fee for Class 8"),
+        (class8.id, FeeCategory.LIBRARY, Decimal("3500.00"), date(2025, 8, 5), "Annual library and digital resource fee"),
         (class10.id, FeeCategory.TUITION, Decimal("52000.00"), date(2025, 7, 10), "Annual tuition for Class 10"),
+        (class10.id, FeeCategory.LABORATORY, Decimal("6000.00"), date(2025, 8, 20), "Laboratory maintenance and consumables"),
         (class10.id, FeeCategory.EXAMINATION, Decimal("8500.00"), date(2025, 11, 15), "Board preparation and exam fee"),
     ]
     fee_structures: list[FeeStructure] = []
@@ -793,12 +948,25 @@ async def seed_demo(db: AsyncSession) -> dict[str, str]:
                     FeeLedger.fee_structure_id == structure.id,
                 ),
             )
+            paid_amount = Decimal("0.00")
+            status = FeeStatus.PENDING
+            if structure.fee_category == FeeCategory.TUITION and student in {students[0], students[3], students[4]}:
+                paid_amount = structure.amount if student in {students[0], students[4]} else Decimal("25000.00")
+                status = FeeStatus.PAID if paid_amount == structure.amount else FeeStatus.PARTIAL
+            if structure.fee_category == FeeCategory.TRANSPORT and student == students[1]:
+                paid_amount = Decimal("5000.00")
+                status = FeeStatus.PARTIAL
+            if structure.fee_category == FeeCategory.LIBRARY and student == students[0]:
+                paid_amount = structure.amount
+                status = FeeStatus.PAID
+            if structure.fee_category == FeeCategory.LABORATORY and student == students[4]:
+                paid_amount = structure.amount
+                status = FeeStatus.PAID
+            if structure.fee_category == FeeCategory.EXAMINATION and student == students[3]:
+                paid_amount = Decimal("4000.00")
+                status = FeeStatus.PARTIAL
+
             if not ledger:
-                paid_amount = Decimal("0.00")
-                status = FeeStatus.PENDING
-                if structure.fee_category == FeeCategory.TUITION and student in {students[0], students[3], students[4]}:
-                    paid_amount = structure.amount if student in {students[0], students[4]} else Decimal("25000.00")
-                    status = FeeStatus.PAID if paid_amount == structure.amount else FeeStatus.PARTIAL
                 ledger = FeeLedger(
                     student_id=student.id,
                     fee_structure_id=structure.id,
@@ -809,118 +977,196 @@ async def seed_demo(db: AsyncSession) -> dict[str, str]:
                 )
                 db.add(ledger)
                 await db.flush()
+            else:
+                ledger.total_amount = structure.amount
+                ledger.paid_amount = paid_amount
+                ledger.status = status
             fee_ledger_by_student[(student.id, structure.id)] = ledger
 
     for structure in fee_structures:
-        if structure.fee_category != FeeCategory.TUITION:
-            continue
         for student in student_by_standard[structure.standard_id]:
             ledger = fee_ledger_by_student[(student.id, structure.id)]
-            if Decimal(str(ledger.paid_amount)) <= Decimal("0.00"):
+            total_paid = Decimal(str(ledger.paid_amount))
+            if total_paid <= Decimal("0.00"):
                 continue
+
+            payment_splits = [total_paid]
+            payment_modes = [PaymentMode.UPI]
+            if structure.fee_category == FeeCategory.TUITION and student == students[3]:
+                payment_splits = [Decimal("15000.00"), Decimal("10000.00")]
+                payment_modes = [PaymentMode.BANK_TRANSFER, PaymentMode.UPI]
+            elif structure.fee_category == FeeCategory.TUITION and student == students[4]:
+                payment_modes = [PaymentMode.ONLINE]
+            elif structure.fee_category == FeeCategory.LIBRARY:
+                payment_modes = [PaymentMode.CASH]
+            elif structure.fee_category == FeeCategory.LABORATORY:
+                payment_modes = [PaymentMode.BANK_TRANSFER]
+            elif structure.fee_category == FeeCategory.TRANSPORT:
+                payment_modes = [PaymentMode.CHEQUE]
+            elif structure.fee_category == FeeCategory.EXAMINATION:
+                payment_modes = [PaymentMode.UPI]
+
+            for idx, split_amount in enumerate(payment_splits):
+                ref = (
+                    f"{payment_modes[min(idx, len(payment_modes)-1)].value}-"
+                    f"{student.roll_number}-{structure.fee_category.value}-{idx+1}"
+                )
+                existing = await first_or_none(
+                    db,
+                    select(Payment).where(
+                        Payment.fee_ledger_id == ledger.id,
+                        Payment.reference_number == ref,
+                    ),
+                )
+                if not existing:
+                    db.add(
+                        Payment(
+                            student_id=student.id,
+                            fee_ledger_id=ledger.id,
+                            amount=split_amount,
+                            payment_date=max(
+                                structure.due_date - timedelta(days=2 - idx),
+                                year.start_date,
+                            ),
+                            payment_mode=payment_modes[min(idx, len(payment_modes)-1)],
+                            reference_number=ref,
+                            receipt_key=(
+                                f"demo/receipts/"
+                                f"{student.admission_number.lower()}_{structure.fee_category.value.lower()}_{idx+1}.pdf"
+                            ),
+                            recorded_by=principal_user.id,
+                            late_fee_applied=(structure.due_date < today and idx == 0),
+                            original_due_date=structure.due_date,
+                            school_id=school.id,
+                        )
+                    )
+
+    exam_definitions = [
+        (
+            "Midterm Examination",
+            class10,
+            ExamType.MIDTERM,
+            date(2025, 9, 16),
+            date(2025, 9, 24),
+            "Class 10 Midterm Series",
+            [
+                (math10.id, date(2025, 9, 16), time(9, 0), 120, "Hall A"),
+                (sci10.id, date(2025, 9, 18), time(9, 0), 120, "Science Lab Block"),
+                (eng10.id, date(2025, 9, 22), time(9, 0), 90, "Hall A"),
+            ],
+        ),
+        (
+            "Unit Test - Cycle 2",
+            class8,
+            ExamType.UNIT,
+            date(2025, 8, 20),
+            date(2025, 8, 26),
+            "Class 8 Unit Test Series",
+            [
+                (math08.id, date(2025, 8, 20), time(9, 30), 60, "Class 8A"),
+                (sci08.id, date(2025, 8, 22), time(9, 30), 60, "Science Lab 1"),
+                (eng08.id, date(2025, 8, 25), time(9, 30), 60, "Class 8A"),
+            ],
+        ),
+    ]
+    exam_by_name: dict[str, Exam] = {}
+    for (
+        exam_name,
+        standard,
+        exam_type,
+        start_date_value,
+        end_date_value,
+        series_name,
+        series_entries,
+    ) in exam_definitions:
+        exam = await first_or_none(
+            db,
+            select(Exam).where(
+                Exam.school_id == school.id,
+                Exam.standard_id == standard.id,
+                Exam.academic_year_id == year.id,
+                Exam.name == exam_name,
+            ),
+        )
+        if not exam:
+            exam = Exam(
+                name=exam_name,
+                exam_type=exam_type,
+                standard_id=standard.id,
+                academic_year_id=year.id,
+                start_date=start_date_value,
+                end_date=end_date_value,
+                created_by=principal_user.id,
+                school_id=school.id,
+            )
+            db.add(exam)
+            await db.flush()
+        exam_by_name[exam_name] = exam
+
+        exam_series = await first_or_none(
+            db,
+            select(ExamSeries).where(
+                ExamSeries.school_id == school.id,
+                ExamSeries.standard_id == standard.id,
+                ExamSeries.academic_year_id == year.id,
+                ExamSeries.name == series_name,
+            ),
+        )
+        if not exam_series:
+            exam_series = ExamSeries(
+                name=series_name,
+                standard_id=standard.id,
+                academic_year_id=year.id,
+                is_published=True,
+                created_by=principal_user.id,
+                school_id=school.id,
+            )
+            db.add(exam_series)
+            await db.flush()
+
+        for subject_id, exam_date_value, start_time_value, duration, venue in series_entries:
             existing = await first_or_none(
                 db,
-                select(Payment).where(Payment.fee_ledger_id == ledger.id),
+                select(ExamScheduleEntry).where(
+                    ExamScheduleEntry.series_id == exam_series.id,
+                    ExamScheduleEntry.subject_id == subject_id,
+                ),
             )
             if not existing:
                 db.add(
-                    Payment(
-                        student_id=student.id,
-                        fee_ledger_id=ledger.id,
-                        amount=ledger.paid_amount,
-                        payment_date=date(2025, 7, 8),
-                        payment_mode=PaymentMode.UPI,
-                        reference_number=f"UPI-{student.roll_number}",
-                        receipt_key=f"demo/receipts/{student.admission_number.lower()}.pdf",
-                        recorded_by=principal_user.id,
-                        late_fee_applied=False,
-                        original_due_date=structure.due_date,
-                        school_id=school.id,
+                    ExamScheduleEntry(
+                        series_id=exam_series.id,
+                        subject_id=subject_id,
+                        exam_date=exam_date_value,
+                        start_time=start_time_value,
+                        duration_minutes=duration,
+                        venue=venue,
+                        is_cancelled=False,
                     )
                 )
 
-    exam = await first_or_none(
-        db,
-        select(Exam).where(
-            Exam.school_id == school.id,
-            Exam.standard_id == class10.id,
-            Exam.academic_year_id == year.id,
-            Exam.name == "Midterm Examination",
-        ),
-    )
-    if not exam:
-        exam = Exam(
-            name="Midterm Examination",
-            exam_type=ExamType.MIDTERM,
-            standard_id=class10.id,
-            academic_year_id=year.id,
-            start_date=date(2025, 9, 16),
-            end_date=date(2025, 9, 24),
-            created_by=principal_user.id,
-            school_id=school.id,
-        )
-        db.add(exam)
-        await db.flush()
-
-    exam_series = await first_or_none(
-        db,
-        select(ExamSeries).where(
-            ExamSeries.school_id == school.id,
-            ExamSeries.standard_id == class10.id,
-            ExamSeries.academic_year_id == year.id,
-            ExamSeries.name == "Class 10 Midterm Series",
-        ),
-    )
-    if not exam_series:
-        exam_series = ExamSeries(
-            name="Class 10 Midterm Series",
-            standard_id=class10.id,
-            academic_year_id=year.id,
-            is_published=True,
-            created_by=principal_user.id,
-            school_id=school.id,
-        )
-        db.add(exam_series)
-        await db.flush()
-
-    exam_entries = [
-        (math10.id, date(2025, 9, 16), time(9, 0), 120, "Hall A"),
-        (sci10.id, date(2025, 9, 18), time(9, 0), 120, "Science Lab Block"),
-        (eng10.id, date(2025, 9, 22), time(9, 0), 90, "Hall A"),
-    ]
-    for subject_id, exam_date_value, start_time_value, duration, venue in exam_entries:
-        existing = await first_or_none(
-            db,
-            select(ExamScheduleEntry).where(
-                ExamScheduleEntry.series_id == exam_series.id,
-                ExamScheduleEntry.subject_id == subject_id,
-            ),
-        )
-        if not existing:
-            db.add(
-                ExamScheduleEntry(
-                    series_id=exam_series.id,
-                    subject_id=subject_id,
-                    exam_date=exam_date_value,
-                    start_time=start_time_value,
-                    duration_minutes=duration,
-                    venue=venue,
-                    is_cancelled=False,
-                )
-            )
-
     result_specs = [
-        (students[3], math10, Decimal("86.00")),
-        (students[3], sci10, Decimal("78.00")),
-        (students[3], eng10, Decimal("88.00")),
-        (students[4], math10, Decimal("92.00")),
-        (students[4], sci10, Decimal("81.00")),
-        (students[4], eng10, Decimal("84.00")),
-        (students[5], math10, Decimal("67.00")),
-        (students[5], sci10, Decimal("73.00")),
-        (students[5], eng10, Decimal("70.00")),
+        ("Midterm Examination", students[3], math10, Decimal("86.00"), teacher_math_user.id),
+        ("Midterm Examination", students[3], sci10, Decimal("78.00"), teacher_science_user.id),
+        ("Midterm Examination", students[3], eng10, Decimal("88.00"), teacher_english_user.id),
+        ("Midterm Examination", students[4], math10, Decimal("92.00"), teacher_math_user.id),
+        ("Midterm Examination", students[4], sci10, Decimal("81.00"), teacher_science_user.id),
+        ("Midterm Examination", students[4], eng10, Decimal("84.00"), teacher_english_user.id),
+        ("Midterm Examination", students[5], math10, Decimal("67.00"), teacher_math_user.id),
+        ("Midterm Examination", students[5], sci10, Decimal("73.00"), teacher_science_user.id),
+        ("Midterm Examination", students[5], eng10, Decimal("70.00"), teacher_english_user.id),
+        ("Unit Test - Cycle 2", students[0], math08, Decimal("79.00"), teacher_math_user.id),
+        ("Unit Test - Cycle 2", students[0], sci08, Decimal("83.00"), teacher_science_user.id),
+        ("Unit Test - Cycle 2", students[0], eng08, Decimal("88.00"), teacher_english_user.id),
+        ("Unit Test - Cycle 2", students[1], math08, Decimal("72.00"), teacher_math_user.id),
+        ("Unit Test - Cycle 2", students[1], sci08, Decimal("69.00"), teacher_science_user.id),
+        ("Unit Test - Cycle 2", students[1], eng08, Decimal("81.00"), teacher_english_user.id),
+        ("Unit Test - Cycle 2", students[2], math08, Decimal("65.00"), teacher_math_user.id),
+        ("Unit Test - Cycle 2", students[2], sci08, Decimal("74.00"), teacher_science_user.id),
+        ("Unit Test - Cycle 2", students[2], eng08, Decimal("71.00"), teacher_english_user.id),
     ]
-    for student, subject, marks in result_specs:
+    for exam_name, student, subject, marks, entered_by in result_specs:
+        exam = exam_by_name[exam_name]
         existing = await first_or_none(
             db,
             select(Result).where(
@@ -942,7 +1188,7 @@ async def seed_demo(db: AsyncSession) -> dict[str, str]:
                 percentage=marks,
                 grade_id=grade.id,
                 is_published=True,
-                entered_by=teacher_math_user.id if subject.id == math10.id else teacher_science_user.id,
+                entered_by=entered_by,
                 school_id=school.id,
             )
         )
@@ -964,6 +1210,15 @@ async def seed_demo(db: AsyncSession) -> dict[str, str]:
             ComplaintStatus.RESOLVED,
             principal_user.id,
             "AV vendor replaced the HDMI adapter and checked the projector lamp.",
+            False,
+        ),
+        (
+            parent_khan_user.id,
+            ComplaintCategory.STAFF,
+            "Need more frequent PTM slots for working parents in the evening.",
+            ComplaintStatus.OPEN,
+            None,
+            None,
             False,
         ),
     ]
@@ -1005,6 +1260,14 @@ async def seed_demo(db: AsyncSession) -> dict[str, str]:
             "Missed lab safety gloves during practical and needed a reminder before continuing.",
             IncidentSeverity.MEDIUM,
             today - timedelta(days=5),
+        ),
+        (
+            students[2].id,
+            teacher_english.id,
+            IncidentType.NEUTRAL,
+            "Requested additional support material for grammar practice after class.",
+            IncidentSeverity.LOW,
+            today - timedelta(days=4),
         ),
     ]
     for student_id, teacher_id, incident_type, description, severity, incident_date in behaviour_rows:
@@ -1055,28 +1318,72 @@ async def seed_demo(db: AsyncSession) -> dict[str, str]:
                     )
                 )
 
-    leave = await first_or_none(
-        db,
-        select(TeacherLeave).where(
-            TeacherLeave.teacher_id == teacher_english.id,
-            TeacherLeave.from_date == date(2025, 11, 14),
+    teacher_leave_rows = [
+        (
+            teacher_english.id,
+            LeaveType.CASUAL,
+            today,
+            today + timedelta(days=1),
+            "Family function out of town",
+            LeaveStatus.APPROVED,
+            principal_user.id,
+            "Approved with class coverage adjustment.",
         ),
-    )
-    if not leave:
-        db.add(
-            TeacherLeave(
-                teacher_id=teacher_english.id,
-                leave_type=LeaveType.CASUAL,
-                from_date=date(2025, 11, 14),
-                to_date=date(2025, 11, 15),
-                reason="Family function out of town",
-                status=LeaveStatus.APPROVED,
-                approved_by=principal_user.id,
-                remarks="Approved with class coverage adjustment.",
-                academic_year_id=year.id,
-                school_id=school.id,
-            )
+        (
+            teacher_math.id,
+            LeaveType.SICK,
+            today + timedelta(days=5),
+            today + timedelta(days=5),
+            "Mild viral fever",
+            LeaveStatus.PENDING,
+            None,
+            None,
+        ),
+        (
+            teacher_science.id,
+            LeaveType.CASUAL,
+            today - timedelta(days=10),
+            today - timedelta(days=9),
+            "Personal travel",
+            LeaveStatus.REJECTED,
+            principal_user.id,
+            "Exam schedule preparation week.",
+        ),
+    ]
+    for (
+        teacher_id,
+        leave_type,
+        from_date_value,
+        to_date_value,
+        reason,
+        leave_status,
+        approved_by,
+        remarks,
+    ) in teacher_leave_rows:
+        leave = await first_or_none(
+            db,
+            select(TeacherLeave).where(
+                TeacherLeave.teacher_id == teacher_id,
+                TeacherLeave.from_date == from_date_value,
+                TeacherLeave.to_date == to_date_value,
+                TeacherLeave.reason == reason,
+            ),
         )
+        if not leave:
+            db.add(
+                TeacherLeave(
+                    teacher_id=teacher_id,
+                    leave_type=leave_type,
+                    from_date=from_date_value,
+                    to_date=to_date_value,
+                    reason=reason,
+                    status=leave_status,
+                    approved_by=approved_by,
+                    remarks=remarks,
+                    academic_year_id=year.id,
+                    school_id=school.id,
+                )
+            )
 
     album = await first_or_none(
         db,
@@ -1124,22 +1431,53 @@ async def seed_demo(db: AsyncSession) -> dict[str, str]:
                 )
             )
 
-    for student in [students[3], students[4]]:
+    document_rows = [
+        (
+            students[3],
+            DocumentType.REPORT_CARD,
+            f"demo/documents/{students[3].admission_number.lower()}-report-card.pdf",
+            DocumentStatus.READY,
+            datetime.now(timezone.utc) - timedelta(days=3),
+        ),
+        (
+            students[4],
+            DocumentType.REPORT_CARD,
+            f"demo/documents/{students[4].admission_number.lower()}-report-card.pdf",
+            DocumentStatus.READY,
+            datetime.now(timezone.utc) - timedelta(days=4),
+        ),
+        (
+            students[1],
+            DocumentType.BONAFIDE,
+            None,
+            DocumentStatus.PROCESSING,
+            None,
+        ),
+        (
+            students[2],
+            DocumentType.ID_CARD,
+            None,
+            DocumentStatus.PENDING,
+            None,
+        ),
+    ]
+    for student, doc_type, file_key, status, generated_at in document_rows:
         existing = await first_or_none(
             db,
             select(Document).where(
                 Document.student_id == student.id,
-                Document.document_type == DocumentType.REPORT_CARD,
+                Document.document_type == doc_type,
+                Document.academic_year_id == year.id,
             ),
         )
         if not existing:
             db.add(
                 Document(
                     student_id=student.id,
-                    document_type=DocumentType.REPORT_CARD,
-                    file_key=f"demo/documents/{student.admission_number.lower()}-report-card.pdf",
-                    status=DocumentStatus.READY,
-                    generated_at=datetime.now(timezone.utc) - timedelta(days=3),
+                    document_type=doc_type,
+                    file_key=file_key,
+                    status=status,
+                    generated_at=generated_at,
                     academic_year_id=year.id,
                     school_id=school.id,
                 )
@@ -1224,10 +1562,80 @@ async def seed_demo(db: AsyncSession) -> dict[str, str]:
             if not existing:
                 db.add(MessageRead(message_id=last_message.id, user_id=user_id))
 
+    parent_teacher_conversation = await first_or_none(
+        db,
+        select(Conversation).where(
+            Conversation.school_id == school.id,
+            Conversation.type == ConversationType.ONE_TO_ONE,
+            Conversation.name == "Parent-Teacher: Meera Rao & Ananya Sharma",
+        ),
+    )
+    if not parent_teacher_conversation:
+        parent_teacher_conversation = Conversation(
+            type=ConversationType.ONE_TO_ONE,
+            name="Parent-Teacher: Meera Rao & Ananya Sharma",
+            standard_id=class8.id,
+            created_by=teacher_math_user.id,
+            academic_year_id=year.id,
+            school_id=school.id,
+        )
+        db.add(parent_teacher_conversation)
+        await db.flush()
+
+    for user_id in [teacher_math_user.id, parent_rao_user.id]:
+        participant = await first_or_none(
+            db,
+            select(ConversationParticipant).where(
+                ConversationParticipant.conversation_id == parent_teacher_conversation.id,
+                ConversationParticipant.user_id == user_id,
+            ),
+        )
+        if not participant:
+            db.add(
+                ConversationParticipant(
+                    conversation_id=parent_teacher_conversation.id,
+                    user_id=user_id,
+                    is_admin=(user_id == teacher_math_user.id),
+                )
+            )
+
+    direct_messages = [
+        (
+            teacher_math_user.id,
+            "Aarav is improving well in algebra. Please encourage daily revision for 20 minutes.",
+        ),
+        (
+            parent_rao_user.id,
+            "Thank you ma'am, we have started a daily practice schedule at home.",
+        ),
+    ]
+    for sender_id, content in direct_messages:
+        existing = await first_or_none(
+            db,
+            select(Message).where(
+                Message.conversation_id == parent_teacher_conversation.id,
+                Message.sender_id == sender_id,
+                Message.content == content,
+            ),
+        )
+        if not existing:
+            db.add(
+                Message(
+                    conversation_id=parent_teacher_conversation.id,
+                    sender_id=sender_id,
+                    content=content,
+                    message_type=MessageType.TEXT,
+                    school_id=school.id,
+                )
+            )
+
     notifications = [
         (student_users[0].id, "Assignment posted", "Your mathematics worksheet is due in 2 days.", NotificationType.ASSIGNMENT, NotificationPriority.HIGH),
+        (student_users[3].id, "Midterm result published", "Your Midterm Examination result is available now.", NotificationType.RESULT, NotificationPriority.HIGH),
         (parent_rao_user.id, "Attendance update", "Aarav marked present in mathematics today.", NotificationType.ATTENDANCE, NotificationPriority.MEDIUM),
+        (parent_khan_user.id, "Fee reminder", "One fee component is pending for this quarter.", NotificationType.FEE, NotificationPriority.MEDIUM),
         (teacher_science_user.id, "Complaint resolved", "Projector issue in Class 10B has been resolved.", NotificationType.SYSTEM, NotificationPriority.LOW),
+        (principal_user.id, "Teacher leave request", "A pending sick leave request needs your action.", NotificationType.LEAVE, NotificationPriority.MEDIUM),
     ]
     for user_id, title, body, notif_type, priority in notifications:
         existing = await first_or_none(

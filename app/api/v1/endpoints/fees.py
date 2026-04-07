@@ -1,9 +1,12 @@
 import uuid
 
+from datetime import date
+from typing import Optional
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import CurrentUser, require_permission
+from app.core.dependencies import CurrentUser, require_permission, require_roles
 from app.db.session import get_db
 from app.schemas.fee import (
     FeeStructureCreate,
@@ -14,8 +17,10 @@ from app.schemas.fee import (
     PaymentResponse,
     FeeDashboardResponse,
     PaymentListResponse,
+    FeeAnalyticsResponse,
 )
 from app.services.fee import FeeService
+from app.utils.enums import RoleEnum
 
 router = APIRouter(prefix="/fees", tags=["Fees"])
 
@@ -75,3 +80,24 @@ async def get_receipt(
     url = await FeeService(db).get_receipt_url(payment_id, current_user)
     return {"url": url}
 
+
+@router.get("/analytics", response_model=FeeAnalyticsResponse)
+async def fee_analytics(
+    academic_year_id: Optional[uuid.UUID] = Query(None),
+    report_date: Optional[date] = Query(None),
+    standard_id: Optional[uuid.UUID] = Query(None),
+    section: Optional[str] = Query(None),
+    student_id: Optional[uuid.UUID] = Query(None),
+    current_user: CurrentUser = Depends(
+        require_roles(RoleEnum.PRINCIPAL, RoleEnum.TRUSTEE, RoleEnum.SUPERADMIN)
+    ),
+    db: AsyncSession = Depends(get_db),
+):
+    return await FeeService(db).fee_analytics(
+        current_user=current_user,
+        academic_year_id=academic_year_id,
+        report_date=report_date or date.today(),
+        standard_id=standard_id,
+        section=section,
+        student_id=student_id,
+    )

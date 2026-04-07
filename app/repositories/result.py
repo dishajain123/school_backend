@@ -64,6 +64,33 @@ class ResultRepository:
         )
         return result.scalar_one_or_none()
 
+    async def list_exams(
+        self,
+        school_id: uuid.UUID,
+        academic_year_id: Optional[uuid.UUID] = None,
+        standard_id: Optional[uuid.UUID] = None,
+        student_id: Optional[uuid.UUID] = None,
+    ) -> list[Exam]:
+        stmt = select(Exam).where(Exam.school_id == school_id)
+
+        if academic_year_id is not None:
+            stmt = stmt.where(Exam.academic_year_id == academic_year_id)
+        if standard_id is not None:
+            stmt = stmt.where(Exam.standard_id == standard_id)
+        if student_id is not None:
+            stmt = stmt.join(
+                Result,
+                and_(
+                    Result.exam_id == Exam.id,
+                    Result.student_id == student_id,
+                    Result.school_id == school_id,
+                ),
+            ).distinct()
+
+        stmt = stmt.order_by(Exam.start_date.desc(), Exam.created_at.desc())
+        result = await self.db.execute(_exam_with_relations(stmt))
+        return list(result.scalars().all())
+
     # Results
     async def create_result(self, data: dict) -> Result:
         obj = Result(**data)

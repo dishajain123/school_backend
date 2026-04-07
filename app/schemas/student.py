@@ -33,6 +33,11 @@ class StudentPromotionUpdate(BaseModel):
     promotion_status: PromotionStatus
 
 
+class StudentBulkPromotionUpdate(BaseModel):
+    student_ids: list[uuid.UUID] = Field(..., min_length=1)
+    promotion_status: PromotionStatus
+
+
 class StudentResponse(BaseModel):
     id: uuid.UUID
     user_id: Optional[uuid.UUID]
@@ -58,3 +63,8 @@ class StudentListResponse(BaseModel):
     page: int
     page_size: int
     total_pages: int
+
+
+class StudentBulkPromotionResponse(BaseModel):
+    updated_count: int
+    items: list[StudentResponse]

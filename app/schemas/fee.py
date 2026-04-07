@@ -106,3 +106,66 @@ class FeeDashboardResponse(BaseModel):
     items: list[FeeLedgerResponse]
     total: int
 
+
+class FeeAnalyticsSummary(BaseModel):
+    total_billed_amount: float
+    total_paid_amount: float
+    total_outstanding_amount: float
+    collection_percentage: float
+    total_ledgers: int
+    total_students: int
+    paid_ledgers: int
+    partial_ledgers: int
+    pending_ledgers: int
+    overdue_ledgers: int
+    payments_count: int
+    late_payments_count: int
+
+
+class FeeCategoryAnalyticsItem(BaseModel):
+    fee_category: FeeCategory
+    billed_amount: float
+    paid_amount: float
+    outstanding_amount: float
+    ledgers: int
+
+
+class FeeStatusAnalyticsItem(BaseModel):
+    status: FeeStatus
+    ledgers: int
+    billed_amount: float
+    paid_amount: float
+    outstanding_amount: float
+
+
+class PaymentModeAnalyticsItem(BaseModel):
+    payment_mode: PaymentMode
+    amount: float
+    transactions: int
+
+
+class FeeStudentAnalyticsItem(BaseModel):
+    student_id: uuid.UUID
+    admission_number: str
+    standard_id: Optional[uuid.UUID] = None
+    section: Optional[str] = None
+    billed_amount: float
+    paid_amount: float
+    outstanding_amount: float
+    ledgers: int
+    paid_ledgers: int
+    partial_ledgers: int
+    pending_ledgers: int
+    overdue_ledgers: int
+    latest_payment_date: Optional[date] = None
+
+
+class FeeAnalyticsResponse(BaseModel):
+    academic_year_id: uuid.UUID
+    report_date: date
+    filters: dict
+    summary: FeeAnalyticsSummary
+    by_category: list[FeeCategoryAnalyticsItem]
+    by_status: list[FeeStatusAnalyticsItem]
+    by_payment_mode: list[PaymentModeAnalyticsItem]
+    by_student: list[FeeStudentAnalyticsItem]

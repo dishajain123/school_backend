@@ -130,6 +130,70 @@ class ResultService:
         await self.db.refresh(exam)
         return ExamResponse.model_validate(exam)
 
+    async def list_exams(
+        self,
+        current_user: CurrentUser,
+        student_id: Optional[uuid.UUID],
+        academic_year_id: Optional[uuid.UUID] = None,
+        standard_id: Optional[uuid.UUID] = None,
+    ) -> list[ExamResponse]:
+        school_id = self._ensure_school(current_user)
+
+        from app.models.student import Student
+
+        resolved_student_id = student_id
+
+        if current_user.role == RoleEnum.STUDENT:
+            result = await self.db.execute(
+                select(Student.id).where(
+                    and_(
+                        Student.user_id == current_user.id,
+                        Student.school_id == school_id,
+                    )
+                )
+            )
+            own_student_id = result.scalar_one_or_none()
+            if not own_student_id:
+                raise NotFoundException("Student")
+            if resolved_student_id and resolved_student_id != own_student_id:
+                raise ForbiddenException("You can only view your own exams")
+            resolved_student_id = own_student_id
+
+        elif current_user.role == RoleEnum.PARENT:
+            if resolved_student_id is None:
+                raise ValidationException("student_id is required for parent users")
+            result = await self.db.execute(
+                select(Student.id).where(
+                    and_(
+                        Student.id == resolved_student_id,
+                        Student.parent_id == current_user.parent_id,
+                        Student.school_id == school_id,
+                    )
+                )
+            )
+            if not result.scalar_one_or_none():
+                raise ForbiddenException("Not your child")
+
+        elif resolved_student_id is not None:
+            exists = await self.db.execute(
+                select(Student.id).where(
+                    and_(
+                        Student.id == resolved_student_id,
+                        Student.school_id == school_id,
+                    )
+                )
+            )
+            if not exists.scalar_one_or_none():
+                raise NotFoundException("Student")
+
+        exams = await self.repo.list_exams(
+            school_id=school_id,
+            academic_year_id=academic_year_id,
+            standard_id=standard_id,
+            student_id=resolved_student_id,
+        )
+        return [ExamResponse.model_validate(exam) for exam in exams]
+
     async def bulk_enter_results(
         self,
         body: ResultBulkCreate,

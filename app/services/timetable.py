@@ -41,6 +41,39 @@ class TimetableService:
         if not resolved_year_id:
             resolved_year_id = (await get_active_year(school_id, self.db)).id
 
+        if current_user.role == RoleEnum.TEACHER:
+            from app.models.teacher import Teacher
+            from app.models.teacher_class_subject import TeacherClassSubject
+
+            teacher_row = await self.db.execute(
+                select(Teacher.id).where(
+                    and_(
+                        Teacher.user_id == current_user.id,
+                        Teacher.school_id == school_id,
+                    )
+                )
+            )
+            teacher_id = teacher_row.scalar_one_or_none()
+            if not teacher_id:
+                raise ForbiddenException("Teacher profile not found")
+
+            assignment_q = select(TeacherClassSubject.id).where(
+                and_(
+                    TeacherClassSubject.teacher_id == teacher_id,
+                    TeacherClassSubject.standard_id == standard_id,
+                    TeacherClassSubject.academic_year_id == resolved_year_id,
+                )
+            )
+            if section is not None and section.strip():
+                assignment_q = assignment_q.where(
+                    TeacherClassSubject.section == section.strip()
+                )
+            assignment_exists = (await self.db.execute(assignment_q)).scalar_one_or_none()
+            if not assignment_exists:
+                raise ForbiddenException(
+                    "You can upload timetable only for your assigned class/section"
+                )
+
         if not file or not file.filename:
             raise HTTPException(status_code=422, detail="File is required")
 
@@ -153,3 +186,19 @@ class TimetableService:
             TIMETABLE_BUCKET, timetable.file_key
         )
         return data
+
+    async def list_sections(
+        self,
+        standard_id: uuid.UUID,
+        academic_year_id: Optional[uuid.UUID],
+        current_user: CurrentUser,
+    ) -> list[str]:
+        school_id = self._ensure_school(current_user)
+        resolved_year_id = academic_year_id
+        if not resolved_year_id:
+            resolved_year_id = (await get_active_year(school_id, self.db)).id
+        return await self.repo.list_sections_by_standard(
+            school_id=school_id,
+            standard_id=standard_id,
+            academic_year_id=resolved_year_id,
+        )

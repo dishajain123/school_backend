@@ -70,6 +70,8 @@ class ComplaintService:
         body: ComplaintCreate,
         current_user: CurrentUser,
     ) -> ComplaintResponse:
+        if current_user.role == RoleEnum.PRINCIPAL:
+            raise ForbiddenException("Principal cannot raise complaints")
         school_id = self._ensure_school(current_user)
 
         submitted_by = None if body.is_anonymous else current_user.id

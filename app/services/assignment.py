@@ -1,8 +1,7 @@
 import uuid
 import math
-from datetime import datetime, timezone
 from typing import Optional
-from fastapi import UploadFile, BackgroundTasks, HTTPException
+from fastapi import UploadFile, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 
@@ -17,10 +16,13 @@ from app.schemas.assignment import (
 )
 from app.core.dependencies import CurrentUser
 from app.core.exceptions import NotFoundException, ForbiddenException
+from app.core.logging import get_logger
 from app.utils.enums import RoleEnum, NotificationType, NotificationPriority
+from app.utils.date_utils import today_in_app_timezone
 from app.integrations.minio_client import minio_client
 
 ASSIGNMENT_BUCKET = "assignments"
+logger = get_logger(__name__)
 
 
 # ── Shared helpers (also imported by submission service) ──────────────────────
@@ -188,12 +190,27 @@ class AssignmentService:
                 "subject_id": body.subject_id,
                 "due_date": body.due_date,
                 "file_key": file_key,
+                "is_active": True,
                 "academic_year_id": body.academic_year_id,
                 "school_id": current_user.school_id,
             }
         )
         await self.db.commit()
         await self.db.refresh(assignment)
+
+        logger.info(
+            "ASSIGNMENT_CREATE school_id=%s user_id=%s role=%s teacher_id=%s assignment_id=%s standard_id=%s subject_id=%s academic_year_id=%s due_date=%s is_active=%s",
+            str(current_user.school_id),
+            str(current_user.id),
+            str(current_user.role),
+            str(teacher_id),
+            str(assignment.id),
+            str(body.standard_id),
+            str(body.subject_id),
+            str(body.academic_year_id),
+            str(body.due_date),
+            str(assignment.is_active),
+        )
 
         background_tasks.add_task(
             _notify_assignment_created,
@@ -225,6 +242,7 @@ class AssignmentService:
         resolved_standard_id: Optional[uuid.UUID] = standard_id
 
         if current_user.role == RoleEnum.TEACHER:
+            # Strict ownership: teacher sees only assignments they created.
             teacher_id_filter = await _get_teacher_id(
                 self.db, current_user.id, current_user.school_id
             )
@@ -265,9 +283,27 @@ class AssignmentService:
             teacher_id=teacher_id_filter,
             is_active=is_active,
             is_overdue=is_overdue,
-            reference_date=datetime.now(tz=timezone.utc).date(),
+            reference_date=today_in_app_timezone(),
             page=page,
             page_size=page_size,
+        )
+
+        logger.info(
+            "ASSIGNMENT_LIST school_id=%s user_id=%s role=%s teacher_id_filter=%s standard_id=%s subject_id=%s academic_year_id=%s is_active=%s is_overdue=%s reference_date=%s page=%s page_size=%s returned=%s total=%s",
+            str(current_user.school_id),
+            str(current_user.id),
+            str(current_user.role),
+            str(teacher_id_filter) if teacher_id_filter else "None",
+            str(resolved_standard_id) if resolved_standard_id else "None",
+            str(subject_id) if subject_id else "None",
+            str(academic_year_id) if academic_year_id else "None",
+            str(is_active) if is_active is not None else "None",
+            str(is_overdue) if is_overdue is not None else "None",
+            str(today_in_app_timezone()),
+            str(page),
+            str(page_size),
+            str(len(items)),
+            str(total),
         )
 
         return AssignmentListResponse(

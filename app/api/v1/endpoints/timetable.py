@@ -19,12 +19,14 @@ async def upload_timetable(
     academic_year_id: Optional[uuid.UUID] = Form(None),
     section: Optional[str] = Form(None, description="Section (e.g. A, B). Leave blank for all sections."),
     file: UploadFile = File(..., description="Timetable file (PDF or image)"),
-    current_user: CurrentUser = Depends(require_roles(RoleEnum.PRINCIPAL)),
+    current_user: CurrentUser = Depends(
+        require_roles(RoleEnum.PRINCIPAL, RoleEnum.TEACHER)
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    PRINCIPAL only.
-    Uploads a timetable file and upserts the record for the class.
+    PRINCIPAL and TEACHER.
+    Uploads a timetable file and upserts the record for the class/section.
     """
     return await TimetableService(db).upload_timetable(
         standard_id=standard_id,
@@ -52,4 +54,26 @@ async def get_timetable(
         academic_year_id=academic_year_id,
         current_user=current_user,
         section=section,
+    )
+
+
+@router.get(
+    "/{standard_id}/sections",
+    response_model=list[str],
+)
+async def list_timetable_sections(
+    standard_id: uuid.UUID,
+    academic_year_id: Optional[uuid.UUID] = Query(None),
+    current_user: CurrentUser = Depends(
+        require_roles(RoleEnum.PRINCIPAL, RoleEnum.TEACHER)
+    ),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Returns section options where timetable records exist for the selected class.
+    """
+    return await TimetableService(db).list_sections(
+        standard_id=standard_id,
+        academic_year_id=academic_year_id,
+        current_user=current_user,
     )

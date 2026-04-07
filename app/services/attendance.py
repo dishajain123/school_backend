@@ -277,6 +277,11 @@ class AttendanceService:
         if current_user.role == RoleEnum.PARENT:
             if student.parent_id != current_user.parent_id:
                 raise ForbiddenException(detail="Not your child")
+        elif current_user.role == RoleEnum.STUDENT:
+            if student.user_id != current_user.id:
+                raise ForbiddenException(detail="You can only view your own attendance")
+        elif current_user.role == RoleEnum.TEACHER:
+            await self._assert_teacher_can_view_student(current_user, student)
 
         stats = await self.repo.get_student_subject_stats(
             student_id=student_id,
@@ -336,6 +341,24 @@ class AttendanceService:
         school_id = current_user.school_id
         if not school_id:
             raise ValidationException("school_id is required")
+
+        if current_user.role == RoleEnum.TEACHER:
+            teacher = await self._get_teacher_for_user(current_user)
+            if not subject_id:
+                raise ValidationException(
+                    "subject_id is required for teacher class attendance view"
+                )
+            if not section:
+                raise ValidationException(
+                    "section is required for teacher class attendance view"
+                )
+            await self.tcs_service.assert_teacher_owns_class_subject(
+                teacher_id=teacher.id,
+                standard_id=standard_id,
+                subject_id=subject_id,
+                academic_year_id=academic_year_id,
+                section=section,
+            )
 
         rows = await self.repo.get_class_snapshot(
             standard_id=standard_id,

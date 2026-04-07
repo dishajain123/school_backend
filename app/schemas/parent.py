@@ -90,3 +90,15 @@ class ParentChildrenResponse(BaseModel):
     parent_id: uuid.UUID
     children: list[ChildSummary]
     total: int
+
+
+class ParentAssignChildrenRequest(BaseModel):
+    student_ids: list[uuid.UUID] = Field(default_factory=list)
+
+
+class ParentLinkChildRequest(BaseModel):
+    student_id: Optional[uuid.UUID] = None
+    admission_number: Optional[str] = Field(None, min_length=1, max_length=50)
+    student_email: Optional[EmailStr] = None
+    student_phone: Optional[str] = Field(None, max_length=20)
+    student_password: Optional[str] = Field(None, min_length=8)

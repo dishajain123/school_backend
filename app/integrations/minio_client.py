@@ -1,6 +1,8 @@
 import io
 import socket
 import warnings
+from pathlib import Path
+from urllib.parse import quote
 from typing import Optional
 
 warnings.filterwarnings(
@@ -10,7 +12,7 @@ warnings.filterwarnings(
 
 from minio import Minio
 from minio.error import S3Error
-from app.core.config import settings
+from app.core.config import settings, BASE_DIR
 from app.core.logging import get_logger
 from app.utils.constants import MINIO_BUCKETS, PRESIGNED_URL_EXPIRY
 from datetime import timedelta
@@ -18,6 +20,7 @@ from datetime import timedelta
 logger = get_logger(__name__)
 
 _client: Optional[Minio] = None
+_LOCAL_STORAGE_ROOT = BASE_DIR / "local_storage"
 
 
 def _endpoint_host_port() -> tuple[str, int]:
@@ -49,6 +52,19 @@ def get_minio_client() -> Minio:
     return _client
 
 
+def _use_local_storage() -> bool:
+    return (not settings.MINIO_ENABLED) or (not _is_minio_reachable())
+
+
+def _local_file_path(bucket: str, key: str) -> Path:
+    normalized = key.lstrip("/")
+    return _LOCAL_STORAGE_ROOT / bucket / normalized
+
+
+def local_file_path(bucket: str, key: str) -> Path:
+    return _local_file_path(bucket=bucket, key=key)
+
+
 async def ensure_buckets_exist() -> None:
     if not settings.MINIO_ENABLED:
         logger.info("MinIO is disabled; skipping bucket verification")
@@ -77,6 +93,13 @@ def upload_file(
     file_bytes: bytes,
     content_type: str = "application/octet-stream",
 ) -> str:
+    if _use_local_storage():
+        path = _local_file_path(bucket=bucket, key=key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(file_bytes)
+        logger.debug(f"Stored file locally: {path}")
+        return key
+
     client = get_minio_client()
     try:
         client.put_object(
@@ -98,6 +121,10 @@ def generate_presigned_url(
     key: str,
     expiry: int = PRESIGNED_URL_EXPIRY,
 ) -> str:
+    if _use_local_storage():
+        encoded_key = quote(key.lstrip("/"), safe="/")
+        return f"{settings.BACKEND_BASE_URL}/api/v1/files/{quote(bucket)}/{encoded_key}"
+
     client = get_minio_client()
     try:
         url = client.presigned_get_object(
@@ -112,6 +139,12 @@ def generate_presigned_url(
 
 
 def delete_file(bucket: str, key: str) -> None:
+    if _use_local_storage():
+        path = _local_file_path(bucket=bucket, key=key)
+        if path.exists():
+            path.unlink()
+        return
+
     client = get_minio_client()
     try:
         client.remove_object(bucket_name=bucket, object_name=key)
@@ -122,6 +155,9 @@ def delete_file(bucket: str, key: str) -> None:
 
 
 def file_exists(bucket: str, key: str) -> bool:
+    if _use_local_storage():
+        return _local_file_path(bucket=bucket, key=key).exists()
+
     client = get_minio_client()
     try:
         client.stat_object(bucket_name=bucket, object_name=key)

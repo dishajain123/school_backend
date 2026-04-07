@@ -91,6 +91,19 @@ class StudentService:
     ) -> Student:
         return await self._get_and_authorize(student_id, school_id, current_user)
 
+    async def get_my_student_profile(
+        self,
+        school_id: uuid.UUID,
+        current_user: CurrentUser,
+    ) -> Student:
+        if current_user.role != RoleEnum.STUDENT:
+            raise ForbiddenException("Only students can access this endpoint")
+
+        own = await self.repo.get_by_user_id(current_user.id)
+        if not own or own.school_id != school_id:
+            raise NotFoundException("Student")
+        return own
+
     async def list_students(
         self,
         school_id: uuid.UUID,
@@ -266,3 +279,31 @@ class StudentService:
 
         updated = await self.repo.get_by_id(student_id, school_id)
         return updated
+
+    async def bulk_update_promotion_status(
+        self,
+        student_ids: list[uuid.UUID],
+        school_id: uuid.UUID,
+        data: StudentPromotionUpdate,
+        current_user: CurrentUser,
+    ) -> list[Student]:
+        # Keep order stable and avoid duplicate work.
+        unique_ids: list[uuid.UUID] = []
+        seen: set[uuid.UUID] = set()
+        for sid in student_ids:
+            if sid in seen:
+                continue
+            seen.add(sid)
+            unique_ids.append(sid)
+
+        updated_items: list[Student] = []
+        for sid in unique_ids:
+            updated = await self.update_promotion_status(
+                student_id=sid,
+                school_id=school_id,
+                data=data,
+                current_user=current_user,
+            )
+            if updated:
+                updated_items.append(updated)
+        return updated_items

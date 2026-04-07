@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.assignment import Assignment
+from app.utils.date_utils import today_in_app_timezone
 
 
 def _with_relations(stmt):
@@ -66,10 +67,61 @@ class AssignmentRepository:
             base_where.append(Assignment.academic_year_id == academic_year_id)
         if teacher_id:
             base_where.append(Assignment.teacher_id == teacher_id)
-        if is_active is not None:
+        # When overdue segmentation is requested, default to active assignments
+        # unless the caller explicitly asks otherwise.
+        if is_overdue is not None and is_active is None:
+            base_where.append(Assignment.is_active.is_(True))
+        elif is_active is not None:
             base_where.append(Assignment.is_active == is_active)
         if is_overdue is not None:
-            today = reference_date or date.today()
+            today = reference_date or today_in_app_timezone()
+            if is_overdue:
+                base_where.append(Assignment.due_date < today)
+            else:
+                base_where.append(Assignment.due_date >= today)
+
+        stmt = select(Assignment).where(and_(*base_where))
+        count_q = select(func.count(Assignment.id)).where(and_(*base_where))
+
+        total = (await self.db.execute(count_q)).scalar_one()
+        offset = (page - 1) * page_size
+        rows = await self.db.execute(
+            _with_relations(
+                stmt.order_by(Assignment.created_at.desc())
+                .offset(offset)
+                .limit(page_size)
+            )
+        )
+        return list(rows.scalars().all()), total
+
+    async def list_by_teacher_global(
+        self,
+        teacher_id: uuid.UUID,
+        standard_id: Optional[uuid.UUID] = None,
+        subject_id: Optional[uuid.UUID] = None,
+        academic_year_id: Optional[uuid.UUID] = None,
+        is_active: Optional[bool] = None,
+        is_overdue: Optional[bool] = None,
+        reference_date: Optional[date] = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> tuple[list[Assignment], int]:
+        base_where = [Assignment.teacher_id == teacher_id]
+
+        if standard_id:
+            base_where.append(Assignment.standard_id == standard_id)
+        if subject_id:
+            base_where.append(Assignment.subject_id == subject_id)
+        if academic_year_id:
+            base_where.append(Assignment.academic_year_id == academic_year_id)
+
+        if is_overdue is not None and is_active is None:
+            base_where.append(Assignment.is_active.is_(True))
+        elif is_active is not None:
+            base_where.append(Assignment.is_active == is_active)
+
+        if is_overdue is not None:
+            today = reference_date or today_in_app_timezone()
             if is_overdue:
                 base_where.append(Assignment.due_date < today)
             else:

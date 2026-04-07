@@ -111,10 +111,11 @@ class StudentRepository:
         standard_id: Optional[uuid.UUID] = None,
         academic_year_id: Optional[uuid.UUID] = None,
     ) -> list[str]:
-        query = select(Student.section).where(
+        section_expr = func.trim(Student.section)
+        query = select(section_expr.label("section")).where(
             Student.school_id == school_id,
             Student.section.is_not(None),
-            Student.section != "",
+            section_expr != "",
         )
 
         if standard_id is not None:
@@ -123,9 +124,9 @@ class StudentRepository:
         if academic_year_id is not None:
             query = query.where(Student.academic_year_id == academic_year_id)
 
-        query = query.distinct().order_by(func.lower(Student.section))
+        query = query.group_by(section_expr).order_by(func.lower(section_expr))
         result = await self.db.execute(query)
-        return [row[0].strip() for row in result.all() if row[0] and row[0].strip()]
+        return [row[0] for row in result.all() if row[0]]
 
     async def update(self, student: Student, data: dict) -> Student:
         for key, value in data.items():
