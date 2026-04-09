@@ -3,7 +3,9 @@ import math
 from typing import Optional
 from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from app.models.student import Student
+from app.models.parent import Parent
 
 
 class StudentRepository:
@@ -19,7 +21,10 @@ class StudentRepository:
 
     async def get_by_id(self, student_id: uuid.UUID, school_id: uuid.UUID) -> Optional[Student]:
         result = await self.db.execute(
-            select(Student).where(
+            select(Student).options(
+                selectinload(Student.user),
+                selectinload(Student.parent).selectinload(Parent.user),
+            ).where(
                 Student.id == student_id,
                 Student.school_id == school_id,
             )
@@ -28,13 +33,13 @@ class StudentRepository:
 
     async def get_by_id_only(self, student_id: uuid.UUID) -> Optional[Student]:
         result = await self.db.execute(
-            select(Student).where(Student.id == student_id)
+            select(Student).options(selectinload(Student.user)).where(Student.id == student_id)
         )
         return result.scalar_one_or_none()
 
     async def get_by_user_id(self, user_id: uuid.UUID) -> Optional[Student]:
         result = await self.db.execute(
-            select(Student).where(Student.user_id == user_id)
+            select(Student).options(selectinload(Student.user)).where(Student.user_id == user_id)
         )
         return result.scalar_one_or_none()
 
@@ -58,7 +63,7 @@ class StudentRepository:
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list[Student], int]:
-        query = select(Student).where(Student.school_id == school_id)
+        query = select(Student).options(selectinload(Student.user)).where(Student.school_id == school_id)
         count_query = select(func.count(Student.id)).where(Student.school_id == school_id)
 
         if standard_id is not None:
@@ -83,7 +88,7 @@ class StudentRepository:
 
     async def list_by_parent(self, parent_id: uuid.UUID, school_id: uuid.UUID) -> list[Student]:
         result = await self.db.execute(
-            select(Student).where(
+            select(Student).options(selectinload(Student.user)).where(
                 Student.parent_id == parent_id,
                 Student.school_id == school_id,
             ).order_by(Student.created_at.asc())
@@ -96,7 +101,7 @@ class StudentRepository:
         school_id: uuid.UUID,
         section: Optional[str] = None,
     ) -> list[Student]:
-        query = select(Student).where(
+        query = select(Student).options(selectinload(Student.user)).where(
             Student.standard_id == standard_id,
             Student.school_id == school_id,
         )

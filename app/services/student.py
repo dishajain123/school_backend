@@ -1,5 +1,6 @@
 import uuid
 import math
+import json
 from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy import and_, select
@@ -7,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.masters import Standard
 from app.repositories.student import StudentRepository
+from app.repositories.settings import SettingsRepository
 from app.schemas.student import StudentCreate, StudentUpdate, StudentPromotionUpdate
 from app.models.student import Student
 from app.core.dependencies import CurrentUser
@@ -34,9 +36,64 @@ async def assert_parent_owns_student(
 
 
 class StudentService:
+    SECTIONS_REGISTRY_KEY = "class_sections_registry"
+
     def __init__(self, db: AsyncSession):
         self.db = db
         self.repo = StudentRepository(db)
+        self.settings_repo = SettingsRepository(db)
+
+    @staticmethod
+    def _normalize_section(section: str) -> str:
+        value = (section or "").strip().upper()
+        if not value:
+            raise ValidationException("Section is required")
+        if len(value) > 10:
+            raise ValidationException("Section must be <= 10 characters")
+        return value
+
+    async def _load_sections_registry(self, school_id: uuid.UUID) -> dict:
+        setting = await self.settings_repo.get_by_key(
+            school_id,
+            self.SECTIONS_REGISTRY_KEY,
+        )
+        if not setting or not setting.setting_value:
+            return {}
+        try:
+            parsed = json.loads(setting.setting_value)
+            return parsed if isinstance(parsed, dict) else {}
+        except (TypeError, ValueError):
+            return {}
+
+    def _collect_registry_sections(
+        self,
+        registry: dict,
+        standard_id: Optional[uuid.UUID],
+        academic_year_id: Optional[uuid.UUID],
+    ) -> set[str]:
+        sections: set[str] = set()
+        year_filter = str(academic_year_id) if academic_year_id else None
+        standards_bucket = registry.get("standards")
+        if not isinstance(standards_bucket, dict):
+            return sections
+
+        keys = [str(standard_id)] if standard_id else list(standards_bucket.keys())
+        for std_key in keys:
+            std_map = standards_bucket.get(std_key)
+            if not isinstance(std_map, dict):
+                continue
+
+            year_keys = [year_filter, "*"] if year_filter else list(std_map.keys())
+            for yk in year_keys:
+                if not yk:
+                    continue
+                rows = std_map.get(yk)
+                if not isinstance(rows, list):
+                    continue
+                for raw in rows:
+                    if isinstance(raw, str) and raw.strip():
+                        sections.add(raw.strip().upper())
+        return sections
 
     async def _get_and_authorize(
         self,
@@ -185,11 +242,94 @@ class StudentService:
                 return []
             return [own.section.strip()]
 
-        return await self.repo.list_sections_by_school(
+        db_sections = await self.repo.list_sections_by_school(
             school_id=school_id,
             standard_id=standard_id,
             academic_year_id=academic_year_id,
         )
+        registry = await self._load_sections_registry(school_id)
+        sections = {s.strip().upper() for s in db_sections if s and s.strip()}
+        sections.update(
+            self._collect_registry_sections(
+                registry=registry,
+                standard_id=standard_id,
+                academic_year_id=academic_year_id,
+            )
+        )
+        return sorted(sections, key=lambda x: x.lower())
+
+    async def create_section(
+        self,
+        *,
+        school_id: uuid.UUID,
+        current_user: CurrentUser,
+        standard_id: uuid.UUID,
+        section: str,
+        academic_year_id: Optional[uuid.UUID] = None,
+    ) -> tuple[str, list[str], Optional[uuid.UUID]]:
+        normalized = self._normalize_section(section)
+
+        standard_result = await self.db.execute(
+            select(Standard).where(
+                Standard.id == standard_id,
+                Standard.school_id == school_id,
+            )
+        )
+        standard = standard_result.scalar_one_or_none()
+        if not standard:
+            raise NotFoundException("Standard")
+
+        effective_year_id = academic_year_id or standard.academic_year_id
+        if (
+            standard.academic_year_id is not None
+            and effective_year_id is not None
+            and standard.academic_year_id != effective_year_id
+        ):
+            raise ValidationException(
+                "Section academic_year_id must match the selected class academic year"
+            )
+
+        registry = await self._load_sections_registry(school_id)
+        standards_map = registry.setdefault("standards", {})
+        if not isinstance(standards_map, dict):
+            standards_map = {}
+            registry["standards"] = standards_map
+
+        std_key = str(standard_id)
+        std_map = standards_map.setdefault(std_key, {})
+        if not isinstance(std_map, dict):
+            std_map = {}
+            standards_map[std_key] = std_map
+
+        year_key = str(effective_year_id) if effective_year_id else "*"
+        section_list = std_map.setdefault(year_key, [])
+        if not isinstance(section_list, list):
+            section_list = []
+            std_map[year_key] = section_list
+
+        existing = {str(s).strip().upper() for s in section_list if str(s).strip()}
+        existing.add(normalized)
+        std_map[year_key] = sorted(existing, key=lambda x: x.lower())
+
+        await self.settings_repo.upsert_settings(
+            school_id=school_id,
+            items=[
+                {
+                    "key": self.SECTIONS_REGISTRY_KEY,
+                    "value": json.dumps(registry, separators=(",", ":")),
+                }
+            ],
+            updated_by=current_user.id,
+        )
+        await self.db.commit()
+
+        sections = await self.list_sections(
+            school_id=school_id,
+            current_user=current_user,
+            standard_id=standard_id,
+            academic_year_id=effective_year_id,
+        )
+        return normalized, sections, effective_year_id
 
     async def update_promotion_status(
         self,

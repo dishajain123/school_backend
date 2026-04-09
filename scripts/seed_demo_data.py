@@ -11,6 +11,7 @@ This script is designed to be idempotent enough for local use:
 - it inserts representative operational data for the main modules
 """
 import asyncio
+import json
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 
@@ -298,13 +299,28 @@ async def get_grade_for_percent(db: AsyncSession, school_id, percent: Decimal) -
     return grade
 
 
-async def ensure_school_settings(db: AsyncSession, school_id, updated_by) -> None:
+async def ensure_school_settings(
+    db: AsyncSession,
+    school_id,
+    updated_by,
+    *,
+    class8_id,
+    class10_id,
+    academic_year_id,
+) -> None:
+    sections_registry = {
+        "standards": {
+            str(class8_id): {str(academic_year_id): ["A", "B"]},
+            str(class10_id): {str(academic_year_id): ["A", "B"]},
+        }
+    }
     settings_payload = {
         "attendance_grace_minutes": "10",
         "school_day_start": "08:15",
         "school_day_end": "15:30",
         "fee_due_day": "10",
         "result_publish_mode": "principal_approval",
+        "class_sections_registry": json.dumps(sections_registry, separators=(",", ":")),
     }
     for key, value in settings_payload.items():
         existing = await first_or_none(
@@ -491,11 +507,11 @@ async def seed_demo(db: AsyncSession) -> dict[str, str]:
 
     student_specs = [
         (student_users[0], parent_rao, class8, "A", "08A-01", "ADM-2025-0801", date(2012, 5, 14)),
-        (student_users[1], parent_rao, class8, "A", "08A-02", "ADM-2025-0802", date(2012, 9, 21)),
-        (student_users[2], parent_khan, class8, "A", "08A-03", "ADM-2025-0803", date(2012, 11, 2)),
-        (student_users[3], parent_khan, class10, "B", "10B-01", "ADM-2025-1001", date(2010, 3, 18)),
-        (student_users[4], parent_iyer, class10, "B", "10B-02", "ADM-2025-1002", date(2010, 7, 5)),
-        (student_users[5], parent_iyer, class10, "B", "10B-03", "ADM-2025-1003", date(2010, 12, 9)),
+        (student_users[1], parent_rao, class8, "B", "08B-01", "ADM-2025-0802", date(2012, 9, 21)),
+        (student_users[2], parent_khan, class8, "A", "08A-02", "ADM-2025-0803", date(2012, 11, 2)),
+        (student_users[3], parent_khan, class10, "A", "10A-01", "ADM-2025-1001", date(2010, 3, 18)),
+        (student_users[4], parent_iyer, class10, "B", "10B-01", "ADM-2025-1002", date(2010, 7, 5)),
+        (student_users[5], parent_iyer, class10, "B", "10B-02", "ADM-2025-1003", date(2010, 12, 9)),
     ]
 
     students: list[Student] = []
@@ -516,12 +532,25 @@ async def seed_demo(db: AsyncSession) -> dict[str, str]:
             )
         )
 
-    await ensure_school_settings(db, school.id, principal_user.id)
+    await ensure_school_settings(
+        db,
+        school.id,
+        principal_user.id,
+        class8_id=class8.id,
+        class10_id=class10.id,
+        academic_year_id=year.id,
+    )
 
     assignment_specs = [
         (teacher_math.id, class8.id, "A", math08.id),
         (teacher_science.id, class8.id, "A", sci08.id),
         (teacher_english.id, class8.id, "A", eng08.id),
+        (teacher_math.id, class8.id, "B", math08.id),
+        (teacher_science.id, class8.id, "B", sci08.id),
+        (teacher_english.id, class8.id, "B", eng08.id),
+        (teacher_math.id, class10.id, "A", math10.id),
+        (teacher_science.id, class10.id, "A", sci10.id),
+        (teacher_english.id, class10.id, "A", eng10.id),
         (teacher_math.id, class10.id, "B", math10.id),
         (teacher_science.id, class10.id, "B", sci10.id),
         (teacher_english.id, class10.id, "B", eng10.id),
@@ -605,6 +634,8 @@ async def seed_demo(db: AsyncSession) -> dict[str, str]:
 
     timetable_rows = [
         (class8.id, "A", "demo/timetables/class8a_2025_26.pdf"),
+        (class8.id, "B", "demo/timetables/class8b_2025_26.pdf"),
+        (class10.id, "A", "demo/timetables/class10a_2025_26.pdf"),
         (class10.id, "B", "demo/timetables/class10b_2025_26.pdf"),
     ]
     for standard_id, section_value, file_key in timetable_rows:

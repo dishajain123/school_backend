@@ -11,6 +11,8 @@ from app.schemas.student import (
     StudentUpdate,
     StudentPromotionUpdate,
     StudentBulkPromotionUpdate,
+    StudentSectionCreateRequest,
+    StudentSectionCreateResponse,
     StudentResponse,
     StudentListResponse,
     StudentBulkPromotionResponse,
@@ -82,6 +84,29 @@ async def list_student_sections(
         current_user=current_user,
         standard_id=standard_id,
         academic_year_id=academic_year_id,
+    )
+
+
+@router.post("/sections", response_model=StudentSectionCreateResponse, status_code=201)
+async def create_student_section(
+    payload: StudentSectionCreateRequest,
+    current_user: CurrentUser = Depends(require_permission("user:manage")),
+    service: StudentService = Depends(get_service),
+):
+    if not current_user.school_id:
+        raise ForbiddenException("School context required")
+    created, sections, effective_year = await service.create_section(
+        school_id=current_user.school_id,
+        current_user=current_user,
+        standard_id=payload.standard_id,
+        section=payload.section,
+        academic_year_id=payload.academic_year_id,
+    )
+    return StudentSectionCreateResponse(
+        standard_id=payload.standard_id,
+        academic_year_id=effective_year,
+        section=created,
+        sections=sections,
     )
 
 

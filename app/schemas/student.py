@@ -41,6 +41,7 @@ class StudentBulkPromotionUpdate(BaseModel):
 class StudentResponse(BaseModel):
     id: uuid.UUID
     user_id: Optional[uuid.UUID]
+    student_name: Optional[str] = None
     school_id: uuid.UUID
     parent_id: uuid.UUID
     standard_id: Optional[uuid.UUID]
@@ -68,3 +69,16 @@ class StudentListResponse(BaseModel):
 class StudentBulkPromotionResponse(BaseModel):
     updated_count: int
     items: list[StudentResponse]
+
+
+class StudentSectionCreateRequest(BaseModel):
+    standard_id: uuid.UUID
+    section: str = Field(..., min_length=1, max_length=10)
+    academic_year_id: Optional[uuid.UUID] = None
+
+
+class StudentSectionCreateResponse(BaseModel):
+    standard_id: uuid.UUID
+    academic_year_id: Optional[uuid.UUID] = None
+    section: str
+    sections: list[str]

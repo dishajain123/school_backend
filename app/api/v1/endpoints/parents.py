@@ -55,6 +55,40 @@ async def get_my_children(
     )
 
 
+@router.get("/profile", response_model=ParentResponse)
+async def get_my_parent_profile(
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Compatibility alias for parent self profile.
+    Keeps older frontend builds working while canonical self route is /auth/me +
+    role-specific /parents/me/children for child context.
+    """
+    if not current_user.parent_id:
+        raise ValidationException("parent_id is required")
+    service = ParentService(db)
+    parent = await service.get_parent(current_user.parent_id, current_user)
+    return _to_response(parent)
+
+
+@router.get("/children", response_model=ParentChildrenResponse)
+async def get_my_children_compat(
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Compatibility alias for /parents/me/children.
+    """
+    service = ParentService(db)
+    parent_id, children = await service.get_my_children(current_user)
+    return ParentChildrenResponse(
+        parent_id=parent_id,
+        children=[ChildSummary.model_validate(c) for c in children],
+        total=len(children),
+    )
+
+
 @router.get("", response_model=ParentListResponse)
 async def list_parents(
     page: int = Query(1, ge=1),

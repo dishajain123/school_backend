@@ -79,6 +79,6 @@ class ParentRepository:
             select(Student).where(
                 Student.parent_id == parent_id,
                 Student.school_id == school_id,
-            )
+            ).order_by(Student.admission_number.asc(), Student.created_at.asc())
         )
         return list(result.scalars().all())

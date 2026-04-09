@@ -100,8 +100,8 @@ def upload_file(
         logger.debug(f"Stored file locally: {path}")
         return key
 
-    client = get_minio_client()
     try:
+        client = get_minio_client()
         client.put_object(
             bucket_name=bucket,
             object_name=key,
@@ -111,9 +111,15 @@ def upload_file(
         )
         logger.debug(f"Uploaded file to MinIO: {bucket}/{key}")
         return key
-    except S3Error as e:
-        logger.error(f"MinIO upload failed for {bucket}/{key}: {e}")
-        raise
+    except Exception as e:
+        logger.warning(
+            f"MinIO upload failed for {bucket}/{key}; falling back to local storage: {e}"
+        )
+        path = _local_file_path(bucket=bucket, key=key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(file_bytes)
+        logger.debug(f"Stored file locally after MinIO failure: {path}")
+        return key
 
 
 def generate_presigned_url(
@@ -125,17 +131,20 @@ def generate_presigned_url(
         encoded_key = quote(key.lstrip("/"), safe="/")
         return f"{settings.BACKEND_BASE_URL}/api/v1/files/{quote(bucket)}/{encoded_key}"
 
-    client = get_minio_client()
     try:
+        client = get_minio_client()
         url = client.presigned_get_object(
             bucket_name=bucket,
             object_name=key,
             expires=timedelta(seconds=expiry),
         )
         return url
-    except S3Error as e:
-        logger.error(f"Failed to generate presigned URL for {bucket}/{key}: {e}")
-        raise
+    except Exception as e:
+        logger.warning(
+            f"Failed to generate MinIO presigned URL for {bucket}/{key}; using local URL: {e}"
+        )
+        encoded_key = quote(key.lstrip("/"), safe="/")
+        return f"{settings.BACKEND_BASE_URL}/api/v1/files/{quote(bucket)}/{encoded_key}"
 
 
 def delete_file(bucket: str, key: str) -> None:

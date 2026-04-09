@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+import re
 from datetime import date
 from typing import Optional
 from sqlalchemy import String, Boolean, ForeignKey, Date, UniqueConstraint
@@ -70,3 +71,13 @@ class Student(BaseModel):
     academic_year: Mapped[Optional["AcademicYear"]] = relationship(
         "AcademicYear", foreign_keys=[academic_year_id], lazy="select"
     )
+
+    @property
+    def student_name(self) -> Optional[str]:
+        # Derive a readable label from linked user email when explicit names are unavailable.
+        if self.user and self.user.email:
+            local = self.user.email.split("@", 1)[0]
+            cleaned = re.sub(r"[\._\-]+", " ", local).strip()
+            if cleaned:
+                return " ".join(word.capitalize() for word in cleaned.split())
+        return None

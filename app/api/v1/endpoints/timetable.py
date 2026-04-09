@@ -37,6 +37,27 @@ async def upload_timetable(
     )
 
 
+@router.get("/sections", response_model=list[str])
+async def list_timetable_sections_compat(
+    standard_id: uuid.UUID = Query(...),
+    academic_year_id: Optional[uuid.UUID] = Query(None),
+    current_user: CurrentUser = Depends(
+        require_roles(RoleEnum.PRINCIPAL, RoleEnum.TEACHER)
+    ),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Compatibility route for clients sending:
+    /timetable/sections?standard_id=<uuid>&academic_year_id=<uuid>
+    Canonical route remains /timetable/{standard_id}/sections.
+    """
+    return await TimetableService(db).list_sections(
+        standard_id=standard_id,
+        academic_year_id=academic_year_id,
+        current_user=current_user,
+    )
+
+
 @router.get("/{standard_id}", response_model=TimetableResponse)
 async def get_timetable(
     standard_id: uuid.UUID,
