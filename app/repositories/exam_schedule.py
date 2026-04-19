@@ -45,6 +45,32 @@ class ExamScheduleRepository:
         )
         return result.scalar_one_or_none()
 
+    async def list_series(
+        self,
+        *,
+        school_id: uuid.UUID,
+        standard_id: uuid.UUID,
+        academic_year_id: Optional[uuid.UUID] = None,
+        published_only: bool = False,
+    ) -> list[ExamSeries]:
+        stmt = (
+            _series_with_relations(
+                select(ExamSeries).where(
+                    and_(
+                        ExamSeries.school_id == school_id,
+                        ExamSeries.standard_id == standard_id,
+                    )
+                )
+            )
+            .order_by(ExamSeries.is_published.desc(), ExamSeries.updated_at.desc())
+        )
+        if academic_year_id is not None:
+            stmt = stmt.where(ExamSeries.academic_year_id == academic_year_id)
+        if published_only:
+            stmt = stmt.where(ExamSeries.is_published.is_(True))
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
     async def get_series_duplicate(
         self, school_id: uuid.UUID, standard_id: uuid.UUID, academic_year_id: uuid.UUID, name: str
     ) -> Optional[ExamSeries]:

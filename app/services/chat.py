@@ -1,9 +1,10 @@
 import uuid
 import math
+import re
 from typing import Optional
 
 from fastapi import UploadFile, HTTPException
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, or_, func, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import CurrentUser
@@ -13,11 +14,14 @@ from app.schemas.chat import (
     ConversationCreate,
     ConversationResponse,
     ConversationListResponse,
+    ChatUserOption,
+    ChatUserListResponse,
     MessageCreate,
     MessageResponse,
     MessageListResponse,
 )
 from app.integrations.minio_client import minio_client
+from app.services.academic_year import get_active_year
 from app.utils.enums import RoleEnum, ConversationType
 
 CHAT_BUCKET = "chat-files"
@@ -32,6 +36,181 @@ class ChatService:
         if not current_user.school_id:
             raise ValidationException("school_id is required")
         return current_user.school_id
+
+    @staticmethod
+    def _user_display_name(user) -> str:
+        if user is None:
+            return "Unknown"
+        email = (getattr(user, "email", None) or "").strip()
+        if email:
+            local_part = email.split("@", 1)[0]
+            cleaned = re.sub(r"[\._\-]+", " ", local_part).strip()
+            if cleaned:
+                return " ".join(word[:1].upper() + word[1:] for word in cleaned.split())
+            return local_part
+        phone = (getattr(user, "phone", None) or "").strip()
+        if phone:
+            return phone
+        role = getattr(user, "role", None)
+        if role is not None:
+            role_value = role.value if hasattr(role, "value") else str(role)
+            return role_value.replace("_", " ").title()
+        return "Unknown"
+
+    @classmethod
+    def _display_name_from_fields(
+        cls,
+        *,
+        email: Optional[str],
+        phone: Optional[str],
+        role,
+    ) -> str:
+        pseudo_user = type(
+            "_ChatDisplayUser",
+            (),
+            {"email": email, "phone": phone, "role": role},
+        )()
+        return cls._user_display_name(pseudo_user)
+
+    def _conversation_display_name(self, conversation, current_user_id: uuid.UUID) -> str:
+        if conversation.name and conversation.name.strip():
+            return conversation.name.strip()
+
+        if conversation.type == ConversationType.ONE_TO_ONE:
+            for participant in conversation.participants or []:
+                if participant.user_id == current_user_id:
+                    continue
+                user = participant.user
+                if user is not None:
+                    return self._user_display_name(user)
+            return "Direct Message"
+
+        return "Group Chat"
+
+    def _to_conversation_response(self, conversation, current_user_id: uuid.UUID) -> ConversationResponse:
+        base = ConversationResponse.model_validate(conversation)
+        return base.model_copy(
+            update={
+                "display_name": self._conversation_display_name(
+                    conversation, current_user_id
+                )
+            }
+        )
+
+    @staticmethod
+    def _allowed_one_to_one_targets(role: RoleEnum) -> tuple[RoleEnum, ...]:
+        if role == RoleEnum.TEACHER:
+            return (
+                RoleEnum.PARENT,
+                RoleEnum.STUDENT,
+                RoleEnum.PRINCIPAL,
+                RoleEnum.TRUSTEE,
+            )
+        if role == RoleEnum.PRINCIPAL:
+            return (
+                RoleEnum.TEACHER,
+                RoleEnum.PARENT,
+                RoleEnum.STUDENT,
+                RoleEnum.TRUSTEE,
+            )
+        if role == RoleEnum.TRUSTEE:
+            return (RoleEnum.PRINCIPAL, RoleEnum.TEACHER)
+        if role == RoleEnum.PARENT:
+            return (RoleEnum.TEACHER, RoleEnum.PRINCIPAL)
+        if role == RoleEnum.STUDENT:
+            return (RoleEnum.TEACHER, RoleEnum.PRINCIPAL)
+        if role == RoleEnum.SUPERADMIN:
+            return (
+                RoleEnum.PRINCIPAL,
+                RoleEnum.TRUSTEE,
+                RoleEnum.TEACHER,
+            )
+        return tuple()
+
+    async def _teacher_allowed_group_user_ids(
+        self,
+        current_user: CurrentUser,
+        academic_year_id: Optional[uuid.UUID],
+    ) -> set[uuid.UUID]:
+        school_id = self._ensure_school(current_user)
+        from app.models.user import User
+        from app.models.student import Student
+        from app.models.parent import Parent
+        from app.models.teacher import Teacher
+        from app.models.teacher_class_subject import TeacherClassSubject
+
+        teacher_row = await self.db.execute(
+            select(Teacher.id).where(
+                and_(
+                    Teacher.user_id == current_user.id,
+                    Teacher.school_id == school_id,
+                )
+            )
+        )
+        teacher_id = teacher_row.scalar_one_or_none()
+        if not teacher_id:
+            return set()
+
+        resolved_year_id = academic_year_id
+        if resolved_year_id is None:
+            resolved_year_id = (await get_active_year(school_id, self.db)).id
+
+        assignment_rows = (
+            await self.db.execute(
+                select(
+                    TeacherClassSubject.standard_id,
+                    func.upper(func.trim(TeacherClassSubject.section)).label("section"),
+                )
+                .where(
+                    TeacherClassSubject.teacher_id == teacher_id,
+                    TeacherClassSubject.academic_year_id == resolved_year_id,
+                )
+                .distinct()
+            )
+        ).all()
+        allowed_pairs = [(row.standard_id, row.section) for row in assignment_rows]
+        if not allowed_pairs:
+            return set()
+
+        student_rows = (
+            await self.db.execute(
+                select(User.id)
+                .join(Student, Student.user_id == User.id)
+                .where(
+                    User.school_id == school_id,
+                    User.is_active.is_(True),
+                    User.role == RoleEnum.STUDENT,
+                    Student.school_id == school_id,
+                    Student.academic_year_id == resolved_year_id,
+                    tuple_(
+                        Student.standard_id,
+                        func.upper(func.trim(Student.section)),
+                    ).in_(allowed_pairs),
+                )
+                .distinct()
+            )
+        ).all()
+        parent_rows = (
+            await self.db.execute(
+                select(User.id)
+                .join(Parent, Parent.user_id == User.id)
+                .join(Student, Student.parent_id == Parent.id)
+                .where(
+                    User.school_id == school_id,
+                    User.is_active.is_(True),
+                    User.role == RoleEnum.PARENT,
+                    Parent.school_id == school_id,
+                    Student.school_id == school_id,
+                    Student.academic_year_id == resolved_year_id,
+                    tuple_(
+                        Student.standard_id,
+                        func.upper(func.trim(Student.section)),
+                    ).in_(allowed_pairs),
+                )
+                .distinct()
+            )
+        ).all()
+        return {row.id for row in student_rows} | {row.id for row in parent_rows}
 
     async def create_conversation(
         self,
@@ -62,20 +241,9 @@ class ChatService:
                 raise ForbiddenException("User is not in your school")
 
             # Access rules
-            if current_user.role == RoleEnum.TEACHER:
-                if other.role not in (RoleEnum.PARENT, RoleEnum.STUDENT, RoleEnum.PRINCIPAL):
-                    raise ForbiddenException("Chat not allowed with this role")
-            elif current_user.role == RoleEnum.PARENT:
-                if other.role != RoleEnum.TEACHER:
-                    raise ForbiddenException("Parents can only chat with teachers")
-            elif current_user.role == RoleEnum.STUDENT:
-                if other.role != RoleEnum.TEACHER:
-                    raise ForbiddenException("Students can only chat with teachers")
-            elif current_user.role == RoleEnum.PRINCIPAL:
-                if other.role != RoleEnum.TEACHER:
-                    raise ForbiddenException("Principal can only chat with teachers")
-            else:
-                raise ForbiddenException("Chat not allowed for this role")
+            allowed_targets = self._allowed_one_to_one_targets(current_user.role)
+            if other.role not in allowed_targets:
+                raise ForbiddenException("Chat not allowed with this role")
 
             existing = await self.repo.find_one_to_one(
                 school_id=school_id,
@@ -83,7 +251,49 @@ class ChatService:
                 user_b=other_user_id,
             )
             if existing:
-                return ConversationResponse.model_validate(existing)
+                existing_full = await self.repo.get_conversation_by_id(existing.id, school_id)
+                if existing_full is None:
+                    raise NotFoundException("Conversation")
+                return self._to_conversation_response(existing_full, current_user.id)
+        elif body.type == ConversationType.GROUP and current_user.role == RoleEnum.TEACHER:
+            non_self_participants = [u for u in participant_ids if u != current_user.id]
+            if not non_self_participants:
+                raise ValidationException("Group conversation requires at least 1 recipient")
+
+            from app.models.user import User
+            rows = (
+                await self.db.execute(
+                    select(User.id, User.role, User.school_id, User.is_active).where(
+                        User.id.in_(non_self_participants)
+                    )
+                )
+            ).all()
+            if len(rows) != len(set(non_self_participants)):
+                raise NotFoundException("One or more users")
+
+            for row in rows:
+                if row.school_id != school_id or not row.is_active:
+                    raise ForbiddenException("User is not in your school or inactive")
+                if row.role not in (RoleEnum.STUDENT, RoleEnum.PARENT):
+                    raise ForbiddenException(
+                        "Teacher group chat recipients can only be students or parents"
+                    )
+
+            allowed_user_ids = await self._teacher_allowed_group_user_ids(
+                current_user=current_user,
+                academic_year_id=body.academic_year_id,
+            )
+            if not allowed_user_ids:
+                raise ForbiddenException(
+                    "No eligible students/parents found in your assigned classes"
+                )
+            disallowed = [
+                row.id for row in rows if row.id not in allowed_user_ids
+            ]
+            if disallowed:
+                raise ForbiddenException(
+                    "One or more selected recipients are outside your assigned classes"
+                )
 
         conversation = await self.repo.create_conversation(
             {
@@ -106,8 +316,287 @@ class ChatService:
             )
 
         await self.db.commit()
-        await self.db.refresh(conversation)
-        return ConversationResponse.model_validate(conversation)
+        full = await self.repo.get_conversation_by_id(conversation.id, school_id)
+        if full is None:
+            raise NotFoundException("Conversation")
+        return self._to_conversation_response(full, current_user.id)
+
+    async def list_chatable_users(
+        self,
+        current_user: CurrentUser,
+        page: int = 1,
+        page_size: int = 20,
+        query: Optional[str] = None,
+        role: Optional[RoleEnum] = None,
+        standard_id: Optional[uuid.UUID] = None,
+        section: Optional[str] = None,
+        subject_id: Optional[uuid.UUID] = None,
+        academic_year_id: Optional[uuid.UUID] = None,
+    ) -> ChatUserListResponse:
+        school_id = self._ensure_school(current_user)
+        from app.models.user import User
+        from app.models.student import Student
+        from app.models.parent import Parent
+        from app.models.teacher import Teacher
+        from app.models.teacher_class_subject import TeacherClassSubject
+
+        allowed_roles = set(self._allowed_one_to_one_targets(current_user.role))
+        if not allowed_roles:
+            return ChatUserListResponse(
+                items=[],
+                total=0,
+                page=page,
+                page_size=page_size,
+                total_pages=0,
+            )
+
+        if role is not None and role not in allowed_roles:
+            raise ForbiddenException("Chat not allowed with this role")
+
+        target_roles = [role] if role is not None else list(allowed_roles)
+        filters = [
+            User.school_id == school_id,
+            User.id != current_user.id,
+            User.is_active.is_(True),
+            User.role.in_(target_roles),
+        ]
+
+        q = (query or "").strip().lower()
+        if q:
+            filters.append(
+                or_(
+                    func.lower(User.email).like(f"%{q}%"),
+                    func.lower(User.phone).like(f"%{q}%"),
+                )
+            )
+
+        stmt = select(User.id, User.role, User.email, User.phone).where(and_(*filters))
+
+        normalized_section = (section or "").strip().upper()
+
+        # Teacher scope guard:
+        # Teachers can discover only students/parents that belong to their allotted
+        # class-section (and optional subject) assignments for the selected year.
+        if current_user.role == RoleEnum.TEACHER and role in (RoleEnum.STUDENT, RoleEnum.PARENT):
+            teacher_row = await self.db.execute(
+                select(Teacher.id).where(
+                    and_(
+                        Teacher.user_id == current_user.id,
+                        Teacher.school_id == school_id,
+                    )
+                )
+            )
+            teacher_id = teacher_row.scalar_one_or_none()
+            if not teacher_id:
+                return ChatUserListResponse(
+                    items=[],
+                    total=0,
+                    page=page,
+                    page_size=page_size,
+                    total_pages=0,
+                )
+
+            resolved_year_id = academic_year_id
+            if resolved_year_id is None:
+                resolved_year_id = (await get_active_year(school_id, self.db)).id
+
+            assignment_stmt = select(
+                TeacherClassSubject.standard_id,
+                func.upper(func.trim(TeacherClassSubject.section)).label("section"),
+            ).where(
+                TeacherClassSubject.teacher_id == teacher_id,
+                TeacherClassSubject.academic_year_id == resolved_year_id,
+            )
+            if standard_id is not None:
+                assignment_stmt = assignment_stmt.where(
+                    TeacherClassSubject.standard_id == standard_id
+                )
+            if normalized_section:
+                assignment_stmt = assignment_stmt.where(
+                    func.upper(func.trim(TeacherClassSubject.section))
+                    == normalized_section
+                )
+            if subject_id is not None:
+                assignment_stmt = assignment_stmt.where(
+                    TeacherClassSubject.subject_id == subject_id
+                )
+
+            assignment_rows = (await self.db.execute(assignment_stmt.distinct())).all()
+            allowed_pairs = [(row.standard_id, row.section) for row in assignment_rows]
+            if not allowed_pairs:
+                return ChatUserListResponse(
+                    items=[],
+                    total=0,
+                    page=page,
+                    page_size=page_size,
+                    total_pages=0,
+                )
+
+            if role == RoleEnum.STUDENT:
+                stmt = stmt.join(Student, Student.user_id == User.id).where(
+                    Student.school_id == school_id,
+                    Student.academic_year_id == resolved_year_id,
+                    tuple_(
+                        Student.standard_id,
+                        func.upper(func.trim(Student.section)),
+                    ).in_(allowed_pairs),
+                )
+                count_stmt = select(func.count()).select_from(stmt.distinct().subquery())
+                total = int((await self.db.execute(count_stmt)).scalar_one() or 0)
+                stmt = (
+                    stmt.distinct()
+                    .order_by(User.role.asc(), User.email.asc(), User.phone.asc())
+                    .offset((page - 1) * page_size)
+                    .limit(page_size)
+                )
+                rows = (await self.db.execute(stmt)).all()
+                items = [
+                    ChatUserOption(
+                        id=row.id,
+                        role=row.role.value if hasattr(row.role, "value") else str(row.role),
+                        display_name=self._display_name_from_fields(
+                            email=row.email,
+                            phone=row.phone,
+                            role=row.role,
+                        ),
+                        email=row.email,
+                        phone=row.phone,
+                    )
+                    for row in rows
+                ]
+                return ChatUserListResponse(
+                    items=items,
+                    total=total,
+                    page=page,
+                    page_size=page_size,
+                    total_pages=math.ceil(total / page_size) if total else 0,
+                )
+
+            if role == RoleEnum.PARENT:
+                stmt = stmt.join(Parent, Parent.user_id == User.id).where(
+                    Parent.school_id == school_id
+                )
+                stmt = stmt.join(Student, Student.parent_id == Parent.id).where(
+                    Student.school_id == school_id,
+                    Student.academic_year_id == resolved_year_id,
+                    tuple_(
+                        Student.standard_id,
+                        func.upper(func.trim(Student.section)),
+                    ).in_(allowed_pairs),
+                )
+                count_stmt = select(func.count()).select_from(stmt.distinct().subquery())
+                total = int((await self.db.execute(count_stmt)).scalar_one() or 0)
+                stmt = (
+                    stmt.distinct()
+                    .order_by(User.role.asc(), User.email.asc(), User.phone.asc())
+                    .offset((page - 1) * page_size)
+                    .limit(page_size)
+                )
+                rows = (await self.db.execute(stmt)).all()
+                items = [
+                    ChatUserOption(
+                        id=row.id,
+                        role=row.role.value if hasattr(row.role, "value") else str(row.role),
+                        display_name=self._display_name_from_fields(
+                            email=row.email,
+                            phone=row.phone,
+                            role=row.role,
+                        ),
+                        email=row.email,
+                        phone=row.phone,
+                    )
+                    for row in rows
+                ]
+                return ChatUserListResponse(
+                    items=items,
+                    total=total,
+                    page=page,
+                    page_size=page_size,
+                    total_pages=math.ceil(total / page_size) if total else 0,
+                )
+
+        if role == RoleEnum.STUDENT:
+            stmt = stmt.join(Student, Student.user_id == User.id).where(
+                Student.school_id == school_id
+            )
+            if standard_id is not None:
+                stmt = stmt.where(Student.standard_id == standard_id)
+            if normalized_section:
+                stmt = stmt.where(func.upper(func.trim(Student.section)) == normalized_section)
+            if academic_year_id is not None:
+                stmt = stmt.where(Student.academic_year_id == academic_year_id)
+        elif role == RoleEnum.PARENT:
+            stmt = stmt.join(Parent, Parent.user_id == User.id).where(
+                Parent.school_id == school_id
+            )
+            if standard_id is not None or normalized_section or academic_year_id is not None:
+                stmt = stmt.join(Student, Student.parent_id == Parent.id).where(
+                    Student.school_id == school_id
+                )
+                if standard_id is not None:
+                    stmt = stmt.where(Student.standard_id == standard_id)
+                if normalized_section:
+                    stmt = stmt.where(
+                        func.upper(func.trim(Student.section)) == normalized_section
+                    )
+                if academic_year_id is not None:
+                    stmt = stmt.where(Student.academic_year_id == academic_year_id)
+        elif role == RoleEnum.TEACHER and (
+            standard_id is not None
+            or subject_id is not None
+            or normalized_section
+            or academic_year_id is not None
+        ):
+            stmt = stmt.join(Teacher, Teacher.user_id == User.id).where(
+                Teacher.school_id == school_id
+            )
+            stmt = stmt.join(
+                TeacherClassSubject, TeacherClassSubject.teacher_id == Teacher.id
+            )
+            if standard_id is not None:
+                stmt = stmt.where(TeacherClassSubject.standard_id == standard_id)
+            if subject_id is not None:
+                stmt = stmt.where(TeacherClassSubject.subject_id == subject_id)
+            if normalized_section:
+                stmt = stmt.where(
+                    func.upper(func.trim(TeacherClassSubject.section))
+                    == normalized_section
+                )
+            if academic_year_id is not None:
+                stmt = stmt.where(TeacherClassSubject.academic_year_id == academic_year_id)
+
+        count_stmt = select(func.count()).select_from(stmt.distinct().subquery())
+        total = int((await self.db.execute(count_stmt)).scalar_one() or 0)
+
+        stmt = (
+            stmt.distinct()
+            .order_by(User.role.asc(), User.email.asc(), User.phone.asc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+        rows = (await self.db.execute(stmt)).all()
+        items = [
+            ChatUserOption(
+                id=row.id,
+                role=row.role.value if hasattr(row.role, "value") else str(row.role),
+                display_name=self._display_name_from_fields(
+                    email=row.email,
+                    phone=row.phone,
+                    role=row.role,
+                ),
+                email=row.email,
+                phone=row.phone,
+            )
+            for row in rows
+        ]
+
+        return ChatUserListResponse(
+            items=items,
+            total=total,
+            page=page,
+            page_size=page_size,
+            total_pages=math.ceil(total / page_size) if total else 0,
+        )
 
     async def list_conversations(
         self, current_user: CurrentUser
@@ -115,7 +604,7 @@ class ChatService:
         school_id = self._ensure_school(current_user)
         items = await self.repo.list_conversations_for_user(current_user.id, school_id)
         return ConversationListResponse(
-            items=[ConversationResponse.model_validate(c) for c in items],
+            items=[self._to_conversation_response(c, current_user.id) for c in items],
             total=len(items),
         )
 

@@ -12,7 +12,9 @@ from app.utils.enums import ConversationType
 
 def _conversation_with_relations(stmt):
     return stmt.options(
-        selectinload(Conversation.participants),
+        selectinload(Conversation.participants).selectinload(
+            ConversationParticipant.user
+        ),
     )
 
 

@@ -11,15 +11,23 @@ def setup_cors(app: FastAPI) -> None:
 
     if settings.ALLOWED_ORIGINS == "*":
         # Dev-friendly default for Flutter Web / local frontend ports.
-        # Example: http://localhost:64617
+        # Examples: http://localhost:64617, http://192.168.1.25:55921
         logger.warning(
-            "ALLOWED_ORIGINS='*' detected. Allowing localhost/127.0.0.1 origins."
+            "ALLOWED_ORIGINS='*' detected. Allowing localhost + private-network origins."
         )
         origins = [
             "http://localhost",
             "http://127.0.0.1",
+            "http://host.docker.internal",
         ]
-        allow_origin_regex = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
+        allow_origin_regex = (
+            r"^https?://("
+            r"localhost|127\.0\.0\.1|host\.docker\.internal|"
+            r"(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3})|"
+            r"(?:192\.168\.\d{1,3}\.\d{1,3})|"
+            r"(?:172\.(?:1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})"
+            r")(:\d+)?$"
+        )
     else:
         origins = [o.strip() for o in settings.ALLOWED_ORIGINS.split(",") if o.strip()]
         has_localhost_origin = any(

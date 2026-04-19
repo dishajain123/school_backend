@@ -9,6 +9,7 @@ from app.db.session import get_db
 from app.core.security import decode_token
 from app.core.exceptions import UnauthorizedException, ForbiddenException
 from app.models.jti_blocklist import JtiBlocklist
+from app.models.parent import Parent
 from app.utils.enums import RoleEnum
 
 security = HTTPBearer()
@@ -51,11 +52,22 @@ async def get_current_user(
     school_id_raw = payload.get("school_id")
     parent_id_raw = payload.get("parent_id")
 
+    resolved_parent_id: Optional[uuid.UUID] = (
+        uuid.UUID(parent_id_raw) if parent_id_raw else None
+    )
+    # Backward compatibility: some tokens may miss parent_id for parent role.
+    # Resolve it once here so all parent-scoped services work consistently.
+    if resolved_parent_id is None and payload.get("role") == RoleEnum.PARENT.value:
+        parent_row = await db.execute(
+            select(Parent.id).where(Parent.user_id == uuid.UUID(payload["sub"]))
+        )
+        resolved_parent_id = parent_row.scalar_one_or_none()
+
     return CurrentUser(
         id=uuid.UUID(payload["sub"]),
         role=RoleEnum(payload["role"]),
         school_id=uuid.UUID(school_id_raw) if school_id_raw else None,
-        parent_id=uuid.UUID(parent_id_raw) if parent_id_raw else None,
+        parent_id=resolved_parent_id,
         permissions=payload.get("permissions", []),
         email=payload.get("email"),
         phone=payload.get("phone"),

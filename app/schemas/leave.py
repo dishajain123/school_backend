@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime
 from typing import Optional
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from app.utils.enums import LeaveType, LeaveStatus
 
@@ -56,3 +56,13 @@ class LeaveBalanceResponse(BaseModel):
     total_days: float
     used_days: float
     remaining_days: float
+
+
+class LeaveBalanceAllocationItem(BaseModel):
+    leave_type: LeaveType
+    total_days: float = Field(ge=0)
+
+
+class LeaveBalanceAllocationRequest(BaseModel):
+    allocations: list[LeaveBalanceAllocationItem] = Field(min_length=1)
+    academic_year_id: Optional[uuid.UUID] = None

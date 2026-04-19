@@ -447,3 +447,51 @@ class StudentService:
             if updated:
                 updated_items.append(updated)
         return updated_items
+
+    async def bulk_update_promotion_status_by_section(
+        self,
+        standard_id: uuid.UUID,
+        section: str,
+        school_id: uuid.UUID,
+        data: StudentPromotionUpdate,
+        current_user: CurrentUser,
+        academic_year_id: Optional[uuid.UUID] = None,
+        excluded_student_ids: Optional[list[uuid.UUID]] = None,
+    ) -> list[Student]:
+        normalized_section = self._normalize_section(section)
+        excluded = set(excluded_student_ids or [])
+
+        page = 1
+        page_size = 100
+        eligible_ids: list[uuid.UUID] = []
+
+        while True:
+            rows, total = await self.repo.list_by_school(
+                school_id=school_id,
+                standard_id=standard_id,
+                section=normalized_section,
+                academic_year_id=academic_year_id,
+                page=page,
+                page_size=page_size,
+            )
+            for student in rows:
+                if student.id not in excluded:
+                    eligible_ids.append(student.id)
+
+            if not rows:
+                break
+
+            total_pages = math.ceil(total / page_size) if total > 0 else 1
+            if page >= total_pages:
+                break
+            page += 1
+
+        if not eligible_ids:
+            return []
+
+        return await self.bulk_update_promotion_status(
+            student_ids=eligible_ids,
+            school_id=school_id,
+            data=data,
+            current_user=current_user,
+        )

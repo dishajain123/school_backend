@@ -25,6 +25,23 @@ class ParentService:
         self.parent_repo = ParentRepository(db)
         self.user_repo = UserRepository(db)
 
+    async def _resolve_parent_id(self, current_user: CurrentUser) -> uuid.UUID:
+        """
+        Resolve parent id reliably from token or DB.
+        Some sessions may not carry parent_id in JWT; in that case use user_id.
+        """
+        school_id = current_user.school_id
+        if not school_id:
+            raise ValidationException("school_id is required")
+
+        if current_user.parent_id:
+            return current_user.parent_id
+
+        parent = await self.parent_repo.get_by_user_id(current_user.id)
+        if not parent or parent.school_id != school_id:
+            raise NotFoundException(detail="Parent profile not found for this user")
+        return parent.id
+
     async def create_parent(
         self,
         payload: ParentCreate,
@@ -192,9 +209,7 @@ class ParentService:
         if not school_id:
             raise ValidationException("school_id is required")
 
-        parent_id = current_user.parent_id
-        if not parent_id:
-            raise NotFoundException(detail="Parent profile not found for this user")
+        parent_id = await self._resolve_parent_id(current_user)
 
         if not student_id and not admission_number:
             raise ValidationException("Provide student_id or admission_number")
@@ -211,7 +226,10 @@ class ParentService:
             raise NotFoundException(detail="Student not found")
 
         if student.parent_id == parent_id:
-            raise ConflictException(detail="This student is already linked to your account")
+            # Idempotent behavior: return current links when child is already
+            # linked to the same parent instead of failing with 409.
+            children = await self.parent_repo.get_children(parent_id, school_id)
+            return parent_id, children
 
         if not student_password or (not student_email and not student_phone):
             raise ConflictException(
@@ -256,15 +274,13 @@ class ParentService:
             from app.core.exceptions import ForbiddenException
             raise ForbiddenException(detail="Only parents can access this endpoint")
 
-        if not current_user.parent_id:
-            raise NotFoundException(detail="Parent profile not found for this user")
-
         school_id = current_user.school_id
         if not school_id:
             raise ValidationException("school_id is required")
 
-        children = await self.parent_repo.get_children(current_user.parent_id, school_id)
-        return current_user.parent_id, children
+        parent_id = await self._resolve_parent_id(current_user)
+        children = await self.parent_repo.get_children(parent_id, school_id)
+        return parent_id, children
 
     async def assign_children(
         self,

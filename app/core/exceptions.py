@@ -11,8 +11,13 @@ class AppException(HTTPException):
 
 
 class NotFoundException(AppException):
-    def __init__(self, resource: str = "Resource"):
-        super().__init__(status_code=404, detail=f"{resource} not found", error_code="NOT_FOUND")
+    def __init__(self, resource: str = "Resource", detail: str = None):
+        resolved_detail = detail or f"{resource} not found"
+        super().__init__(
+            status_code=404,
+            detail=resolved_detail,
+            error_code="NOT_FOUND",
+        )
 
 
 class ForbiddenException(AppException):

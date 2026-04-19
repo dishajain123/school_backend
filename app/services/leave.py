@@ -9,9 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.dependencies import CurrentUser
 from app.core.exceptions import ForbiddenException, ValidationException, NotFoundException, ConflictException
 from app.repositories.leave import LeaveRepository
+from app.repositories.teacher import TeacherRepository
 from app.repositories.notification import NotificationRepository
 from app.schemas.leave import (
     LeaveApplyRequest,
+    LeaveBalanceAllocationRequest,
     LeaveDecisionRequest,
     LeaveResponse,
     LeaveListResponse,
@@ -97,11 +99,48 @@ class LeaveService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.repo = LeaveRepository(db)
+        self.teacher_repo = TeacherRepository(db)
 
     def _ensure_school(self, current_user: CurrentUser) -> uuid.UUID:
         if not current_user.school_id:
             raise ValidationException("school_id is required")
         return current_user.school_id
+
+    async def _approved_days(
+        self,
+        teacher_id: uuid.UUID,
+        academic_year_id: uuid.UUID,
+        leave_type,
+    ) -> float:
+        approved = await self.repo.list_approved_leaves(
+            teacher_id=teacher_id,
+            academic_year_id=academic_year_id,
+            leave_type=leave_type,
+        )
+        days = 0.0
+        for leave in approved:
+            days += float((leave.to_date - leave.from_date).days + 1)
+        return days
+
+    async def _sync_used_days(
+        self,
+        teacher_id: uuid.UUID,
+        academic_year_id: uuid.UUID,
+        leave_type,
+    ) -> None:
+        balance = await self.repo.get_balance(
+            teacher_id=teacher_id,
+            academic_year_id=academic_year_id,
+            leave_type=leave_type,
+        )
+        if not balance:
+            return
+        used = await self._approved_days(
+            teacher_id=teacher_id,
+            academic_year_id=academic_year_id,
+            leave_type=leave_type,
+        )
+        await self.repo.update_balance(balance, {"used_days": used})
 
     async def apply_leave(
         self,
@@ -128,7 +167,12 @@ class LeaveService:
         if not balance:
             raise ValidationException("Leave balance not configured")
 
-        remaining = float(balance.total_days) - float(balance.used_days)
+        used_days = await self._approved_days(
+            teacher_id=teacher_id,
+            academic_year_id=academic_year_id,
+            leave_type=body.leave_type,
+        )
+        remaining = float(balance.total_days) - used_days
         if remaining < days_requested:
             raise ValidationException("Insufficient leave balance")
 
@@ -189,16 +233,21 @@ class LeaveService:
                 raise ValidationException("Leave balance not configured")
 
             days_requested = (leave.to_date - leave.from_date).days + 1
-            remaining = float(balance.total_days) - float(balance.used_days)
+            used_days = await self._approved_days(
+                teacher_id=leave.teacher_id,
+                academic_year_id=leave.academic_year_id,
+                leave_type=leave.leave_type,
+            )
+            remaining = float(balance.total_days) - used_days
             if remaining < days_requested:
                 raise ValidationException("Insufficient leave balance")
 
-            await self.repo.update_balance(
-                balance,
-                {"used_days": float(balance.used_days) + days_requested},
-            )
-
         updated = await self.repo.update_leave(leave, update_data)
+        await self._sync_used_days(
+            teacher_id=updated.teacher_id,
+            academic_year_id=updated.academic_year_id,
+            leave_type=updated.leave_type,
+        )
         await self.db.commit()
         await self.db.refresh(updated)
 
@@ -249,13 +298,124 @@ class LeaveService:
 
         results = []
         for b in balances:
-            remaining = float(b.total_days) - float(b.used_days)
+            used_days = await self._approved_days(
+                teacher_id=teacher_id,
+                academic_year_id=academic_year_id,
+                leave_type=b.leave_type,
+            )
+            remaining = float(b.total_days) - used_days
             results.append(
                 LeaveBalanceResponse(
                     leave_type=b.leave_type,
                     total_days=float(b.total_days),
-                    used_days=float(b.used_days),
+                    used_days=used_days,
                     remaining_days=max(0.0, remaining),
+                )
+            )
+        return results
+
+    async def get_teacher_balance(
+        self,
+        teacher_id: uuid.UUID,
+        current_user: CurrentUser,
+        academic_year_id: Optional[uuid.UUID],
+    ) -> list[LeaveBalanceResponse]:
+        school_id = self._ensure_school(current_user)
+        teacher = await self.teacher_repo.get_by_id(teacher_id, school_id)
+        if not teacher:
+            raise NotFoundException("Teacher")
+
+        if not academic_year_id:
+            academic_year_id = (await get_active_year(school_id, self.db)).id
+
+        balances = await self.repo.list_balances(teacher_id, academic_year_id)
+        results = []
+        for b in balances:
+            used_days = await self._approved_days(
+                teacher_id=teacher_id,
+                academic_year_id=academic_year_id,
+                leave_type=b.leave_type,
+            )
+            results.append(
+                LeaveBalanceResponse(
+                    leave_type=b.leave_type,
+                    total_days=float(b.total_days),
+                    used_days=used_days,
+                    remaining_days=max(0.0, float(b.total_days) - used_days),
+                )
+            )
+        return results
+
+    async def set_teacher_balance(
+        self,
+        teacher_id: uuid.UUID,
+        body: LeaveBalanceAllocationRequest,
+        current_user: CurrentUser,
+    ) -> list[LeaveBalanceResponse]:
+        school_id = self._ensure_school(current_user)
+        teacher = await self.teacher_repo.get_by_id(teacher_id, school_id)
+        if not teacher:
+            raise NotFoundException("Teacher")
+
+        academic_year_id = body.academic_year_id
+        if not academic_year_id:
+            academic_year_id = (await get_active_year(school_id, self.db)).id
+
+        for item in body.allocations:
+            existing = await self.repo.get_balance(
+                teacher_id=teacher_id,
+                academic_year_id=academic_year_id,
+                leave_type=item.leave_type,
+            )
+
+            if existing:
+                used_days = await self._approved_days(
+                    teacher_id=teacher_id,
+                    academic_year_id=academic_year_id,
+                    leave_type=item.leave_type,
+                )
+                if item.total_days < used_days:
+                    raise ValidationException(
+                        f"Allocated days for {item.leave_type.value} cannot be lower than used days ({used_days})"
+                    )
+                await self.repo.update_balance(
+                    existing,
+                    {"total_days": float(item.total_days)},
+                )
+                continue
+
+            await self.repo.create_balance(
+                {
+                    "teacher_id": teacher_id,
+                    "academic_year_id": academic_year_id,
+                    "leave_type": item.leave_type,
+                    "total_days": float(item.total_days),
+                    "used_days": 0.0,
+                    "school_id": school_id,
+                }
+            )
+
+        for item in body.allocations:
+            await self._sync_used_days(
+                teacher_id=teacher_id,
+                academic_year_id=academic_year_id,
+                leave_type=item.leave_type,
+            )
+        await self.db.commit()
+        balances = await self.repo.list_balances(teacher_id, academic_year_id)
+        results = []
+        for b in balances:
+            used_days = await self._approved_days(
+                teacher_id=teacher_id,
+                academic_year_id=academic_year_id,
+                leave_type=b.leave_type,
+            )
+            results.append(
+                LeaveBalanceResponse(
+                    leave_type=b.leave_type,
+                    total_days=float(b.total_days),
+                    used_days=used_days,
+                    remaining_days=max(0.0, float(b.total_days) - used_days),
                 )
             )
         return results

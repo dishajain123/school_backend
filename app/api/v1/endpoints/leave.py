@@ -9,6 +9,7 @@ from app.core.exceptions import ForbiddenException
 from app.db.session import get_db
 from app.schemas.leave import (
     LeaveApplyRequest,
+    LeaveBalanceAllocationRequest,
     LeaveDecisionRequest,
     LeaveResponse,
     LeaveListResponse,
@@ -66,3 +67,31 @@ async def get_balance(
     db: AsyncSession = Depends(get_db),
 ):
     return await LeaveService(db).get_balance(current_user, academic_year_id)
+
+
+@router.get("/balance/teacher/{teacher_id}", response_model=list[LeaveBalanceResponse])
+async def get_teacher_balance(
+    teacher_id: uuid.UUID,
+    academic_year_id: Optional[uuid.UUID] = Query(None),
+    current_user: CurrentUser = Depends(require_permission("leave:approve")),
+    db: AsyncSession = Depends(get_db),
+):
+    return await LeaveService(db).get_teacher_balance(
+        teacher_id=teacher_id,
+        current_user=current_user,
+        academic_year_id=academic_year_id,
+    )
+
+
+@router.put("/balance/teacher/{teacher_id}", response_model=list[LeaveBalanceResponse])
+async def set_teacher_balance(
+    teacher_id: uuid.UUID,
+    payload: LeaveBalanceAllocationRequest,
+    current_user: CurrentUser = Depends(require_permission("leave:approve")),
+    db: AsyncSession = Depends(get_db),
+):
+    return await LeaveService(db).set_teacher_balance(
+        teacher_id=teacher_id,
+        body=payload,
+        current_user=current_user,
+    )

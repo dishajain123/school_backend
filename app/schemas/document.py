@@ -37,3 +37,7 @@ class DocumentListResponse(BaseModel):
 class DocumentDownloadResponse(BaseModel):
     status: DocumentStatus
     url: Optional[str] = None
+
+
+class DocumentVerifyRequest(BaseModel):
+    approve: bool = True

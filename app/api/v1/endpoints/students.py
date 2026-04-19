@@ -11,6 +11,7 @@ from app.schemas.student import (
     StudentUpdate,
     StudentPromotionUpdate,
     StudentBulkPromotionUpdate,
+    StudentSectionPromotionUpdate,
     StudentSectionCreateRequest,
     StudentSectionCreateResponse,
     StudentResponse,
@@ -175,6 +176,29 @@ async def bulk_update_promotion_status(
         school_id=current_user.school_id,
         data=StudentPromotionUpdate(promotion_status=data.promotion_status),
         current_user=current_user,
+    )
+    return StudentBulkPromotionResponse(
+        updated_count=len(items),
+        items=items,
+    )
+
+
+@router.patch("/promotion-status/section", response_model=StudentBulkPromotionResponse)
+async def bulk_update_promotion_status_by_section(
+    data: StudentSectionPromotionUpdate,
+    current_user: CurrentUser = Depends(require_permission("student:promote")),
+    service: StudentService = Depends(get_service),
+):
+    if not current_user.school_id:
+        raise ForbiddenException("School context required")
+    items = await service.bulk_update_promotion_status_by_section(
+        standard_id=data.standard_id,
+        section=data.section,
+        school_id=current_user.school_id,
+        data=StudentPromotionUpdate(promotion_status=data.promotion_status),
+        current_user=current_user,
+        academic_year_id=data.academic_year_id,
+        excluded_student_ids=data.excluded_student_ids,
     )
     return StudentBulkPromotionResponse(
         updated_count=len(items),

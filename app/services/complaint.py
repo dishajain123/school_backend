@@ -18,7 +18,13 @@ from app.schemas.complaint import (
     FeedbackCreate,
     FeedbackResponse,
 )
-from app.utils.enums import RoleEnum, NotificationType, NotificationPriority, ComplaintStatus
+from app.utils.enums import (
+    RoleEnum,
+    NotificationType,
+    NotificationPriority,
+    ComplaintStatus,
+    ComplaintCategory,
+)
 
 COMPLAINTS_BUCKET = "documents"
 
@@ -55,14 +61,39 @@ class ComplaintService:
             raise ValidationException("school_id is required")
         return current_user.school_id
 
+    @staticmethod
+    def _user_display_name(user) -> str:
+        if user is None:
+            return "Unknown"
+        email = (user.email or "").strip()
+        if email:
+            local_part = email.split("@", 1)[0]
+            parts = [p for p in local_part.replace("_", ".").split(".") if p]
+            if parts:
+                return " ".join(p[:1].upper() + p[1:] for p in parts)
+            return local_part
+        phone = (user.phone or "").strip()
+        if phone:
+            return phone
+        return "Unknown"
+
     def _build_response(self, complaint) -> ComplaintResponse:
         data = ComplaintResponse.model_validate(complaint)
+        if complaint.submitter is not None:
+            data.submitted_by_name = self._user_display_name(complaint.submitter)
+            data.submitted_by_role = complaint.submitter.role
         if complaint.attachment_key:
-            data.attachment_url = minio_client.generate_presigned_url(
-                COMPLAINTS_BUCKET, complaint.attachment_key
-            )
+            try:
+                data.attachment_url = minio_client.generate_presigned_url(
+                    COMPLAINTS_BUCKET, complaint.attachment_key
+                )
+            except Exception:
+                # Do not fail complaint APIs if object-storage URL generation fails.
+                data.attachment_url = None
         if complaint.is_anonymous:
             data.submitted_by = None
+            data.submitted_by_name = None
+            data.submitted_by_role = None
         return data
 
     async def create_complaint(
@@ -97,16 +128,28 @@ class ComplaintService:
         self,
         current_user: CurrentUser,
         status: Optional[ComplaintStatus],
+        category: Optional[ComplaintCategory],
+        submitted_by_role: Optional[RoleEnum],
     ) -> ComplaintListResponse:
         school_id = self._ensure_school(current_user)
 
         submitted_by: Optional[uuid.UUID] = None
-        if current_user.role in (RoleEnum.STUDENT, RoleEnum.PARENT):
+        if current_user.role in (RoleEnum.TEACHER, RoleEnum.STUDENT, RoleEnum.PARENT):
             submitted_by = current_user.id
+
+        role_filter = submitted_by_role
+        if role_filter == RoleEnum.PRINCIPAL:
+            role_filter = None
+        if role_filter == RoleEnum.TRUSTEE:
+            role_filter = None
+        if role_filter == RoleEnum.SUPERADMIN:
+            role_filter = None
 
         complaints = await self.repo.list_complaints(
             school_id=school_id,
-            status=status.value if status else None,
+            status=status,
+            category=category,
+            submitted_by_role=role_filter,
             submitted_by=submitted_by,
         )
         return ComplaintListResponse(

@@ -19,6 +19,7 @@ class ConversationResponse(BaseModel):
     id: uuid.UUID
     type: ConversationType
     name: Optional[str] = None
+    display_name: Optional[str] = None
     standard_id: Optional[uuid.UUID] = None
     created_by: Optional[uuid.UUID] = None
     academic_year_id: Optional[uuid.UUID] = None
@@ -70,3 +71,19 @@ class MarkReadRequest(BaseModel):
 
 class FileUploadResponse(BaseModel):
     key: str
+
+
+class ChatUserOption(BaseModel):
+    id: uuid.UUID
+    role: str
+    display_name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+
+
+class ChatUserListResponse(BaseModel):
+    items: list[ChatUserOption]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int

@@ -38,6 +38,14 @@ class StudentBulkPromotionUpdate(BaseModel):
     promotion_status: PromotionStatus
 
 
+class StudentSectionPromotionUpdate(BaseModel):
+    standard_id: uuid.UUID
+    section: str = Field(..., min_length=1, max_length=10)
+    academic_year_id: Optional[uuid.UUID] = None
+    excluded_student_ids: list[uuid.UUID] = Field(default_factory=list)
+    promotion_status: PromotionStatus
+
+
 class StudentResponse(BaseModel):
     id: uuid.UUID
     user_id: Optional[uuid.UUID]

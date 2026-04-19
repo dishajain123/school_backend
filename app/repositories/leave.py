@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.teacher_leave import TeacherLeave
 from app.models.leave_balance import LeaveBalance
+from app.utils.enums import LeaveStatus
 
 
 class LeaveRepository:
@@ -84,9 +85,16 @@ class LeaveRepository:
                     LeaveBalance.teacher_id == teacher_id,
                     LeaveBalance.academic_year_id == academic_year_id,
                 )
-            )
+            ).order_by(LeaveBalance.leave_type.asc())
         )
         return list(result.scalars().all())
+
+    async def create_balance(self, data: dict) -> LeaveBalance:
+        balance = LeaveBalance(**data)
+        self.db.add(balance)
+        await self.db.flush()
+        await self.db.refresh(balance)
+        return balance
 
     async def update_balance(self, balance: LeaveBalance, data: dict) -> LeaveBalance:
         for key, value in data.items():
@@ -94,3 +102,21 @@ class LeaveRepository:
         await self.db.flush()
         await self.db.refresh(balance)
         return balance
+
+    async def list_approved_leaves(
+        self,
+        teacher_id: uuid.UUID,
+        academic_year_id: uuid.UUID,
+        leave_type=None,
+    ) -> list[TeacherLeave]:
+        stmt = select(TeacherLeave).where(
+            and_(
+                TeacherLeave.teacher_id == teacher_id,
+                TeacherLeave.academic_year_id == academic_year_id,
+                TeacherLeave.status == LeaveStatus.APPROVED,
+            )
+        )
+        if leave_type is not None:
+            stmt = stmt.where(TeacherLeave.leave_type == leave_type)
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())

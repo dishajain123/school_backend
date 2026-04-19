@@ -4,7 +4,7 @@ from typing import Optional
 
 from pydantic import BaseModel, field_validator
 
-from app.utils.enums import ComplaintCategory, ComplaintStatus, FeedbackType
+from app.utils.enums import ComplaintCategory, ComplaintStatus, FeedbackType, RoleEnum
 
 
 class ComplaintCreate(BaseModel):
@@ -31,6 +31,8 @@ class ComplaintResponse(BaseModel):
     id: uuid.UUID
     school_id: uuid.UUID
     submitted_by: Optional[uuid.UUID] = None
+    submitted_by_name: Optional[str] = None
+    submitted_by_role: Optional[RoleEnum] = None
     category: ComplaintCategory
     description: str
     attachment_key: Optional[str] = None

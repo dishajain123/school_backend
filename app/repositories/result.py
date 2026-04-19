@@ -1,12 +1,13 @@
 import uuid
 from typing import Optional
 
-from sqlalchemy import select, and_, update
+from sqlalchemy import select, and_, update, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.exam import Exam
 from app.models.result import Result
+from app.models.student import Student
 
 
 def _exam_with_relations(stmt):
@@ -18,7 +19,7 @@ def _exam_with_relations(stmt):
 
 def _result_with_relations(stmt):
     return stmt.options(
-        selectinload(Result.student),
+        selectinload(Result.student).selectinload(Student.user),
         selectinload(Result.subject),
         selectinload(Result.grade),
     )
@@ -69,6 +70,7 @@ class ResultRepository:
         school_id: uuid.UUID,
         academic_year_id: Optional[uuid.UUID] = None,
         standard_id: Optional[uuid.UUID] = None,
+        standard_ids: Optional[list[uuid.UUID]] = None,
         student_id: Optional[uuid.UUID] = None,
     ) -> list[Exam]:
         stmt = select(Exam).where(Exam.school_id == school_id)
@@ -77,6 +79,10 @@ class ResultRepository:
             stmt = stmt.where(Exam.academic_year_id == academic_year_id)
         if standard_id is not None:
             stmt = stmt.where(Exam.standard_id == standard_id)
+        elif standard_ids is not None:
+            if not standard_ids:
+                return []
+            stmt = stmt.where(Exam.standard_id.in_(standard_ids))
         if student_id is not None:
             stmt = stmt.join(
                 Result,
@@ -148,3 +154,48 @@ class ResultRepository:
         )
         await self.db.flush()
         return result.rowcount  # type: ignore[return-value]
+
+    async def list_results_by_exam(
+        self,
+        school_id: uuid.UUID,
+        exam_id: uuid.UUID,
+    ) -> list[Result]:
+        stmt = select(Result).where(
+            and_(
+                Result.school_id == school_id,
+                Result.exam_id == exam_id,
+            )
+        )
+        result = await self.db.execute(_result_with_relations(stmt))
+        return list(result.scalars().all())
+
+    async def list_sections_for_standard(
+        self,
+        school_id: uuid.UUID,
+        standard_id: uuid.UUID,
+        academic_year_id: Optional[uuid.UUID] = None,
+    ) -> list[str]:
+        section_expr = func.trim(Student.section)
+        stmt = (
+            select(section_expr.label("section"))
+            .select_from(Result)
+            .join(
+                Exam,
+                and_(
+                    Exam.id == Result.exam_id,
+                    Exam.school_id == school_id,
+                ),
+            )
+            .join(Student, Student.id == Result.student_id)
+            .where(
+                Result.school_id == school_id,
+                Exam.standard_id == standard_id,
+                Student.section.is_not(None),
+                section_expr != "",
+            )
+        )
+        if academic_year_id is not None:
+            stmt = stmt.where(Exam.academic_year_id == academic_year_id)
+        stmt = stmt.group_by(section_expr).order_by(func.lower(section_expr))
+        result = await self.db.execute(stmt)
+        return [row[0] for row in result.all() if row[0]]

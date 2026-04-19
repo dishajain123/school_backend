@@ -1,8 +1,8 @@
 import uuid
 from datetime import date
-from typing import Optional
+from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Body, Depends, Query
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,49 +15,64 @@ from app.services.diary import DiaryService
 router = APIRouter(prefix="/diary", tags=["Diary"])
 
 
-async def _parse_diary_body(request: Request) -> DiaryCreate:
-    try:
-        payload = await request.json()
-    except Exception:
-        raise ValidationException("Request body must be valid JSON")
+def _sanitize_payload(payload: dict) -> dict:
+    optional_fields = {"academic_year_id", "date", "homework_note"}
+    sanitized = {}
+    for k, v in payload.items():
+        if k in optional_fields and isinstance(v, str) and not v.strip():
+            sanitized[k] = None
+        else:
+            sanitized[k] = v
+    return sanitized
 
+
+def _parse_diary_body(payload: Any) -> DiaryCreate:
     if payload is None:
         raise ValidationException("Request body is required")
+
+    if (
+        isinstance(payload, dict)
+        and "input" in payload
+        and isinstance(payload["input"], dict)
+    ):
+        payload = payload["input"]
+
     if not isinstance(payload, dict):
         raise ValidationException("Request body must be a JSON object")
+
+    payload = _sanitize_payload(payload)
 
     try:
         return DiaryCreate.model_validate(payload)
     except ValidationError as exc:
-        first_error = exc.errors()[0] if exc.errors() else {}
-        message = first_error.get("msg") or "Validation failed"
-        raise ValidationException(message)
+        errors = exc.errors()
+        # Log all errors to server console so you can see exactly what's failing
+        for e in errors:
+            print(f"[DiaryCreate validation error] loc={e.get('loc')} msg={e.get('msg')} input={e.get('input')}")
+        first_error = errors[0] if errors else {}
+        msg = first_error.get("msg") or "Validation failed"
+        if msg.lower().startswith("value error, "):
+            msg = msg[len("value error, "):]
+        raise ValidationException(msg)
 
 
 @router.post("/create", response_model=DiaryResponse, status_code=201)
 async def create_diary_entry_explicit(
-    request: Request,
+    payload: Any = Body(...),
     current_user: CurrentUser = Depends(require_permission("diary:create")),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Explicit typed create route kept for compatibility with strict body validators.
-    """
-    body = await _parse_diary_body(request)
+    body = _parse_diary_body(payload)
     return await DiaryService(db).create_entry(body, current_user)
 
 
 @router.post("", response_model=DiaryResponse, status_code=201)
 async def create_diary_entry(
-    request: Request,
+    payload: Any = Body(...),
     current_user: CurrentUser = Depends(require_permission("diary:create")),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    TEACHER only (`diary:create`).
-    Creates a daily class diary entry for a subject.
-    """
-    body = await _parse_diary_body(request)
+    body = _parse_diary_body(payload)
     return await DiaryService(db).create_entry(body, current_user)
 
 
@@ -72,10 +87,6 @@ async def list_diary_entries(
     current_user: CurrentUser = Depends(require_permission("diary:read")),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Students and parents see diary for their own class(es).
-    Teachers see diary entries they created. Admin roles see all.
-    """
     return await DiaryService(db).list_entries(
         current_user=current_user,
         record_date=diary_date,

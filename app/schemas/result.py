@@ -90,5 +90,38 @@ class ResultListResponse(BaseModel):
     total: int
 
 
+class ResultDistributionSubjectItem(BaseModel):
+    subject_id: uuid.UUID
+    subject_name: str
+    marks_obtained: float
+    max_marks: float
+    percentage: float
+    grade_letter: Optional[str] = None
+    is_published: bool
+
+
+class ResultDistributionStudentItem(BaseModel):
+    student_id: uuid.UUID
+    student_name: str
+    admission_number: str
+    section: Optional[str] = None
+    roll_number: Optional[str] = None
+    total_obtained: float
+    total_max: float
+    overall_percentage: float
+    subjects: list[ResultDistributionSubjectItem]
+
+
+class ResultDistributionResponse(BaseModel):
+    exam: ExamResponse
+    total_students: int
+    items: list[ResultDistributionStudentItem]
+
+
 class ReportCardResponse(BaseModel):
     url: str
+
+
+class ReportCardUploadResponse(BaseModel):
+    url: str
+    uploaded: bool = True

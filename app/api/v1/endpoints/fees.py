@@ -6,7 +6,13 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import CurrentUser, require_permission, require_roles
+from app.core.dependencies import (
+    CurrentUser,
+    get_current_user,
+    require_permission,
+    require_roles,
+)
+from app.core.exceptions import ForbiddenException
 from app.db.session import get_db
 from app.schemas.fee import (
     FeeStructureCreate,
@@ -55,9 +61,15 @@ async def record_payment(
 @router.get("", response_model=FeeDashboardResponse)
 async def fee_dashboard(
     student_id: uuid.UUID = Query(...),
-    current_user: CurrentUser = Depends(require_permission("fee:read")),
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    can_read = "fee:read" in current_user.permissions
+    own_scope_fallback = current_user.role in (RoleEnum.STUDENT, RoleEnum.PARENT)
+    if not can_read and not own_scope_fallback:
+        raise ForbiddenException(
+            detail="Permission 'fee:read' is required to access this resource"
+        )
     return await FeeService(db).fee_dashboard(student_id, current_user)
 
 
@@ -65,18 +77,30 @@ async def fee_dashboard(
 @router.get("/payments", response_model=PaymentListResponse)
 async def list_payments(
     fee_ledger_id: uuid.UUID = Query(...),
-    current_user: CurrentUser = Depends(require_permission("fee:read")),
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    can_read = "fee:read" in current_user.permissions
+    own_scope_fallback = current_user.role in (RoleEnum.STUDENT, RoleEnum.PARENT)
+    if not can_read and not own_scope_fallback:
+        raise ForbiddenException(
+            detail="Permission 'fee:read' is required to access this resource"
+        )
     # NOTE: This endpoint was added to support payment history by ledger.
     return await FeeService(db).list_payments(fee_ledger_id, current_user)
 
 @router.get("/payments/{payment_id}/receipt")
 async def get_receipt(
     payment_id: uuid.UUID,
-    current_user: CurrentUser = Depends(require_permission("fee:read")),
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    can_read = "fee:read" in current_user.permissions
+    own_scope_fallback = current_user.role in (RoleEnum.STUDENT, RoleEnum.PARENT)
+    if not can_read and not own_scope_fallback:
+        raise ForbiddenException(
+            detail="Permission 'fee:read' is required to access this resource"
+        )
     url = await FeeService(db).get_receipt_url(payment_id, current_user)
     return {"url": url}
 

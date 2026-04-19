@@ -1,4 +1,5 @@
 import uuid
+from typing import Optional
 
 from fastapi import APIRouter, Depends, BackgroundTasks, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -60,12 +61,26 @@ async def cancel_entry(
 @router.get("", response_model=ExamScheduleTable)
 async def get_schedule(
     standard_id: uuid.UUID = Query(...),
-    series_id: uuid.UUID = Query(...),
+    series_id: Optional[uuid.UUID] = Query(None),
     current_user: CurrentUser = Depends(require_permission("exam_schedule:read")),
     db: AsyncSession = Depends(get_db),
 ):
     return await ExamScheduleService(db).get_schedule(
         standard_id=standard_id,
         series_id=series_id,
+        current_user=current_user,
+    )
+
+
+@router.get("/series", response_model=list[ExamSeriesResponse])
+async def list_series(
+    standard_id: uuid.UUID = Query(...),
+    academic_year_id: Optional[uuid.UUID] = Query(None),
+    current_user: CurrentUser = Depends(require_permission("exam_schedule:read")),
+    db: AsyncSession = Depends(get_db),
+):
+    return await ExamScheduleService(db).list_series(
+        standard_id=standard_id,
+        academic_year_id=academic_year_id,
         current_user=current_user,
     )

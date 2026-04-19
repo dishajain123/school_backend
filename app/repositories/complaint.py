@@ -3,9 +3,12 @@ from typing import Optional
 
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.complaint import Complaint
 from app.models.feedback import Feedback
+from app.models.user import User
+from app.utils.enums import ComplaintCategory, ComplaintStatus, RoleEnum
 
 
 class ComplaintRepository:
@@ -23,7 +26,12 @@ class ComplaintRepository:
         self, complaint_id: uuid.UUID, school_id: uuid.UUID
     ) -> Optional[Complaint]:
         result = await self.db.execute(
-            select(Complaint).where(
+            select(Complaint)
+            .options(
+                selectinload(Complaint.submitter),
+                selectinload(Complaint.resolver),
+            )
+            .where(
                 and_(
                     Complaint.id == complaint_id,
                     Complaint.school_id == school_id,
@@ -35,12 +43,27 @@ class ComplaintRepository:
     async def list_complaints(
         self,
         school_id: uuid.UUID,
-        status: Optional[str] = None,
+        status: Optional[ComplaintStatus] = None,
+        category: Optional[ComplaintCategory] = None,
+        submitted_by_role: Optional[RoleEnum] = None,
         submitted_by: Optional[uuid.UUID] = None,
     ) -> list[Complaint]:
-        stmt = select(Complaint).where(Complaint.school_id == school_id)
+        stmt = (
+            select(Complaint)
+            .options(
+                selectinload(Complaint.submitter),
+                selectinload(Complaint.resolver),
+            )
+            .where(Complaint.school_id == school_id)
+        )
         if status:
             stmt = stmt.where(Complaint.status == status)
+        if category:
+            stmt = stmt.where(Complaint.category == category)
+        if submitted_by_role:
+            stmt = stmt.join(User, Complaint.submitted_by == User.id).where(
+                User.role == submitted_by_role
+            )
         if submitted_by:
             stmt = stmt.where(Complaint.submitted_by == submitted_by)
         stmt = stmt.order_by(Complaint.created_at.desc())

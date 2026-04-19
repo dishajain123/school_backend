@@ -2,22 +2,27 @@ import uuid
 from typing import Optional
 
 from fastapi import BackgroundTasks
-from sqlalchemy import select, and_
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import CurrentUser
-from app.core.exceptions import ForbiddenException, ConflictException, ValidationException, NotFoundException
+from app.core.exceptions import (
+    ConflictException,
+    ForbiddenException,
+    NotFoundException,
+    ValidationException,
+)
 from app.repositories.exam_schedule import ExamScheduleRepository
 from app.repositories.notification import NotificationRepository
 from app.schemas.exam_schedule import (
-    ExamSeriesCreate,
-    ExamSeriesResponse,
     ExamEntryCreate,
     ExamEntryResponse,
     ExamScheduleTable,
+    ExamSeriesCreate,
+    ExamSeriesResponse,
 )
 from app.services.academic_year import get_active_year
-from app.utils.enums import RoleEnum, NotificationType, NotificationPriority
+from app.utils.enums import NotificationPriority, NotificationType, RoleEnum
 
 
 async def _notify_exam_schedule_published(
@@ -28,8 +33,8 @@ async def _notify_exam_schedule_published(
 ) -> None:
     """Opens its own DB session — never reuses the request session."""
     from app.db.session import AsyncSessionLocal
-    from app.models.student import Student
     from app.models.parent import Parent
+    from app.models.student import Student
 
     async with AsyncSessionLocal() as db:
         result = await db.execute(
@@ -85,6 +90,43 @@ class ExamScheduleService:
             raise ValidationException("school_id is required")
         return current_user.school_id
 
+    async def _assert_teacher_assigned_standard(
+        self,
+        *,
+        school_id: uuid.UUID,
+        current_user: CurrentUser,
+        standard_id: uuid.UUID,
+        academic_year_id: uuid.UUID,
+    ) -> None:
+        from app.models.teacher import Teacher
+        from app.models.teacher_class_subject import TeacherClassSubject
+
+        teacher_row = await self.db.execute(
+            select(Teacher.id).where(
+                and_(
+                    Teacher.user_id == current_user.id,
+                    Teacher.school_id == school_id,
+                )
+            )
+        )
+        teacher_id = teacher_row.scalar_one_or_none()
+        if not teacher_id:
+            raise ForbiddenException("Teacher profile not found")
+
+        assignment = await self.db.execute(
+            select(TeacherClassSubject.id).where(
+                and_(
+                    TeacherClassSubject.teacher_id == teacher_id,
+                    TeacherClassSubject.standard_id == standard_id,
+                    TeacherClassSubject.academic_year_id == academic_year_id,
+                )
+            )
+        )
+        if not assignment.scalar_one_or_none():
+            raise ForbiddenException(
+                "You can manage exam schedules only for your assigned class"
+            )
+
     async def create_series(
         self,
         body: ExamSeriesCreate,
@@ -94,6 +136,14 @@ class ExamScheduleService:
         academic_year_id = body.academic_year_id
         if not academic_year_id:
             academic_year_id = (await get_active_year(school_id, self.db)).id
+
+        if current_user.role == RoleEnum.TEACHER:
+            await self._assert_teacher_assigned_standard(
+                school_id=school_id,
+                current_user=current_user,
+                standard_id=body.standard_id,
+                academic_year_id=academic_year_id,
+            )
 
         existing = await self.repo.get_series_duplicate(
             school_id=school_id,
@@ -130,6 +180,14 @@ class ExamScheduleService:
         if not series:
             raise NotFoundException("Exam series")
 
+        if current_user.role == RoleEnum.TEACHER:
+            await self._assert_teacher_assigned_standard(
+                school_id=school_id,
+                current_user=current_user,
+                standard_id=series.standard_id,
+                academic_year_id=series.academic_year_id,
+            )
+
         entry = await self.repo.create_entry(
             {
                 "series_id": series_id,
@@ -155,6 +213,14 @@ class ExamScheduleService:
         series = await self.repo.get_series_by_id(series_id, school_id)
         if not series:
             raise NotFoundException("Exam series")
+
+        if current_user.role == RoleEnum.TEACHER:
+            await self._assert_teacher_assigned_standard(
+                school_id=school_id,
+                current_user=current_user,
+                standard_id=series.standard_id,
+                academic_year_id=series.academic_year_id,
+            )
 
         if series.is_published:
             return ExamSeriesResponse.model_validate(series)
@@ -183,6 +249,17 @@ class ExamScheduleService:
         if not entry:
             raise NotFoundException("Exam schedule entry")
 
+        if current_user.role == RoleEnum.TEACHER:
+            series = await self.repo.get_series_by_id(entry.series_id, school_id)
+            if not series:
+                raise NotFoundException("Exam series")
+            await self._assert_teacher_assigned_standard(
+                school_id=school_id,
+                current_user=current_user,
+                standard_id=series.standard_id,
+                academic_year_id=series.academic_year_id,
+            )
+
         updated = await self.repo.update_entry(entry, {"is_cancelled": True})
         await self.db.commit()
         await self.db.refresh(updated)
@@ -191,7 +268,7 @@ class ExamScheduleService:
     async def get_schedule(
         self,
         standard_id: uuid.UUID,
-        series_id: uuid.UUID,
+        series_id: Optional[uuid.UUID],
         current_user: CurrentUser,
     ) -> ExamScheduleTable:
         school_id = self._ensure_school(current_user)
@@ -224,12 +301,83 @@ class ExamScheduleService:
             if not result.scalar_one_or_none():
                 raise ForbiddenException("You do not have a child in this class")
 
-        series = await self.repo.get_series_by_id(series_id, school_id)
-        if not series or series.standard_id != standard_id:
-            raise NotFoundException("Exam series")
+        elif current_user.role == RoleEnum.TEACHER:
+            active_year_id = (await get_active_year(school_id, self.db)).id
+            await self._assert_teacher_assigned_standard(
+                school_id=school_id,
+                current_user=current_user,
+                standard_id=standard_id,
+                academic_year_id=active_year_id,
+            )
 
-        entries = await self.repo.list_entries_for_series(series_id, school_id)
+        if series_id is None:
+            visible_series = await self.repo.list_series(
+                school_id=school_id,
+                standard_id=standard_id,
+                published_only=current_user.role in (RoleEnum.PARENT, RoleEnum.STUDENT),
+            )
+            if not visible_series:
+                raise NotFoundException("Exam series")
+            series = visible_series[0]
+        else:
+            series = await self.repo.get_series_by_id(series_id, school_id)
+            if not series or series.standard_id != standard_id:
+                raise NotFoundException("Exam series")
+
+        entries = await self.repo.list_entries_for_series(series.id, school_id)
         return ExamScheduleTable(
             series=ExamSeriesResponse.model_validate(series),
             entries=[ExamEntryResponse.model_validate(e) for e in entries],
         )
+
+    async def list_series(
+        self,
+        *,
+        standard_id: uuid.UUID,
+        academic_year_id: Optional[uuid.UUID],
+        current_user: CurrentUser,
+    ) -> list[ExamSeriesResponse]:
+        school_id = self._ensure_school(current_user)
+        from app.models.student import Student
+
+        if current_user.role == RoleEnum.STUDENT:
+            result = await self.db.execute(
+                select(Student.standard_id).where(
+                    and_(
+                        Student.user_id == current_user.id,
+                        Student.school_id == school_id,
+                    )
+                )
+            )
+            own_standard_id = result.scalar_one_or_none()
+            if not own_standard_id or own_standard_id != standard_id:
+                raise ForbiddenException("You can only view your own class exam schedule")
+        elif current_user.role == RoleEnum.PARENT:
+            result = await self.db.execute(
+                select(Student.id).where(
+                    and_(
+                        Student.standard_id == standard_id,
+                        Student.parent_id == current_user.parent_id,
+                        Student.school_id == school_id,
+                    )
+                )
+            )
+            if not result.scalar_one_or_none():
+                raise ForbiddenException("You do not have a child in this class")
+        elif current_user.role == RoleEnum.TEACHER:
+            resolved_year_id = academic_year_id or (await get_active_year(school_id, self.db)).id
+            await self._assert_teacher_assigned_standard(
+                school_id=school_id,
+                current_user=current_user,
+                standard_id=standard_id,
+                academic_year_id=resolved_year_id,
+            )
+
+        published_only = current_user.role in (RoleEnum.PARENT, RoleEnum.STUDENT)
+        series = await self.repo.list_series(
+            school_id=school_id,
+            standard_id=standard_id,
+            academic_year_id=academic_year_id,
+            published_only=published_only,
+        )
+        return [ExamSeriesResponse.model_validate(item) for item in series]
