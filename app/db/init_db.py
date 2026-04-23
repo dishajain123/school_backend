@@ -88,6 +88,23 @@ async def init_db() -> None:
                     """
                 )
             )
+            # Runtime-safe patch for homework attachments and file responses.
+            await conn.execute(
+                text(
+                    """
+                    ALTER TABLE IF EXISTS homework
+                    ADD COLUMN IF NOT EXISTS file_key TEXT NULL
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    ALTER TABLE IF EXISTS homework_submissions
+                    ADD COLUMN IF NOT EXISTS file_key TEXT NULL
+                    """
+                )
+            )
         logger.info("Database tables created/verified successfully")
     except Exception as e:
         logger.error(f"Failed to initialize database: {e}")

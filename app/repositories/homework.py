@@ -2,11 +2,12 @@ import uuid
 from datetime import date
 from typing import Optional
 
-from sqlalchemy import select, func, and_
+from sqlalchemy import select, func, and_, exists
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.homework import Homework
+from app.models.homework_submission import HomeworkSubmission
 
 
 def _with_relations(stmt):
@@ -74,6 +75,8 @@ class HomeworkRepository:
         record_date: Optional[date] = None,
         academic_year_id: Optional[uuid.UUID] = None,
         teacher_id: Optional[uuid.UUID] = None,
+        is_submitted: Optional[bool] = None,
+        submission_student_ids: Optional[list[uuid.UUID]] = None,
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list[Homework], int]:
@@ -94,6 +97,33 @@ class HomeworkRepository:
             base_where.append(Homework.academic_year_id == academic_year_id)
         if teacher_id:
             base_where.append(Homework.teacher_id == teacher_id)
+        if is_submitted is not None:
+            sub_where = [
+                HomeworkSubmission.homework_id == Homework.id,
+                HomeworkSubmission.school_id == school_id,
+            ]
+            if submission_student_ids is not None:
+                if not submission_student_ids:
+                    return ([], 0) if is_submitted else await self.list_by_school(
+                        school_id=school_id,
+                        standard_id=standard_id,
+                        standard_ids=standard_ids,
+                        subject_id=subject_id,
+                        record_date=record_date,
+                        academic_year_id=academic_year_id,
+                        teacher_id=teacher_id,
+                        is_submitted=None,
+                        submission_student_ids=None,
+                        page=page,
+                        page_size=page_size,
+                    )
+                sub_where.append(
+                    HomeworkSubmission.student_id.in_(submission_student_ids)
+                )
+            submission_exists = exists(
+                select(HomeworkSubmission.id).where(and_(*sub_where))
+            )
+            base_where.append(submission_exists if is_submitted else ~submission_exists)
 
         stmt = select(Homework).where(and_(*base_where))
         count_q = select(func.count(Homework.id)).where(and_(*base_where))

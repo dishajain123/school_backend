@@ -84,7 +84,7 @@ class DiaryService:
     ) -> DiaryListResponse:
         school_id = self._ensure_school(current_user)
 
-        resolved_date = record_date or datetime.now(timezone.utc).date()
+        resolved_date = record_date
         resolved_year_id = academic_year_id
         if not resolved_year_id:
             resolved_year_id = (await get_active_year(school_id, self.db)).id

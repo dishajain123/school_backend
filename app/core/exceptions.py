@@ -11,13 +11,8 @@ class AppException(HTTPException):
 
 
 class NotFoundException(AppException):
-    def __init__(self, resource: str = "Resource", detail: str = None):
-        resolved_detail = detail or f"{resource} not found"
-        super().__init__(
-            status_code=404,
-            detail=resolved_detail,
-            error_code="NOT_FOUND",
-        )
+    def __init__(self, resource: str = "Resource"):
+        super().__init__(status_code=404, detail=f"{resource} not found", error_code="NOT_FOUND")
 
 
 class ForbiddenException(AppException):
@@ -52,11 +47,22 @@ async def app_exception_handler(request: Request, exc: AppException) -> JSONResp
 
 
 async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    errors = exc.errors()
+    # Extract a single human-readable message so Flutter error_interceptor
+    # always receives `detail` as a plain string, never a list.
+    first = errors[0] if errors else {}
+    msg: str = first.get("msg") or "Validation failed"
+    # Strip the "Value error, " prefix Pydantic v2 adds
+    if msg.lower().startswith("value error, "):
+        msg = msg[len("value error, "):]
+    field_loc = " -> ".join(str(p) for p in first.get("loc", []) if p != "body")
+    human = f"{field_loc}: {msg}" if field_loc else msg
+
     return JSONResponse(
         status_code=422,
         content={
             "error": "VALIDATION_ERROR",
-            "detail": exc.errors(),
+            "detail": human,
             "request_id": request.headers.get("X-Request-ID", str(uuid.uuid4())),
         },
     )

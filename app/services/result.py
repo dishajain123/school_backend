@@ -7,7 +7,13 @@ from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import CurrentUser
-from app.core.exceptions import ForbiddenException, ConflictException, ValidationException, NotFoundException
+from app.core.exceptions import (
+    ForbiddenException,
+    ConflictException,
+    ValidationException,
+    NotFoundException,
+    AppException,
+)
 from app.repositories.result import ResultRepository
 from app.repositories.notification import NotificationRepository
 from app.repositories.teacher_class_subject import TeacherClassSubjectRepository
@@ -25,6 +31,7 @@ from app.schemas.result import (
 )
 from app.services.academic_year import get_active_year
 from app.services.assignment import _get_teacher_id, _assert_teacher_owns_class_subject
+from app.services.student import StudentService
 from app.integrations.minio_client import minio_client
 from app.integrations import pdf_service
 from app.utils.enums import RoleEnum, NotificationType, NotificationPriority, DocumentType, DocumentStatus
@@ -96,6 +103,45 @@ class ResultService:
         if not current_user.school_id:
             raise ValidationException("school_id is required")
         return current_user.school_id
+
+    @staticmethod
+    def _uploaded_report_card_key(
+        school_id: uuid.UUID, student_id: uuid.UUID, exam_id: uuid.UUID
+    ) -> str:
+        return (
+            f"{school_id}/{student_id}/report_cards/{exam_id}_uploaded_report_card.pdf"
+        )
+
+    @staticmethod
+    def _generated_report_card_key(
+        school_id: uuid.UUID, student_id: uuid.UUID, exam_id: uuid.UUID
+    ) -> str:
+        return (
+            f"{school_id}/{student_id}/report_cards/{exam_id}_generated_report_card.pdf"
+        )
+
+    def _resolve_report_card_url(
+        self,
+        *,
+        school_id: uuid.UUID,
+        student_id: uuid.UUID,
+        exam_id: uuid.UUID,
+    ) -> Optional[str]:
+        uploaded_file_key = self._uploaded_report_card_key(school_id, student_id, exam_id)
+        if minio_client.file_exists(DOCUMENTS_BUCKET, uploaded_file_key):
+            return minio_client.generate_presigned_url(
+                DOCUMENTS_BUCKET, uploaded_file_key
+            )
+
+        generated_file_key = self._generated_report_card_key(
+            school_id, student_id, exam_id
+        )
+        if minio_client.file_exists(DOCUMENTS_BUCKET, generated_file_key):
+            return minio_client.generate_presigned_url(
+                DOCUMENTS_BUCKET, generated_file_key
+            )
+
+        return None
 
     async def _assert_exam_student_access(
         self,
@@ -459,9 +505,16 @@ class ResultService:
                 raise ForbiddenException(
                     "You can only view results that were entered by you"
                 )
+        report_card_url = self._resolve_report_card_url(
+            school_id=school_id,
+            student_id=student_id,
+            exam_id=exam_id,
+        )
         return ResultListResponse(
             items=[ResultEntryResponse.model_validate(r) for r in results],
             total=len(results),
+            report_card_url=report_card_url,
+            has_report_card=report_card_url is not None,
         )
 
     async def generate_report_card(
@@ -480,12 +533,22 @@ class ResultService:
         )
 
         uploaded_file_key = (
-            f"{school_id}/{student_id}/report_cards/{exam_id}_uploaded_report_card.pdf"
+            self._uploaded_report_card_key(school_id, student_id, exam_id)
         )
         if minio_client.file_exists(DOCUMENTS_BUCKET, uploaded_file_key):
             return ReportCardResponse(
                 url=minio_client.generate_presigned_url(
                     DOCUMENTS_BUCKET, uploaded_file_key
+                )
+            )
+
+        generated_file_key = self._generated_report_card_key(
+            school_id, student_id, exam_id
+        )
+        if minio_client.file_exists(DOCUMENTS_BUCKET, generated_file_key):
+            return ReportCardResponse(
+                url=minio_client.generate_presigned_url(
+                    DOCUMENTS_BUCKET, generated_file_key
                 )
             )
 
@@ -518,8 +581,22 @@ class ResultService:
         </table>
         </body></html>
         """
-        pdf_bytes = pdf_service.generate_pdf(html)
-        file_key = f"{school_id}/{student_id}/{uuid.uuid4()}_report_card.pdf"
+        try:
+            pdf_bytes = pdf_service.generate_pdf(html)
+        except RuntimeError as exc:
+            # Avoid raw 500 traces when host machine lacks WeasyPrint native libs.
+            # Teachers/principal can still upload a report-card PDF via
+            # /results/report-card/upload.
+            raise AppException(
+                status_code=503,
+                detail=(
+                    "Auto PDF generation is temporarily unavailable on this server. "
+                    "Please upload report card PDF manually, or install WeasyPrint "
+                    "native dependencies (glib/pango/cairo)."
+                ),
+                error_code="PDF_GENERATION_UNAVAILABLE",
+            ) from exc
+        file_key = generated_file_key
         minio_client.upload_file(
             bucket=DOCUMENTS_BUCKET,
             key=file_key,
@@ -578,9 +655,7 @@ class ResultService:
         if not file_bytes:
             raise ValidationException("Uploaded report card is empty")
 
-        file_key = (
-            f"{school_id}/{student_id}/report_cards/{exam_id}_uploaded_report_card.pdf"
-        )
+        file_key = self._uploaded_report_card_key(school_id, student_id, exam_id)
         minio_client.upload_file(
             bucket=DOCUMENTS_BUCKET,
             key=file_key,
@@ -679,6 +754,12 @@ class ResultService:
             if not student_name:
                 student_name = "Student"
 
+            report_card_url = self._resolve_report_card_url(
+                school_id=school_id,
+                student_id=student_rows[0].student_id,
+                exam_id=exam_id,
+            )
+
             items.append(
                 ResultDistributionStudentItem(
                     student_id=student_rows[0].student_id,
@@ -689,6 +770,8 @@ class ResultService:
                     total_obtained=round(total_obtained, 2),
                     total_max=round(total_max, 2),
                     overall_percentage=overall_percentage,
+                    report_card_url=report_card_url,
+                    has_report_card=report_card_url is not None,
                     subjects=subject_items,
                 )
             )
@@ -709,6 +792,13 @@ class ResultService:
     ) -> list[str]:
         school_id = self._ensure_school(current_user)
 
+        sections = await StudentService(self.db).list_sections(
+            school_id=school_id,
+            current_user=current_user,
+            standard_id=standard_id,
+            academic_year_id=academic_year_id,
+        )
+
         if current_user.role == RoleEnum.TEACHER:
             teacher_id = await _get_teacher_id(self.db, current_user.id, school_id)
             assignment_repo = TeacherClassSubjectRepository(self.db)
@@ -716,11 +806,20 @@ class ResultService:
                 teacher_id=teacher_id,
                 academic_year_id=academic_year_id,
             )
-            if not any(assignment.standard_id == standard_id for assignment in assignments):
+            class_assignments = [
+                assignment
+                for assignment in assignments
+                if assignment.standard_id == standard_id
+            ]
+            if not class_assignments:
                 raise ForbiddenException("You can only view sections for assigned classes")
+            # If teacher assignments are section-scoped, restrict output accordingly.
+            assigned_sections = {
+                (assignment.section or "").strip()
+                for assignment in class_assignments
+                if (assignment.section or "").strip()
+            }
+            if assigned_sections:
+                sections = [s for s in sections if s in assigned_sections]
 
-        return await self.repo.list_sections_for_standard(
-            school_id=school_id,
-            standard_id=standard_id,
-            academic_year_id=academic_year_id,
-        )
+        return sections

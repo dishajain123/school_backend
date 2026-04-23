@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date
-from typing import TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 
 from sqlalchemy import Text, Date, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
@@ -31,6 +31,7 @@ class Homework(BaseModel):
     )
 
     description: Mapped[str] = mapped_column(Text, nullable=False)
+    file_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     teacher_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),

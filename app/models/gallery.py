@@ -4,11 +4,22 @@ import uuid
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import String, Text, Date, DateTime, Boolean, ForeignKey, func
+from sqlalchemy import (
+    String,
+    Text,
+    Date,
+    DateTime,
+    Boolean,
+    ForeignKey,
+    UniqueConstraint,
+    Enum as SAEnum,
+    func,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import BaseModel
+from app.utils.enums import RoleEnum
 
 if TYPE_CHECKING:
     from app.models.user import User
@@ -93,6 +104,91 @@ class GalleryPhoto(BaseModel):
     )
     uploader: Mapped[Optional["User"]] = relationship(
         "User", foreign_keys=[uploaded_by], lazy="select"
+    )
+    school: Mapped["School"] = relationship(
+        "School", foreign_keys=[school_id], lazy="select"
+    )
+    reactions: Mapped[list["GalleryPhotoReaction"]] = relationship(
+        "GalleryPhotoReaction", back_populates="photo", lazy="select"
+    )
+    comments: Mapped[list["GalleryPhotoComment"]] = relationship(
+        "GalleryPhotoComment", back_populates="photo", lazy="select"
+    )
+
+
+class GalleryPhotoReaction(BaseModel):
+    __tablename__ = "gallery_photo_reactions"
+    __table_args__ = (
+        UniqueConstraint("photo_id", "reacted_by", name="uq_gallery_photo_reaction_user"),
+    )
+
+    photo_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("gallery_photos.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    reacted_by: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    reactor_role: Mapped[RoleEnum] = mapped_column(
+        SAEnum(RoleEnum, name="roleenum", create_type=False),
+        nullable=False,
+    )
+    reaction: Mapped[str] = mapped_column(String(20), nullable=False, default="LIKE")
+    school_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("schools.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    photo: Mapped["GalleryPhoto"] = relationship(
+        "GalleryPhoto", foreign_keys=[photo_id], back_populates="reactions", lazy="select"
+    )
+    reactor: Mapped["User"] = relationship(
+        "User", foreign_keys=[reacted_by], lazy="select"
+    )
+    school: Mapped["School"] = relationship(
+        "School", foreign_keys=[school_id], lazy="select"
+    )
+
+
+class GalleryPhotoComment(BaseModel):
+    __tablename__ = "gallery_photo_comments"
+
+    photo_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("gallery_photos.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    comment: Mapped[str] = mapped_column(Text, nullable=False)
+    commented_by: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    commenter_role: Mapped[RoleEnum] = mapped_column(
+        SAEnum(RoleEnum, name="roleenum", create_type=False),
+        nullable=False,
+    )
+    school_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("schools.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    photo: Mapped["GalleryPhoto"] = relationship(
+        "GalleryPhoto", foreign_keys=[photo_id], back_populates="comments", lazy="select"
+    )
+    commenter: Mapped["User"] = relationship(
+        "User", foreign_keys=[commented_by], lazy="select"
     )
     school: Mapped["School"] = relationship(
         "School", foreign_keys=[school_id], lazy="select"

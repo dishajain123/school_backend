@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.utils.enums import DocumentType, DocumentStatus
 
@@ -21,6 +21,12 @@ class DocumentResponse(BaseModel):
     status: DocumentStatus
     requested_at: datetime
     generated_at: Optional[datetime] = None
+    review_note: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
+    reviewed_by: Optional[uuid.UUID] = None
+    student_name: Optional[str] = None
+    student_admission_number: Optional[str] = None
+    parent_name: Optional[str] = None
     academic_year_id: uuid.UUID
     school_id: uuid.UUID
     created_at: datetime
@@ -32,6 +38,9 @@ class DocumentResponse(BaseModel):
 class DocumentListResponse(BaseModel):
     items: list[DocumentResponse]
     total: int
+    required_documents: list["DocumentRequirementStatusResponse"] = Field(
+        default_factory=list
+    )
 
 
 class DocumentDownloadResponse(BaseModel):
@@ -41,3 +50,49 @@ class DocumentDownloadResponse(BaseModel):
 
 class DocumentVerifyRequest(BaseModel):
     approve: bool = True
+    reason: Optional[str] = Field(None, max_length=500)
+
+
+class DocumentRequirementItem(BaseModel):
+    document_type: DocumentType
+    is_mandatory: bool = True
+    note: Optional[str] = Field(None, max_length=500)
+
+
+class DocumentRequirementsUpsertRequest(BaseModel):
+    items: list[DocumentRequirementItem] = Field(default_factory=list)
+
+
+class DocumentRequirementResponse(BaseModel):
+    document_type: DocumentType
+    is_mandatory: bool
+    note: Optional[str] = None
+
+
+class DocumentRequirementsResponse(BaseModel):
+    items: list[DocumentRequirementResponse]
+
+
+class DocumentRequirementStatusResponse(BaseModel):
+    document_type: DocumentType
+    is_mandatory: bool
+    note: Optional[str] = None
+    latest_document_id: Optional[uuid.UUID] = None
+    latest_status: Optional[DocumentStatus] = None
+    uploaded_at: Optional[datetime] = None
+    review_note: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
+    reviewed_by: Optional[uuid.UUID] = None
+    needs_reupload: bool = False
+    is_completed: bool = False
+
+
+class DocumentReviewQueueItemResponse(DocumentResponse):
+    student_name: Optional[str] = None
+    student_admission_number: Optional[str] = None
+    parent_name: Optional[str] = None
+
+
+class DocumentReviewQueueResponse(BaseModel):
+    items: list[DocumentReviewQueueItemResponse]
+    total: int

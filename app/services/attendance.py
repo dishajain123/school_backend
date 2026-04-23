@@ -29,8 +29,6 @@ from app.utils.enums import RoleEnum, AttendanceStatus, NotificationType, Notifi
 
 
 class AttendanceService:
-    _DEFAULT_LECTURE_NUMBER = 1
-
     def __init__(self, db: AsyncSession):
         self.db = db
         self.repo = AttendanceRepository(db)
@@ -95,7 +93,7 @@ class AttendanceService:
                 "section": payload.section,
                 "subject_id": payload.subject_id,
                 "academic_year_id": payload.academic_year_id,
-                "lecture_number": self._DEFAULT_LECTURE_NUMBER,
+                "lecture_number": payload.lecture_number,
                 "date": payload.date,
                 "status": r.status,
             }
@@ -196,6 +194,7 @@ class AttendanceService:
         month: Optional[int],
         year: Optional[int],
         subject_id: Optional[uuid.UUID],
+        lecture_number: Optional[int],
     ):
         school_id = current_user.school_id
         if not school_id:
@@ -222,6 +221,7 @@ class AttendanceService:
                 month=month,
                 year=year,
                 subject_id=subject_id,
+                lecture_number=lecture_number,
             )
             return {"items": items, "total": total}
 
@@ -254,6 +254,7 @@ class AttendanceService:
             record_date=record_date,
             academic_year_id=academic_year_id,
             subject_id=subject_id,
+            lecture_number=lecture_number,
         )
         return {"items": items, "total": len(items)}
 

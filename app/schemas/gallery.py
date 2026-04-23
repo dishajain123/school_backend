@@ -2,7 +2,9 @@ import uuid
 from datetime import date, datetime
 from typing import Optional
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
+
+from app.utils.enums import RoleEnum
 
 
 class AlbumCreate(BaseModel):
@@ -60,3 +62,36 @@ class PhotoResponse(BaseModel):
 class PhotoListResponse(BaseModel):
     items: list[PhotoResponse]
     total: int
+
+
+class PhotoCommentCreate(BaseModel):
+    comment: str = Field(..., max_length=1000)
+
+    @field_validator("comment")
+    @classmethod
+    def comment_not_empty(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Comment cannot be empty")
+        return v
+
+
+class PhotoCommentResponse(BaseModel):
+    id: uuid.UUID
+    photo_id: uuid.UUID
+    comment: str
+    commented_by: uuid.UUID
+    commenter_role: RoleEnum
+    school_id: uuid.UUID
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class PhotoInteractionResponse(BaseModel):
+    photo_id: uuid.UUID
+    reactions_count: int = 0
+    has_reacted: bool = False
+    comments: list[PhotoCommentResponse] = Field(default_factory=list)
+    total_comments: int = 0

@@ -5,6 +5,7 @@ from typing import Optional
 from fastapi import UploadFile, BackgroundTasks, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
+from sqlalchemy import inspect
 
 from app.repositories.submission import SubmissionRepository
 from app.repositories.assignment import AssignmentRepository
@@ -135,15 +136,32 @@ class SubmissionService:
             data.file_url = minio_client.generate_presigned_url(
                 SUBMISSION_BUCKET, submission.file_key
             )
-        student = getattr(submission, "student", None)
+        student = None
+        assignment = None
+        try:
+            state = inspect(submission)
+            if "student" not in state.unloaded:
+                student = submission.student
+            if "assignment" not in state.unloaded:
+                assignment = submission.assignment
+        except Exception:
+            student = None
+            assignment = None
+
         if student is not None:
             data.student_admission_number = student.admission_number
             data.student_roll_number = student.roll_number
             data.student_section = student.section
-            student_user = getattr(student, "user", None)
+            student_user = None
+            try:
+                student_state = inspect(student)
+                if "user" not in student_state.unloaded:
+                    student_user = student.user
+            except Exception:
+                student_user = None
             if student_user is not None:
                 data.student_name = student_user.email or student_user.phone
-        assignment = getattr(submission, "assignment", None)
+
         if assignment is not None:
             data.standard_id = assignment.standard_id
             data.subject_id = assignment.subject_id
@@ -250,7 +268,10 @@ class SubmissionService:
         )
         await self.db.commit()
         await self.db.refresh(submission)
-        return self._build_response(submission)
+        submission_with_relations = await self.repo.get_by_id(
+            submission.id, current_user.school_id
+        )
+        return self._build_response(submission_with_relations or submission)
 
     async def grade_submission(
         self,
@@ -321,11 +342,15 @@ class SubmissionService:
             approve_flag,
         )
 
-        return self._build_response(updated)
+        updated_with_relations = await self.repo.get_by_id(
+            updated.id, current_user.school_id
+        )
+        return self._build_response(updated_with_relations or updated)
 
     async def list_submissions(
         self,
         assignment_id: uuid.UUID,
+        student_id: Optional[uuid.UUID],
         standard_id: Optional[uuid.UUID],
         subject_id: Optional[uuid.UUID],
         section: Optional[str],
@@ -363,6 +388,8 @@ class SubmissionService:
                 )
             )
             own_student_id = result.scalar_one_or_none()
+            if not own_student_id:
+                raise NotFoundException("Student not found")
             items, total = await self.repo.list_by_assignment(
                 assignment_id=assignment_id,
                 school_id=current_user.school_id,
@@ -382,6 +409,8 @@ class SubmissionService:
             )
 
         if current_user.role == RoleEnum.PARENT:
+            if student_id is not None:
+                await _assert_parent_owns_student(self.db, student_id, current_user)
             result = await self.db.execute(
                 select(Student.id).where(
                     and_(
@@ -393,6 +422,8 @@ class SubmissionService:
                 )
             )
             child_ids = [row[0] for row in result.all()]
+            if student_id is not None:
+                child_ids = [sid for sid in child_ids if sid == student_id]
             items = await self.repo.list_by_assignment_for_students(
                 assignment_id=assignment_id,
                 school_id=current_user.school_id,
@@ -409,6 +440,7 @@ class SubmissionService:
         items, total = await self.repo.list_by_assignment(
             assignment_id=assignment_id,
             school_id=current_user.school_id,
+            student_id=student_id,
             standard_id=standard_id,
             subject_id=subject_id,
             section=section,

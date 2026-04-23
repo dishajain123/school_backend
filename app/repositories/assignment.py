@@ -1,11 +1,12 @@
 import uuid
 from datetime import date
 from typing import Optional
-from sqlalchemy import select, func, and_
+from sqlalchemy import select, func, and_, exists
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.assignment import Assignment
+from app.models.submission import Submission
 from app.utils.date_utils import today_in_app_timezone
 
 
@@ -53,6 +54,8 @@ class AssignmentRepository:
         teacher_id: Optional[uuid.UUID] = None,
         is_active: Optional[bool] = None,
         is_overdue: Optional[bool] = None,
+        is_submitted: Optional[bool] = None,
+        submission_student_ids: Optional[list[uuid.UUID]] = None,
         reference_date: Optional[date] = None,
         page: int = 1,
         page_size: int = 20,
@@ -79,6 +82,33 @@ class AssignmentRepository:
                 base_where.append(Assignment.due_date < today)
             else:
                 base_where.append(Assignment.due_date >= today)
+        if is_submitted is not None:
+            sub_where = [
+                Submission.assignment_id == Assignment.id,
+                Submission.school_id == school_id,
+            ]
+            if submission_student_ids is not None:
+                if not submission_student_ids:
+                    # If no relevant students, there cannot be submitted assignments.
+                    return ([], 0) if is_submitted else await self.list_by_school(
+                        school_id=school_id,
+                        standard_id=standard_id,
+                        subject_id=subject_id,
+                        academic_year_id=academic_year_id,
+                        teacher_id=teacher_id,
+                        is_active=is_active,
+                        is_overdue=is_overdue,
+                        is_submitted=None,
+                        submission_student_ids=None,
+                        reference_date=reference_date,
+                        page=page,
+                        page_size=page_size,
+                    )
+                sub_where.append(Submission.student_id.in_(submission_student_ids))
+            submission_exists = exists(
+                select(Submission.id).where(and_(*sub_where))
+            )
+            base_where.append(submission_exists if is_submitted else ~submission_exists)
 
         stmt = select(Assignment).where(and_(*base_where))
         count_q = select(func.count(Assignment.id)).where(and_(*base_where))

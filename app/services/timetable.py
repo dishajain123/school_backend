@@ -1,4 +1,5 @@
 import uuid
+import json
 from typing import Optional
 
 from fastapi import UploadFile, HTTPException
@@ -9,8 +10,10 @@ from app.core.dependencies import CurrentUser
 from app.core.exceptions import ForbiddenException, ValidationException, NotFoundException
 from app.integrations.minio_client import minio_client
 from app.repositories.timetable import TimetableRepository
+from app.repositories.settings import SettingsRepository
 from app.schemas.timetable import TimetableUploadResponse, TimetableResponse
 from app.services.academic_year import get_active_year
+from app.services.student import StudentService
 from app.utils.constants import MAX_FILE_SIZE_BYTES, ALLOWED_FILE_TYPES
 from app.utils.enums import RoleEnum
 
@@ -18,9 +21,12 @@ TIMETABLE_BUCKET = "timetables"
 
 
 class TimetableService:
+    SECTIONS_REGISTRY_KEY = "class_sections_registry"
+
     def __init__(self, db: AsyncSession):
         self.db = db
         self.repo = TimetableRepository(db)
+        self.settings_repo = SettingsRepository(db)
 
     def _ensure_school(self, current_user: CurrentUser) -> uuid.UUID:
         if not current_user.school_id:
@@ -33,6 +39,63 @@ class TimetableService:
             return None
         normalized = section.strip()
         return normalized or None
+
+    async def _register_section_for_school(
+        self,
+        *,
+        school_id: uuid.UUID,
+        standard_id: uuid.UUID,
+        academic_year_id: uuid.UUID,
+        section: Optional[str],
+        updated_by: uuid.UUID,
+    ) -> None:
+        normalized = self._normalize_section(section)
+        if normalized is None:
+            return
+
+        setting = await self.settings_repo.get_by_key(
+            school_id,
+            self.SECTIONS_REGISTRY_KEY,
+        )
+        registry: dict = {}
+        if setting and setting.setting_value:
+            try:
+                parsed = json.loads(setting.setting_value)
+                if isinstance(parsed, dict):
+                    registry = parsed
+            except (TypeError, ValueError):
+                registry = {}
+
+        standards_map = registry.setdefault("standards", {})
+        if not isinstance(standards_map, dict):
+            standards_map = {}
+            registry["standards"] = standards_map
+
+        std_key = str(standard_id)
+        std_map = standards_map.setdefault(std_key, {})
+        if not isinstance(std_map, dict):
+            std_map = {}
+            standards_map[std_key] = std_map
+
+        year_key = str(academic_year_id)
+        section_list = std_map.setdefault(year_key, [])
+        if not isinstance(section_list, list):
+            section_list = []
+
+        existing = {str(s).strip().upper() for s in section_list if str(s).strip()}
+        existing.add(normalized.upper())
+        std_map[year_key] = sorted(existing, key=lambda x: x.lower())
+
+        await self.settings_repo.upsert_settings(
+            school_id=school_id,
+            items=[
+                {
+                    "key": self.SECTIONS_REGISTRY_KEY,
+                    "value": json.dumps(registry, separators=(",", ":")),
+                }
+            ],
+            updated_by=updated_by,
+        )
 
     async def _get_teacher_id(
         self,
@@ -152,6 +215,13 @@ class TimetableService:
                 existing,
                 {"file_key": file_key, "uploaded_by": current_user.id},
             )
+            await self._register_section_for_school(
+                school_id=school_id,
+                standard_id=standard_id,
+                academic_year_id=resolved_year_id,
+                section=normalized_section,
+                updated_by=current_user.id,
+            )
             await self.db.commit()
             await self.db.refresh(updated)
             data = TimetableUploadResponse.model_validate(updated)
@@ -165,6 +235,13 @@ class TimetableService:
                     "uploaded_by": current_user.id,
                     "school_id": school_id,
                 }
+            )
+            await self._register_section_for_school(
+                school_id=school_id,
+                standard_id=standard_id,
+                academic_year_id=resolved_year_id,
+                section=normalized_section,
+                updated_by=current_user.id,
             )
             await self.db.commit()
             await self.db.refresh(created)
@@ -293,11 +370,28 @@ class TimetableService:
         resolved_year_id = academic_year_id
         if not resolved_year_id:
             resolved_year_id = (await get_active_year(school_id, self.db)).id
-        sections = await self.repo.list_sections_by_standard(
+
+        # Unify sections from timetable records + shared registry/student-backed
+        # section source, so class/section options stay consistent app-wide.
+        timetable_sections = await self.repo.list_sections_by_standard(
             school_id=school_id,
             standard_id=standard_id,
             academic_year_id=resolved_year_id,
         )
+        unified_sections = set(timetable_sections)
+        student_sections = await StudentService(self.db).list_sections(
+            school_id=school_id,
+            current_user=current_user,
+            standard_id=standard_id,
+            academic_year_id=resolved_year_id,
+        )
+        unified_sections.update(
+            section.strip()
+            for section in student_sections
+            if section and section.strip()
+        )
+        sections = sorted(unified_sections, key=lambda s: s.lower())
+
         if current_user.role == RoleEnum.TEACHER:
             teacher_id = await self._get_teacher_id(
                 current_user=current_user,

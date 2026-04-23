@@ -88,6 +88,8 @@ class ResultEntryResponse(BaseModel):
 class ResultListResponse(BaseModel):
     items: list[ResultEntryResponse]
     total: int
+    report_card_url: Optional[str] = None
+    has_report_card: bool = False
 
 
 class ResultDistributionSubjectItem(BaseModel):
@@ -109,6 +111,8 @@ class ResultDistributionStudentItem(BaseModel):
     total_obtained: float
     total_max: float
     overall_percentage: float
+    report_card_url: Optional[str] = None
+    has_report_card: bool = False
     subjects: list[ResultDistributionSubjectItem]
 
 

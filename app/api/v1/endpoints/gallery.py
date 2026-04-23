@@ -12,6 +12,8 @@ from app.schemas.gallery import (
     AlbumListResponse,
     PhotoResponse,
     PhotoListResponse,
+    PhotoCommentCreate,
+    PhotoInteractionResponse,
 )
 from app.services.gallery import GalleryService
 
@@ -64,3 +66,40 @@ async def list_photos(
     db: AsyncSession = Depends(get_db),
 ):
     return await GalleryService(db).list_photos(album_id, current_user)
+
+
+@router.get("/photos/{photo_id}/interactions", response_model=PhotoInteractionResponse)
+async def get_photo_interactions(
+    photo_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_permission("gallery:read")),
+    db: AsyncSession = Depends(get_db),
+):
+    return await GalleryService(db).get_photo_interactions(photo_id, current_user)
+
+
+@router.put("/photos/{photo_id}/reaction", response_model=PhotoInteractionResponse)
+async def react_to_photo(
+    photo_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_permission("gallery:read")),
+    db: AsyncSession = Depends(get_db),
+):
+    return await GalleryService(db).add_reaction(photo_id, current_user)
+
+
+@router.delete("/photos/{photo_id}/reaction", response_model=PhotoInteractionResponse)
+async def remove_reaction(
+    photo_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_permission("gallery:read")),
+    db: AsyncSession = Depends(get_db),
+):
+    return await GalleryService(db).remove_reaction(photo_id, current_user)
+
+
+@router.post("/photos/{photo_id}/comments", response_model=PhotoInteractionResponse)
+async def add_comment(
+    photo_id: uuid.UUID,
+    payload: PhotoCommentCreate,
+    current_user: CurrentUser = Depends(require_permission("gallery:read")),
+    db: AsyncSession = Depends(get_db),
+):
+    return await GalleryService(db).add_comment(photo_id, payload, current_user)

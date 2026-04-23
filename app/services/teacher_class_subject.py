@@ -1,4 +1,5 @@
 import uuid
+import json
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -6,6 +7,7 @@ from app.repositories.teacher_class_subject import TeacherClassSubjectRepository
 from app.repositories.teacher import TeacherRepository
 from app.repositories.masters import StandardRepository, SubjectRepository
 from app.repositories.academic_year import AcademicYearRepository
+from app.repositories.settings import SettingsRepository
 from app.schemas.teacher_class_subject import (
     TeacherAssignmentCreate,
     TeacherAssignmentUpdate,
@@ -22,6 +24,8 @@ from app.utils.enums import RoleEnum
 
 
 class TeacherClassSubjectService:
+    SECTIONS_REGISTRY_KEY = "class_sections_registry"
+
     def __init__(self, db: AsyncSession):
         self.db = db
         self.repo = TeacherClassSubjectRepository(db)
@@ -29,12 +33,82 @@ class TeacherClassSubjectService:
         self.std_repo = StandardRepository(db)
         self.sub_repo = SubjectRepository(db)
         self.year_repo = AcademicYearRepository(db)
+        self.settings_repo = SettingsRepository(db)
+
+    @staticmethod
+    def _normalize_optional_section(section: Optional[str]) -> Optional[str]:
+        if section is None:
+            return None
+        value = section.strip().upper()
+        return value if value else None
+
+    async def _load_sections_registry(self, school_id: uuid.UUID) -> dict:
+        setting = await self.settings_repo.get_by_key(
+            school_id,
+            self.SECTIONS_REGISTRY_KEY,
+        )
+        if not setting or not setting.setting_value:
+            return {}
+        try:
+            parsed = json.loads(setting.setting_value)
+            return parsed if isinstance(parsed, dict) else {}
+        except (TypeError, ValueError):
+            return {}
+
+    async def _register_section_for_school(
+        self,
+        *,
+        school_id: uuid.UUID,
+        standard_id: Optional[uuid.UUID],
+        academic_year_id: Optional[uuid.UUID],
+        section: Optional[str],
+    ) -> None:
+        normalized = self._normalize_optional_section(section)
+        if standard_id is None or normalized is None:
+            return
+
+        registry = await self._load_sections_registry(school_id)
+        standards_map = registry.setdefault("standards", {})
+        if not isinstance(standards_map, dict):
+            standards_map = {}
+            registry["standards"] = standards_map
+
+        std_key = str(standard_id)
+        std_map = standards_map.setdefault(std_key, {})
+        if not isinstance(std_map, dict):
+            std_map = {}
+            standards_map[std_key] = std_map
+
+        year_key = str(academic_year_id) if academic_year_id else "*"
+        section_list = std_map.setdefault(year_key, [])
+        if not isinstance(section_list, list):
+            section_list = []
+            std_map[year_key] = section_list
+
+        existing = {str(s).strip().upper() for s in section_list if str(s).strip()}
+        existing.add(normalized)
+        std_map[year_key] = sorted(existing, key=lambda x: x.lower())
+
+        await self.settings_repo.upsert_settings(
+            school_id=school_id,
+            items=[
+                {
+                    "key": self.SECTIONS_REGISTRY_KEY,
+                    "value": json.dumps(registry, separators=(",", ":")),
+                }
+            ],
+            updated_by=None,
+        )
 
     async def create_assignment(
         self,
         payload: TeacherAssignmentCreate,
         school_id: uuid.UUID,
     ) -> TeacherClassSubject:
+        normalized_section = self._normalize_optional_section(payload.section)
+        if normalized_section is None:
+            raise ValidationException(detail="Section is required")
+
         # Validate teacher belongs to school
         teacher = await self.teacher_repo.get_by_id(payload.teacher_id, school_id)
         if not teacher:
@@ -65,7 +139,7 @@ class TeacherClassSubjectService:
         duplicate = await self.repo.get_duplicate(
             teacher_id=payload.teacher_id,
             standard_id=payload.standard_id,
-            section=payload.section,
+            section=normalized_section,
             subject_id=payload.subject_id,
             academic_year_id=payload.academic_year_id,
         )
@@ -78,10 +152,16 @@ class TeacherClassSubjectService:
             {
                 "teacher_id": payload.teacher_id,
                 "standard_id": payload.standard_id,
-                "section": payload.section,
+                "section": normalized_section,
                 "subject_id": payload.subject_id,
                 "academic_year_id": payload.academic_year_id,
             }
+        )
+        await self._register_section_for_school(
+            school_id=school_id,
+            standard_id=payload.standard_id,
+            academic_year_id=payload.academic_year_id,
+            section=normalized_section,
         )
         await self.db.commit()
 
@@ -110,6 +190,10 @@ class TeacherClassSubjectService:
         payload: TeacherAssignmentUpdate,
         school_id: uuid.UUID,
     ) -> TeacherClassSubject:
+        normalized_section = self._normalize_optional_section(payload.section)
+        if normalized_section is None:
+            raise ValidationException(detail="Section is required")
+
         obj = await self.repo.get_by_id(assignment_id)
         if not obj:
             raise NotFoundException(detail="Assignment not found")
@@ -139,7 +223,7 @@ class TeacherClassSubjectService:
             assignment_id=assignment_id,
             teacher_id=obj.teacher_id,
             standard_id=payload.standard_id,
-            section=payload.section,
+            section=normalized_section,
             subject_id=payload.subject_id,
             academic_year_id=payload.academic_year_id,
         )
@@ -152,10 +236,16 @@ class TeacherClassSubjectService:
             obj,
             {
                 "standard_id": payload.standard_id,
-                "section": payload.section,
+                "section": normalized_section,
                 "subject_id": payload.subject_id,
                 "academic_year_id": payload.academic_year_id,
             },
+        )
+        await self._register_section_for_school(
+            school_id=school_id,
+            standard_id=payload.standard_id,
+            academic_year_id=payload.academic_year_id,
+            section=normalized_section,
         )
         await self.db.commit()
         return await self.repo.get_by_id(updated.id)  # type: ignore[return-value]

@@ -1,4 +1,5 @@
 import uuid
+from pathlib import Path
 from typing import Optional
 
 from fastapi import UploadFile, HTTPException
@@ -13,6 +14,9 @@ from app.schemas.gallery import (
     AlbumListResponse,
     PhotoResponse,
     PhotoListResponse,
+    PhotoCommentCreate,
+    PhotoCommentResponse,
+    PhotoInteractionResponse,
 )
 from app.services.academic_year import get_active_year
 from app.integrations.minio_client import minio_client
@@ -38,6 +42,31 @@ class GalleryService:
                 GALLERY_BUCKET, album.cover_photo_key
             )
         return album
+
+    @staticmethod
+    def _ensure_parent_or_student(current_user: CurrentUser) -> None:
+        if current_user.role not in (RoleEnum.PARENT, RoleEnum.STUDENT):
+            raise ForbiddenException(
+                "Only parents and students can react or comment on gallery photos"
+            )
+
+    async def _interaction_response(
+        self,
+        photo_id: uuid.UUID,
+        school_id: uuid.UUID,
+        current_user_id: uuid.UUID,
+    ) -> PhotoInteractionResponse:
+        reactions_count = await self.repo.count_reactions(photo_id, school_id)
+        own_reaction = await self.repo.get_reaction(photo_id, current_user_id, school_id)
+        comments = await self.repo.list_comments(photo_id, school_id)
+        comment_items = [PhotoCommentResponse.model_validate(c) for c in comments]
+        return PhotoInteractionResponse(
+            photo_id=photo_id,
+            reactions_count=reactions_count,
+            has_reacted=own_reaction is not None,
+            comments=comment_items,
+            total_comments=len(comment_items),
+        )
 
     async def create_album(
         self,
@@ -85,10 +114,34 @@ class GalleryService:
         if not file or not file.filename:
             raise HTTPException(status_code=422, detail="File is required")
 
-        if file.content_type and file.content_type not in ALLOWED_IMAGE_TYPES:
-            raise HTTPException(status_code=422, detail="Only image uploads are allowed")
+        # Accept common real-world image uploads even when clients send
+        # generic MIME types (e.g. application/octet-stream).
+        content_type = (file.content_type or "").strip().lower()
+        extension = Path(file.filename).suffix.strip().lower()
+        allowed_extensions = {
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".webp",
+            ".gif",
+            ".bmp",
+            ".heic",
+            ".heif",
+        }
+        is_image_upload = (
+            (content_type in ALLOWED_IMAGE_TYPES)
+            or content_type.startswith("image/")
+            or (extension in allowed_extensions)
+        )
+        if not is_image_upload:
+            raise HTTPException(
+                status_code=422,
+                detail="Only image uploads are allowed (jpg, jpeg, png, webp, gif, bmp, heic, heif)",
+            )
 
         content = await file.read()
+        if not content:
+            raise HTTPException(status_code=422, detail="Uploaded file is empty")
         if len(content) > MAX_FILE_SIZE_BYTES:
             raise HTTPException(status_code=422, detail="File too large")
 
@@ -164,3 +217,88 @@ class GalleryService:
         data = PhotoResponse.model_validate(updated)
         data.photo_url = minio_client.generate_presigned_url(GALLERY_BUCKET, updated.photo_key)
         return data
+
+    async def get_photo_interactions(
+        self,
+        photo_id: uuid.UUID,
+        current_user: CurrentUser,
+    ) -> PhotoInteractionResponse:
+        school_id = self._ensure_school(current_user)
+        photo = await self.repo.get_photo_by_id(photo_id, school_id)
+        if not photo:
+            raise NotFoundException("Photo")
+        return await self._interaction_response(photo_id, school_id, current_user.id)
+
+    async def add_reaction(
+        self,
+        photo_id: uuid.UUID,
+        current_user: CurrentUser,
+    ) -> PhotoInteractionResponse:
+        school_id = self._ensure_school(current_user)
+        self._ensure_parent_or_student(current_user)
+
+        photo = await self.repo.get_photo_by_id(photo_id, school_id)
+        if not photo:
+            raise NotFoundException("Photo")
+
+        existing = await self.repo.get_reaction(photo_id, current_user.id, school_id)
+        if existing:
+            await self.repo.update_reaction(existing, {"reaction": "LIKE"})
+        else:
+            await self.repo.create_reaction(
+                {
+                    "photo_id": photo_id,
+                    "reacted_by": current_user.id,
+                    "reactor_role": current_user.role,
+                    "reaction": "LIKE",
+                    "school_id": school_id,
+                }
+            )
+
+        await self.db.commit()
+        return await self._interaction_response(photo_id, school_id, current_user.id)
+
+    async def remove_reaction(
+        self,
+        photo_id: uuid.UUID,
+        current_user: CurrentUser,
+    ) -> PhotoInteractionResponse:
+        school_id = self._ensure_school(current_user)
+        self._ensure_parent_or_student(current_user)
+
+        photo = await self.repo.get_photo_by_id(photo_id, school_id)
+        if not photo:
+            raise NotFoundException("Photo")
+
+        existing = await self.repo.get_reaction(photo_id, current_user.id, school_id)
+        if existing:
+            await self.repo.delete_reaction(existing)
+
+        await self.db.commit()
+        return await self._interaction_response(photo_id, school_id, current_user.id)
+
+    async def add_comment(
+        self,
+        photo_id: uuid.UUID,
+        body: PhotoCommentCreate,
+        current_user: CurrentUser,
+    ) -> PhotoInteractionResponse:
+        school_id = self._ensure_school(current_user)
+        self._ensure_parent_or_student(current_user)
+
+        photo = await self.repo.get_photo_by_id(photo_id, school_id)
+        if not photo:
+            raise NotFoundException("Photo")
+
+        await self.repo.create_comment(
+            {
+                "photo_id": photo_id,
+                "comment": body.comment.strip(),
+                "commented_by": current_user.id,
+                "commenter_role": current_user.role,
+                "school_id": school_id,
+            }
+        )
+
+        await self.db.commit()
+        return await self._interaction_response(photo_id, school_id, current_user.id)

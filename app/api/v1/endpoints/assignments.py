@@ -44,6 +44,10 @@ async def list_assignments(
     academic_year_id: Optional[uuid.UUID] = Query(None, description="Filter by academic year"),
     is_active: Optional[bool] = Query(None, description="Filter by active status"),
     is_overdue: Optional[bool] = Query(None, description="Filter by overdue status (based on due_date)"),
+    is_submitted: Optional[bool] = Query(
+        None,
+        description="Filter by submission status (role-aware)",
+    ),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     current_user: CurrentUser = Depends(require_permission("assignment:read")),
@@ -56,6 +60,7 @@ async def list_assignments(
         academic_year_id=academic_year_id,
         is_active=is_active,
         is_overdue=is_overdue,
+        is_submitted=is_submitted,
         page=page,
         page_size=page_size,
     )

@@ -1,4 +1,5 @@
 import uuid
+from typing import Optional
 
 from fastapi import APIRouter, Depends, BackgroundTasks, Query, UploadFile, File, Form
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +12,10 @@ from app.schemas.document import (
     DocumentListResponse,
     DocumentDownloadResponse,
     DocumentVerifyRequest,
+    DocumentRequirementsUpsertRequest,
+    DocumentRequirementsResponse,
+    DocumentRequirementStatusResponse,
+    DocumentReviewQueueResponse,
 )
 from app.services.document import DocumentService
 from app.utils.enums import DocumentType
@@ -32,7 +37,7 @@ async def request_document(
 
 @router.get("", response_model=DocumentListResponse)
 async def list_documents(
-    student_id: uuid.UUID = Query(...),
+    student_id: Optional[uuid.UUID] = Query(None),
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -72,3 +77,47 @@ async def verify_document(
     db: AsyncSession = Depends(get_db),
 ):
     return await DocumentService(db).verify_document(document_id, payload, current_user)
+
+
+@router.get("/requirements", response_model=DocumentRequirementsResponse)
+async def list_required_documents(
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await DocumentService(db).list_required_documents(current_user)
+
+
+@router.put("/requirements", response_model=DocumentRequirementsResponse)
+async def upsert_required_documents(
+    payload: DocumentRequirementsUpsertRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await DocumentService(db).upsert_required_documents(payload, current_user)
+
+
+@router.get(
+    "/requirements/status",
+    response_model=list[DocumentRequirementStatusResponse],
+)
+async def list_required_documents_status(
+    student_id: uuid.UUID = Query(...),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await DocumentService(db).list_required_documents_for_student(
+        student_id=student_id,
+        current_user=current_user,
+    )
+
+
+@router.get("/review-queue", response_model=DocumentReviewQueueResponse)
+async def list_review_queue(
+    student_id: Optional[uuid.UUID] = Query(None),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await DocumentService(db).list_review_queue(
+        current_user=current_user,
+        student_id=student_id,
+    )

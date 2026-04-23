@@ -2,7 +2,7 @@ import uuid
 from typing import Optional
 
 from fastapi import BackgroundTasks
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, inspect
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import CurrentUser
@@ -79,9 +79,17 @@ class ComplaintService:
 
     def _build_response(self, complaint) -> ComplaintResponse:
         data = ComplaintResponse.model_validate(complaint)
-        if complaint.submitter is not None:
-            data.submitted_by_name = self._user_display_name(complaint.submitter)
-            data.submitted_by_role = complaint.submitter.role
+        submitter = None
+        try:
+            state = inspect(complaint)
+            if "submitter" not in state.unloaded:
+                submitter = complaint.submitter
+        except Exception:
+            submitter = None
+
+        if submitter is not None:
+            data.submitted_by_name = self._user_display_name(submitter)
+            data.submitted_by_role = submitter.role
         if complaint.attachment_key:
             try:
                 data.attachment_url = minio_client.generate_presigned_url(
@@ -122,7 +130,12 @@ class ComplaintService:
         )
         await self.db.commit()
         await self.db.refresh(complaint)
-        return self._build_response(complaint)
+
+        # Reload with eager-loaded relationships to avoid async lazy-load issues.
+        complaint_with_relations = await self.repo.get_complaint_by_id(
+            complaint.id, school_id
+        )
+        return self._build_response(complaint_with_relations or complaint)
 
     async def list_complaints(
         self,
@@ -195,7 +208,10 @@ class ComplaintService:
                 updated.id,
             )
 
-        return self._build_response(updated)
+        updated_with_relations = await self.repo.get_complaint_by_id(
+            updated.id, school_id
+        )
+        return self._build_response(updated_with_relations or updated)
 
     async def create_feedback(
         self,

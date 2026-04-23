@@ -11,6 +11,7 @@ from app.models import fee  # noqa: F401
 from app.models import feedback  # noqa: F401
 from app.models import gallery  # noqa: F401
 from app.models import homework  # noqa: F401
+from app.models import homework_submission  # noqa: F401
 from app.models import jti_blocklist  # noqa: F401
 from app.models import leave_balance  # noqa: F401
 from app.models import masters  # noqa: F401

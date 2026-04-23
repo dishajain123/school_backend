@@ -233,6 +233,7 @@ class AssignmentService:
         academic_year_id: Optional[uuid.UUID],
         is_active: Optional[bool],
         is_overdue: Optional[bool],
+        is_submitted: Optional[bool],
         page: int,
         page_size: int,
     ) -> AssignmentListResponse:
@@ -240,6 +241,7 @@ class AssignmentService:
 
         teacher_id_filter: Optional[uuid.UUID] = None
         resolved_standard_id: Optional[uuid.UUID] = standard_id
+        submission_student_ids: Optional[list[uuid.UUID]] = None
 
         if current_user.role == RoleEnum.TEACHER:
             # Strict ownership: teacher sees only assignments they created.
@@ -249,31 +251,37 @@ class AssignmentService:
 
         elif current_user.role == RoleEnum.STUDENT:
             result = await self.db.execute(
-                select(Student.standard_id).where(
+                select(Student.id, Student.standard_id).where(
                     and_(
                         Student.user_id == current_user.id,
                         Student.school_id == current_user.school_id,
                     )
                 )
             )
-            own_standard_id = result.scalar_one_or_none()
+            own_row = result.one_or_none()
+            own_student_id = own_row[0] if own_row else None
+            own_standard_id = own_row[1] if own_row else None
             if standard_id and own_standard_id and standard_id != own_standard_id:
                 raise ForbiddenException("You can only view assignments for your own class")
             resolved_standard_id = own_standard_id or standard_id
+            if own_student_id:
+                submission_student_ids = [own_student_id]
 
         elif current_user.role == RoleEnum.PARENT:
+            child_query = [
+                Student.parent_id == current_user.parent_id,
+                Student.school_id == current_user.school_id,
+            ]
             if standard_id:
-                result = await self.db.execute(
-                    select(Student.id).where(
-                        and_(
-                            Student.standard_id == standard_id,
-                            Student.parent_id == current_user.parent_id,
-                            Student.school_id == current_user.school_id,
-                        )
-                    )
-                )
-                if not result.scalar_one_or_none():
+                child_query.append(Student.standard_id == standard_id)
+            child_result = await self.db.execute(
+                select(Student.id).where(and_(*child_query))
+            )
+            child_ids = [row[0] for row in child_result.all()]
+            if standard_id:
+                if not child_ids:
                     raise ForbiddenException("You do not have a child in this class")
+            submission_student_ids = child_ids
 
         items, total = await self.repo.list_by_school(
             school_id=current_user.school_id,
@@ -283,13 +291,15 @@ class AssignmentService:
             teacher_id=teacher_id_filter,
             is_active=is_active,
             is_overdue=is_overdue,
+            is_submitted=is_submitted,
+            submission_student_ids=submission_student_ids,
             reference_date=today_in_app_timezone(),
             page=page,
             page_size=page_size,
         )
 
         logger.info(
-            "ASSIGNMENT_LIST school_id=%s user_id=%s role=%s teacher_id_filter=%s standard_id=%s subject_id=%s academic_year_id=%s is_active=%s is_overdue=%s reference_date=%s page=%s page_size=%s returned=%s total=%s",
+            "ASSIGNMENT_LIST school_id=%s user_id=%s role=%s teacher_id_filter=%s standard_id=%s subject_id=%s academic_year_id=%s is_active=%s is_overdue=%s is_submitted=%s reference_date=%s page=%s page_size=%s returned=%s total=%s",
             str(current_user.school_id),
             str(current_user.id),
             str(current_user.role),
@@ -299,6 +309,7 @@ class AssignmentService:
             str(academic_year_id) if academic_year_id else "None",
             str(is_active) if is_active is not None else "None",
             str(is_overdue) if is_overdue is not None else "None",
+            str(is_submitted) if is_submitted is not None else "None",
             str(today_in_app_timezone()),
             str(page),
             str(page_size),
