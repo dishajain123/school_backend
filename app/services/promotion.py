@@ -130,13 +130,39 @@ class PromotionService:
         )
         structures = list(fee_result.scalars().all())
         for structure in structures:
+            old_standard_row = await self.db.execute(
+                select(Standard).where(
+                    and_(
+                        Standard.id == structure.standard_id,
+                        Standard.school_id == school_id,
+                    )
+                )
+            )
+            old_standard = old_standard_row.scalar_one_or_none()
+            if not old_standard:
+                continue
+
+            mapped_standard_row = await self.db.execute(
+                select(Standard).where(
+                    and_(
+                        Standard.school_id == school_id,
+                        Standard.level == old_standard.level,
+                        Standard.academic_year_id == new_year_id,
+                    )
+                )
+            )
+            mapped_standard = mapped_standard_row.scalar_one_or_none()
+            if not mapped_standard:
+                continue
+
             dup = await self.db.execute(
                 select(FeeStructure.id).where(
                     and_(
                         FeeStructure.school_id == school_id,
                         FeeStructure.academic_year_id == new_year_id,
-                        FeeStructure.standard_id == structure.standard_id,
+                        FeeStructure.standard_id == mapped_standard.id,
                         FeeStructure.fee_category == structure.fee_category,
+                        FeeStructure.custom_fee_head == structure.custom_fee_head,
                     )
                 )
             )
@@ -144,9 +170,10 @@ class PromotionService:
                 continue
             self.db.add(
                 FeeStructure(
-                    standard_id=structure.standard_id,
+                    standard_id=mapped_standard.id,
                     academic_year_id=new_year_id,
                     fee_category=structure.fee_category,
+                    custom_fee_head=structure.custom_fee_head,
                     amount=structure.amount,
                     due_date=structure.due_date,
                     description=structure.description,

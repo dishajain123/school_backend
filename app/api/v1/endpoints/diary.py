@@ -8,11 +8,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import CurrentUser, require_permission
 from app.core.exceptions import ValidationException
+from app.core.logging import get_logger
 from app.db.session import get_db
 from app.schemas.diary import DiaryCreate, DiaryResponse, DiaryListResponse
 from app.services.diary import DiaryService
 
 router = APIRouter(prefix="/diary", tags=["Diary"])
+logger = get_logger(__name__)
 
 
 def _sanitize_payload(payload: dict) -> dict:
@@ -46,24 +48,19 @@ def _parse_diary_body(payload: Any) -> DiaryCreate:
         return DiaryCreate.model_validate(payload)
     except ValidationError as exc:
         errors = exc.errors()
-        # Log all errors to server console so you can see exactly what's failing
+        # Keep structured details in server logs for troubleshooting.
         for e in errors:
-            print(f"[DiaryCreate validation error] loc={e.get('loc')} msg={e.get('msg')} input={e.get('input')}")
+            logger.warning(
+                "DiaryCreate validation error loc=%s msg=%s input=%s",
+                e.get("loc"),
+                e.get("msg"),
+                e.get("input"),
+            )
         first_error = errors[0] if errors else {}
         msg = first_error.get("msg") or "Validation failed"
         if msg.lower().startswith("value error, "):
             msg = msg[len("value error, "):]
         raise ValidationException(msg)
-
-
-@router.post("/create", response_model=DiaryResponse, status_code=201)
-async def create_diary_entry_explicit(
-    payload: Any = Body(...),
-    current_user: CurrentUser = Depends(require_permission("diary:create")),
-    db: AsyncSession = Depends(get_db),
-):
-    body = _parse_diary_body(payload)
-    return await DiaryService(db).create_entry(body, current_user)
 
 
 @router.post("", response_model=DiaryResponse, status_code=201)

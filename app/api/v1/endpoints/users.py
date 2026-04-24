@@ -1,5 +1,4 @@
 import uuid
-import math
 from typing import Optional
 from fastapi import APIRouter, Depends, Query, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,18 +6,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
 from app.services.user import UserService
 from app.schemas.user import (
-    UserCreate,
-    UserUpdate,
     UserResponse,
-    UserListResponse,
     UserPhotoResponse,
     UserMeUpdate,
 )
 from app.core.dependencies import get_current_user, require_permission, CurrentUser
-from app.core.exceptions import ForbiddenException
-from app.utils.enums import RoleEnum
+from app.core.exceptions import ForbiddenException, GoneException
 
 router = APIRouter(prefix="/users", tags=["Users"])
+
+_USERS_MANAGEMENT_GONE_DETAIL = (
+    "Deprecated API: user management endpoints under /users are no longer available. "
+    "Use /users/me for self updates and admin panel APIs for staff-managed operations."
+)
 
 
 def get_service(db: AsyncSession = Depends(get_db)) -> UserService:
@@ -42,80 +42,53 @@ async def update_me(
     return await service.update_me(current_user, data)
 
 
-@router.get("", response_model=UserListResponse)
+@router.get("", deprecated=True)
 async def list_users(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    role: Optional[RoleEnum] = Query(None),
+    role: Optional[str] = Query(None),
     is_active: Optional[bool] = Query(None),
     current_user: CurrentUser = Depends(require_permission("user:manage")),
     service: UserService = Depends(get_service),
 ):
-    if not current_user.school_id:
-        raise ForbiddenException("School context required")
-
-    enriched, total, total_pages = await service.list_users(
-        school_id=current_user.school_id,
-        role=role,
-        is_active=is_active,
-        page=page,
-        page_size=page_size,
-    )
-    return UserListResponse(
-        items=enriched,
-        total=total,
-        page=page,
-        page_size=page_size,
-        total_pages=total_pages,
-    )
+    raise GoneException(detail=_USERS_MANAGEMENT_GONE_DETAIL)
 
 
-@router.post("", response_model=UserResponse, status_code=201)
+@router.post("", deprecated=True)
 async def create_user(
-    data: UserCreate,
+    data: dict,
     current_user: CurrentUser = Depends(require_permission("user:manage")),
     service: UserService = Depends(get_service),
 ):
-    if not current_user.school_id:
-        raise ForbiddenException("School context required")
-    return await service.create_user(data, current_user.school_id)
+    raise GoneException(detail=_USERS_MANAGEMENT_GONE_DETAIL)
 
 
-@router.get("/{user_id}", response_model=UserResponse)
+@router.get("/{user_id}", deprecated=True)
 async def get_user(
     user_id: uuid.UUID,
     current_user: CurrentUser = Depends(require_permission("user:manage")),
     service: UserService = Depends(get_service),
 ):
-    if not current_user.school_id:
-        raise ForbiddenException("School context required")
-    user = await service.get_user(user_id, current_user.school_id)
-    return await service._enrich_with_photo_url(user)
+    raise GoneException(detail=_USERS_MANAGEMENT_GONE_DETAIL)
 
 
-@router.patch("/{user_id}", response_model=UserResponse)
+@router.patch("/{user_id}", deprecated=True)
 async def update_user(
     user_id: uuid.UUID,
-    data: UserUpdate,
+    data: dict,
     current_user: CurrentUser = Depends(require_permission("user:manage")),
     service: UserService = Depends(get_service),
 ):
-    if not current_user.school_id:
-        raise ForbiddenException("School context required")
-    user = await service.update_user(user_id, current_user.school_id, data)
-    return await service._enrich_with_photo_url(user)
+    raise GoneException(detail=_USERS_MANAGEMENT_GONE_DETAIL)
 
 
-@router.patch("/{user_id}/deactivate", response_model=UserResponse)
+@router.patch("/{user_id}/deactivate", deprecated=True)
 async def deactivate_user(
     user_id: uuid.UUID,
     current_user: CurrentUser = Depends(require_permission("user:manage")),
     service: UserService = Depends(get_service),
 ):
-    if not current_user.school_id:
-        raise ForbiddenException("School context required")
-    user = await service.deactivate_user(user_id, current_user.school_id)
-    return await service._enrich_with_photo_url(user)
+    raise GoneException(detail=_USERS_MANAGEMENT_GONE_DETAIL)
 
 
 @router.post("/{user_id}/photo", response_model=UserPhotoResponse)

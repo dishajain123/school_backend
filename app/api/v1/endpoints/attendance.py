@@ -13,7 +13,6 @@ from app.schemas.attendance import (
     MarkAttendanceResponse,
     AttendanceListResponse,
     StudentAttendanceAnalytics,
-    ClassAttendanceSnapshot,
     BelowThresholdResponse,
 )
 
@@ -77,48 +76,6 @@ async def student_analytics(
 ):
     service = AttendanceService(db)
     return await service.student_analytics(student_id, current_user, month, year)
-
-
-@router.get("/analytics/class/{standard_id}", response_model=ClassAttendanceSnapshot)
-async def class_snapshot(
-    standard_id: uuid.UUID,
-    academic_year_id: uuid.UUID = Query(...),
-    date: date = Query(...),
-    section: Optional[str] = Query(None),
-    subject_id: Optional[uuid.UUID] = Query(None),
-    current_user: CurrentUser = Depends(require_permission("attendance:analytics")),
-    db: AsyncSession = Depends(get_db),
-):
-    service = AttendanceService(db)
-    return await service.class_snapshot(
-        standard_id,
-        academic_year_id,
-        date,
-        current_user,
-        section=section,
-        subject_id=subject_id,
-    )
-
-
-@router.get("/analytics/class", response_model=ClassAttendanceSnapshot)
-async def class_snapshot_query(
-    standard_id: uuid.UUID = Query(...),
-    academic_year_id: uuid.UUID = Query(...),
-    date: date = Query(...),
-    section: Optional[str] = Query(None),
-    subject_id: Optional[uuid.UUID] = Query(None),
-    current_user: CurrentUser = Depends(require_permission("attendance:analytics")),
-    db: AsyncSession = Depends(get_db),
-):
-    service = AttendanceService(db)
-    return await service.class_snapshot(
-        standard_id,
-        academic_year_id,
-        date,
-        current_user,
-        section=section,
-        subject_id=subject_id,
-    )
 
 
 @router.get("/analytics/below-threshold", response_model=BelowThresholdResponse)

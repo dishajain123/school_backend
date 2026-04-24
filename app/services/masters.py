@@ -58,14 +58,6 @@ class MastersService:
     ) -> tuple[list[Standard], int]:
         return await self.std_repo.list_by_school(school_id, academic_year_id)
 
-    async def get_standard(
-        self, standard_id: uuid.UUID, school_id: uuid.UUID
-    ) -> Standard:
-        obj = await self.std_repo.get_by_id(standard_id, school_id)
-        if not obj:
-            raise NotFoundException(detail="Standard not found")
-        return obj
-
     async def update_standard(
         self,
         standard_id: uuid.UUID,
@@ -134,12 +126,6 @@ class MastersService:
     ) -> tuple[list[Subject], int]:
         return await self.sub_repo.list_by_standard(school_id, standard_id)
 
-    async def get_subject(self, subject_id: uuid.UUID, school_id: uuid.UUID) -> Subject:
-        obj = await self.sub_repo.get_by_id(subject_id, school_id)
-        if not obj:
-            raise NotFoundException(detail="Subject not found")
-        return obj
-
     async def update_subject(
         self,
         subject_id: uuid.UUID,
@@ -205,12 +191,6 @@ class MastersService:
 
     async def list_grades(self, school_id: uuid.UUID) -> tuple[list[GradeMaster], int]:
         return await self.grade_repo.list_by_school(school_id)
-
-    async def get_grade(self, grade_id: uuid.UUID, school_id: uuid.UUID) -> GradeMaster:
-        obj = await self.grade_repo.get_by_id(grade_id, school_id)
-        if not obj:
-            raise NotFoundException(detail="Grade not found")
-        return obj
 
     async def update_grade(
         self,

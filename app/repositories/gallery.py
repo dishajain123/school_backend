@@ -1,7 +1,7 @@
 import uuid
 from typing import Optional
 
-from sqlalchemy import select, and_, func
+from sqlalchemy import select, and_, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.gallery import (
@@ -52,6 +52,10 @@ class GalleryRepository:
         await self.db.refresh(album)
         return album
 
+    async def delete_album(self, album: GalleryAlbum) -> None:
+        await self.db.delete(album)
+        await self.db.flush()
+
     # Photos
     async def create_photo(self, data: dict) -> GalleryPhoto:
         obj = GalleryPhoto(**data)
@@ -92,6 +96,23 @@ class GalleryRepository:
         await self.db.flush()
         await self.db.refresh(photo)
         return photo
+
+    async def clear_featured_for_album_except(
+        self, album_id: uuid.UUID, school_id: uuid.UUID, except_photo_id: uuid.UUID
+    ) -> None:
+        await self.db.execute(
+            update(GalleryPhoto)
+            .where(
+                and_(
+                    GalleryPhoto.album_id == album_id,
+                    GalleryPhoto.school_id == school_id,
+                    GalleryPhoto.id != except_photo_id,
+                    GalleryPhoto.is_featured.is_(True),
+                )
+            )
+            .values(is_featured=False)
+        )
+        await self.db.flush()
 
     # Reactions
     async def get_reaction(
@@ -161,3 +182,21 @@ class GalleryRepository:
             .order_by(GalleryPhotoComment.created_at.asc())
         )
         return list(result.scalars().all())
+
+    async def get_comment_by_id(
+        self, comment_id: uuid.UUID, photo_id: uuid.UUID, school_id: uuid.UUID
+    ) -> Optional[GalleryPhotoComment]:
+        result = await self.db.execute(
+            select(GalleryPhotoComment).where(
+                and_(
+                    GalleryPhotoComment.id == comment_id,
+                    GalleryPhotoComment.photo_id == photo_id,
+                    GalleryPhotoComment.school_id == school_id,
+                )
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def delete_comment(self, comment: GalleryPhotoComment) -> None:
+        await self.db.delete(comment)
+        await self.db.flush()

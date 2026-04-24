@@ -90,3 +90,16 @@ def decode_reset_token(token: str) -> dict[str, Any]:
     if payload.get("type") != RESET_TOKEN_TYPE or payload.get("scope") != "password_reset":
         raise UnauthorizedException(detail="Invalid token type: expected password reset token")
     return payload
+
+
+def extract_bearer_token(auth_header: Optional[str]) -> Optional[str]:
+    if not auth_header:
+        return None
+    parts = auth_header.strip().split(" ", 1)
+    if len(parts) != 2:
+        return None
+    scheme, token = parts
+    if scheme.lower() != "bearer":
+        return None
+    token = token.strip()
+    return token or None

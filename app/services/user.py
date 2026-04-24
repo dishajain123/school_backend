@@ -37,6 +37,7 @@ class UserService:
     async def _enrich_with_photo_url(self, user: User) -> dict:
         data = {
             "id": user.id,
+            "full_name": user.full_name,
             "email": user.email,
             "phone": user.phone,
             "role": user.role,
@@ -76,6 +77,7 @@ class UserService:
                 raise ConflictException(f"Phone '{data.phone}' is already in use")
 
         user = await self.repo.create({
+            "full_name": data.full_name.strip() if data.full_name else None,
             "email": str(data.email).lower().strip() if data.email else None,
             "phone": data.phone,
             "hashed_password": hash_password(data.password),

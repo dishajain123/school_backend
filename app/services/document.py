@@ -22,8 +22,6 @@ from app.schemas.document import (
     DocumentRequirementsResponse,
     DocumentRequirementResponse,
     DocumentRequirementStatusResponse,
-    DocumentReviewQueueResponse,
-    DocumentReviewQueueItemResponse,
 )
 from app.services.academic_year import get_active_year
 from app.integrations.minio_client import minio_client
@@ -618,8 +616,10 @@ class DocumentService:
         doc = await self.repo.get_by_id(document_id, school_id)
         if not doc:
             raise NotFoundException("Document")
-        if not doc.file_key:
-            raise ValidationException("Uploaded file is missing for this document")
+        if body.approve and not doc.file_key:
+            raise ValidationException(
+                "Cannot verify document before upload completes"
+            )
 
         status = DocumentStatus.READY if body.approve else DocumentStatus.FAILED
         reviewed_at = datetime.now(timezone.utc)
@@ -772,86 +772,3 @@ class DocumentService:
                 )
             )
         return statuses
-
-    async def list_review_queue(
-        self,
-        *,
-        current_user: CurrentUser,
-        student_id: Optional[uuid.UUID] = None,
-    ) -> DocumentReviewQueueResponse:
-        school_id = self._ensure_school(current_user)
-        if not self._can_manage_documents(current_user):
-            raise ForbiddenException(
-                "Permission 'document:manage' is required to access this resource"
-            )
-        if current_user.role not in (RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN):
-            raise ForbiddenException("Only principal can review uploaded documents")
-
-        docs = await self.repo.list_review_queue(
-            school_id=school_id,
-            student_id=student_id,
-        )
-        review_meta_map = await self._get_review_meta_map(school_id)
-
-        from app.models.student import Student
-        from app.models.parent import Parent
-        from app.models.user import User
-
-        student_ids = [doc.student_id for doc in docs]
-        student_meta: dict[uuid.UUID, dict] = {}
-        if student_ids:
-            rows = await self.db.execute(
-                select(
-                    Student.id,
-                    Student.admission_number,
-                    User.email,
-                    Parent.user_id,
-                )
-                .select_from(Student)
-                .join(User, User.id == Student.user_id, isouter=True)
-                .join(Parent, Parent.id == Student.parent_id, isouter=True)
-                .where(
-                    and_(
-                        Student.id.in_(student_ids),
-                        Student.school_id == school_id,
-                    )
-                )
-            )
-            for sid, admission, email, parent_user_id in rows.all():
-                student_meta[sid] = {
-                    "admission_number": admission,
-                    "student_name": email,
-                    "parent_user_id": parent_user_id,
-                }
-
-        parent_name_map: dict[uuid.UUID, Optional[str]] = {}
-        parent_user_ids = [
-            row["parent_user_id"]
-            for row in student_meta.values()
-            if row.get("parent_user_id") is not None
-        ]
-        if parent_user_ids:
-            parent_rows = await self.db.execute(
-                select(User.id, User.email).where(
-                    User.id.in_(parent_user_ids)
-                )
-            )
-            for uid, email in parent_rows.all():
-                parent_name_map[uid] = email
-
-        items: list[DocumentReviewQueueItemResponse] = []
-        for doc in docs:
-            base = self._serialize_document_response(doc, review_meta_map)
-            meta = student_meta.get(doc.student_id, {})
-            parent_user_id = meta.get("parent_user_id")
-            payload = base.model_dump()
-            payload.update(
-                {
-                    "student_name": meta.get("student_name"),
-                    "student_admission_number": meta.get("admission_number"),
-                    "parent_name": parent_name_map.get(parent_user_id),
-                }
-            )
-            items.append(DocumentReviewQueueItemResponse(**payload))
-
-        return DocumentReviewQueueResponse(items=items, total=len(items))

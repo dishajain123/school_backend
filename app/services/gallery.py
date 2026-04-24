@@ -10,6 +10,7 @@ from app.core.exceptions import ForbiddenException, ValidationException, NotFoun
 from app.repositories.gallery import GalleryRepository
 from app.schemas.gallery import (
     AlbumCreate,
+    AlbumUpdate,
     AlbumResponse,
     AlbumListResponse,
     PhotoResponse,
@@ -20,10 +21,12 @@ from app.schemas.gallery import (
 )
 from app.services.academic_year import get_active_year
 from app.integrations.minio_client import minio_client
+from app.core.logging import get_logger
 from app.utils.constants import MAX_FILE_SIZE_BYTES, ALLOWED_IMAGE_TYPES
 from app.utils.enums import RoleEnum
 
 GALLERY_BUCKET = "gallery"
+logger = get_logger(__name__)
 
 
 class GalleryService:
@@ -44,10 +47,15 @@ class GalleryService:
         return album
 
     @staticmethod
-    def _ensure_parent_or_student(current_user: CurrentUser) -> None:
-        if current_user.role not in (RoleEnum.PARENT, RoleEnum.STUDENT):
+    def _ensure_allowed_interaction_role(current_user: CurrentUser) -> None:
+        if current_user.role not in (
+            RoleEnum.PARENT,
+            RoleEnum.STUDENT,
+            RoleEnum.TEACHER,
+            RoleEnum.TRUSTEE,
+        ):
             raise ForbiddenException(
-                "Only parents and students can react or comment on gallery photos"
+                "Only parents, students, teachers, and trustees can react or comment on gallery photos"
             )
 
     async def _interaction_response(
@@ -98,6 +106,26 @@ class GalleryService:
         albums = await self.repo.list_albums(school_id)
         items = [self._album_response(AlbumResponse.model_validate(a)) for a in albums]
         return AlbumListResponse(items=items, total=len(items))
+
+    async def update_album(
+        self,
+        album_id: uuid.UUID,
+        body: AlbumUpdate,
+        current_user: CurrentUser,
+    ) -> AlbumResponse:
+        school_id = self._ensure_school(current_user)
+        album = await self.repo.get_album_by_id(album_id, school_id)
+        if not album:
+            raise NotFoundException("Album")
+
+        update_data = body.model_dump(exclude_unset=True)
+        if "event_name" in update_data and update_data["event_name"] is not None:
+            update_data["event_name"] = update_data["event_name"].strip()
+
+        updated = await self.repo.update_album(album, update_data)
+        await self.db.commit()
+        await self.db.refresh(updated)
+        return self._album_response(AlbumResponse.model_validate(updated))
 
     async def upload_photo(
         self,
@@ -202,10 +230,19 @@ class GalleryService:
         if not photo:
             raise NotFoundException("Photo")
 
+        album = await self.repo.get_album_by_id(photo.album_id, school_id)
         new_featured = not photo.is_featured
+
+        if new_featured:
+            # Keep exactly one featured photo in an album.
+            await self.repo.clear_featured_for_album_except(
+                album_id=photo.album_id,
+                school_id=school_id,
+                except_photo_id=photo.id,
+            )
+
         updated = await self.repo.update_photo(photo, {"is_featured": new_featured})
 
-        album = await self.repo.get_album_by_id(photo.album_id, school_id)
         if album:
             if new_featured:
                 await self.repo.update_album(album, {"cover_photo_key": photo.photo_key})
@@ -217,6 +254,32 @@ class GalleryService:
         data = PhotoResponse.model_validate(updated)
         data.photo_url = minio_client.generate_presigned_url(GALLERY_BUCKET, updated.photo_key)
         return data
+
+    async def delete_album(
+        self,
+        album_id: uuid.UUID,
+        current_user: CurrentUser,
+    ) -> None:
+        school_id = self._ensure_school(current_user)
+        if current_user.role not in (RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN):
+            raise ForbiddenException("Only principal can delete gallery albums")
+
+        album = await self.repo.get_album_by_id(album_id, school_id)
+        if not album:
+            raise NotFoundException("Album")
+
+        photos = await self.repo.list_photos(album_id, school_id)
+        for photo in photos:
+            try:
+                minio_client.delete_file(GALLERY_BUCKET, photo.photo_key)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to delete gallery object for album cleanup: "
+                    f"album_id={album_id} photo_id={photo.id} key={photo.photo_key} error={exc}"
+                )
+
+        await self.repo.delete_album(album)
+        await self.db.commit()
 
     async def get_photo_interactions(
         self,
@@ -235,7 +298,7 @@ class GalleryService:
         current_user: CurrentUser,
     ) -> PhotoInteractionResponse:
         school_id = self._ensure_school(current_user)
-        self._ensure_parent_or_student(current_user)
+        self._ensure_allowed_interaction_role(current_user)
 
         photo = await self.repo.get_photo_by_id(photo_id, school_id)
         if not photo:
@@ -264,7 +327,7 @@ class GalleryService:
         current_user: CurrentUser,
     ) -> PhotoInteractionResponse:
         school_id = self._ensure_school(current_user)
-        self._ensure_parent_or_student(current_user)
+        self._ensure_allowed_interaction_role(current_user)
 
         photo = await self.repo.get_photo_by_id(photo_id, school_id)
         if not photo:
@@ -284,7 +347,7 @@ class GalleryService:
         current_user: CurrentUser,
     ) -> PhotoInteractionResponse:
         school_id = self._ensure_school(current_user)
-        self._ensure_parent_or_student(current_user)
+        self._ensure_allowed_interaction_role(current_user)
 
         photo = await self.repo.get_photo_by_id(photo_id, school_id)
         if not photo:
@@ -300,5 +363,29 @@ class GalleryService:
             }
         )
 
+        await self.db.commit()
+        return await self._interaction_response(photo_id, school_id, current_user.id)
+
+    async def delete_comment(
+        self,
+        photo_id: uuid.UUID,
+        comment_id: uuid.UUID,
+        current_user: CurrentUser,
+    ) -> PhotoInteractionResponse:
+        school_id = self._ensure_school(current_user)
+        self._ensure_allowed_interaction_role(current_user)
+
+        photo = await self.repo.get_photo_by_id(photo_id, school_id)
+        if not photo:
+            raise NotFoundException("Photo")
+
+        comment = await self.repo.get_comment_by_id(comment_id, photo_id, school_id)
+        if not comment:
+            raise NotFoundException("Comment")
+
+        if comment.commented_by != current_user.id:
+            raise ForbiddenException("You can delete only your own comment")
+
+        await self.repo.delete_comment(comment)
         await self.db.commit()
         return await self._interaction_response(photo_id, school_id, current_user.id)

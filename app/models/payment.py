@@ -4,7 +4,8 @@ import uuid
 from datetime import date
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import String, Date, Numeric, Boolean, ForeignKey, Enum
+from sqlalchemy import Boolean, Date, ForeignKey, Numeric, String
+from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -14,8 +15,8 @@ from app.utils.enums import PaymentMode
 if TYPE_CHECKING:
     from app.models.fee import FeeLedger
     from app.models.student import Student
-    from app.models.user import User
     from app.models.school import School
+    from app.models.user import User
 
 
 class Payment(BaseModel):
@@ -36,11 +37,11 @@ class Payment(BaseModel):
     amount: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     payment_date: Mapped[date] = mapped_column(Date, nullable=False)
     payment_mode: Mapped[PaymentMode] = mapped_column(
-        Enum(PaymentMode, name="payment_mode_enum"),
+        SAEnum(PaymentMode, name="payment_mode_enum"),
         nullable=False,
     )
     reference_number: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    receipt_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    receipt_key: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     recorded_by: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
@@ -58,13 +59,14 @@ class Payment(BaseModel):
         index=True,
     )
 
-    fee_ledger: Mapped["FeeLedger"] = relationship(
-        "FeeLedger", foreign_keys=[fee_ledger_id], back_populates="payments", lazy="select"
-    )
+    # Relationships
     student: Mapped["Student"] = relationship(
         "Student", foreign_keys=[student_id], lazy="select"
     )
-    recorder: Mapped[Optional["User"]] = relationship(
+    fee_ledger: Mapped["FeeLedger"] = relationship(
+        "FeeLedger", foreign_keys=[fee_ledger_id], back_populates="payments", lazy="select"
+    )
+    recorded_by_user: Mapped[Optional["User"]] = relationship(
         "User", foreign_keys=[recorded_by], lazy="select"
     )
     school: Mapped["School"] = relationship(

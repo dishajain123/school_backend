@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from typing import Optional
 from app.core.config import settings
 from app.core.logging import get_logger
 
@@ -7,7 +8,7 @@ logger = get_logger(__name__)
 
 
 def setup_cors(app: FastAPI) -> None:
-    allow_origin_regex: str | None = None
+    allow_origin_regex: Optional[str] = None
 
     if settings.ALLOWED_ORIGINS == "*":
         # Dev-friendly default for Flutter Web / local frontend ports.

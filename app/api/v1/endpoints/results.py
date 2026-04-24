@@ -8,6 +8,8 @@ from app.core.dependencies import CurrentUser, get_current_user, require_permiss
 from app.db.session import get_db
 from app.schemas.result import (
     ExamCreate,
+    ExamBulkCreate,
+    ExamBulkCreateResponse,
     ExamResponse,
     ResultBulkCreate,
     ResultListResponse,
@@ -27,6 +29,15 @@ async def create_exam(
     db: AsyncSession = Depends(get_db),
 ):
     return await ResultService(db).create_exam(payload, current_user)
+
+
+@router.post("/exams/bulk", response_model=ExamBulkCreateResponse, status_code=201)
+async def create_exam_bulk(
+    payload: ExamBulkCreate,
+    current_user: CurrentUser = Depends(require_permission("result:create")),
+    db: AsyncSession = Depends(get_db),
+):
+    return await ResultService(db).create_exams_bulk(payload, current_user)
 
 
 @router.get("/exams", response_model=list[ExamResponse])

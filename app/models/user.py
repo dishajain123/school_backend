@@ -12,6 +12,7 @@ from app.utils.enums import RoleEnum
 class User(BaseModel):
     __tablename__ = "users"
 
+    full_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     email: Mapped[Optional[str]] = mapped_column(String(255), unique=True, nullable=True, index=True)
     phone: Mapped[Optional[str]] = mapped_column(String(20), unique=True, nullable=True, index=True)
     hashed_password: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)

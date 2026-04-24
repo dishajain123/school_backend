@@ -21,6 +21,7 @@ class CurrentUser(BaseModel):
     school_id: Optional[uuid.UUID]
     parent_id: Optional[uuid.UUID]
     permissions: list[str]
+    full_name: Optional[str] = None
     email: Optional[str] = None
     phone: Optional[str] = None
     is_active: bool = True
@@ -69,6 +70,7 @@ async def get_current_user(
         school_id=uuid.UUID(school_id_raw) if school_id_raw else None,
         parent_id=resolved_parent_id,
         permissions=payload.get("permissions", []),
+        full_name=payload.get("full_name"),
         email=payload.get("email"),
         phone=payload.get("phone"),
         is_active=payload.get("is_active", True),

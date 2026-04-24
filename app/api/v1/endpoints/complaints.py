@@ -69,7 +69,7 @@ async def update_status(
     complaint_id: uuid.UUID,
     payload: ComplaintStatusUpdate,
     background_tasks: BackgroundTasks,
-    current_user: CurrentUser = Depends(require_permission("complaint:read")),
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     return await ComplaintService(db).update_status(

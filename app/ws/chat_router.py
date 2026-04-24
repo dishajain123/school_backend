@@ -78,6 +78,7 @@ async def chat_ws(
 
             await manager.broadcast(
                 {
+                    "event": "message_created",
                     "id": str(message.id),
                     "conversation_id": str(message.conversation_id),
                     "sender_id": str(message.sender_id),

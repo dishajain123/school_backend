@@ -105,6 +105,75 @@ async def init_db() -> None:
                     """
                 )
             )
+            # Runtime-safe patch for customizable fee heads and upgraded uniqueness.
+            await conn.execute(
+                text(
+                    """
+                    ALTER TABLE IF EXISTS fee_structures
+                    ADD COLUMN IF NOT EXISTS custom_fee_head VARCHAR(120)
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    UPDATE fee_structures
+                    SET custom_fee_head = ''
+                    WHERE custom_fee_head IS NULL
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    ALTER TABLE IF EXISTS fee_structures
+                    ALTER COLUMN custom_fee_head SET DEFAULT ''
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    ALTER TABLE IF EXISTS fee_structures
+                    ALTER COLUMN custom_fee_head SET NOT NULL
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    DO $$
+                    BEGIN
+                        IF EXISTS (
+                            SELECT 1
+                            FROM pg_constraint
+                            WHERE conname = 'uq_fee_structure_category_standard_year_school'
+                        ) THEN
+                            ALTER TABLE fee_structures
+                            DROP CONSTRAINT uq_fee_structure_category_standard_year_school;
+                        END IF;
+                    END $$;
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1
+                            FROM pg_constraint
+                            WHERE conname = 'uq_fee_structure_category_standard_year_school'
+                        ) THEN
+                            ALTER TABLE fee_structures
+                            ADD CONSTRAINT uq_fee_structure_category_standard_year_school
+                            UNIQUE (school_id, standard_id, academic_year_id, fee_category, custom_fee_head);
+                        END IF;
+                    END $$;
+                    """
+                )
+            )
         logger.info("Database tables created/verified successfully")
     except Exception as e:
         logger.error(f"Failed to initialize database: {e}")

@@ -48,17 +48,6 @@ async def list_standards(
     return StandardListResponse(items=items, total=total)
 
 
-@router.get("/standards/{standard_id}", response_model=StandardResponse)
-async def get_standard(
-    standard_id: uuid.UUID,
-    current_user: CurrentUser = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    school_id = _require_school(current_user)
-    service = MastersService(db)
-    return await service.get_standard(standard_id, school_id)
-
-
 @router.patch("/standards/{standard_id}", response_model=StandardResponse)
 async def update_standard(
     standard_id: uuid.UUID,
@@ -105,17 +94,6 @@ async def list_subjects(
     service = MastersService(db)
     items, total = await service.list_subjects(school_id, standard_id)
     return SubjectListResponse(items=items, total=total)
-
-
-@router.get("/subjects/{subject_id}", response_model=SubjectResponse)
-async def get_subject(
-    subject_id: uuid.UUID,
-    current_user: CurrentUser = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    school_id = _require_school(current_user)
-    service = MastersService(db)
-    return await service.get_subject(subject_id, school_id)
 
 
 @router.patch("/subjects/{subject_id}", response_model=SubjectResponse)
@@ -179,17 +157,6 @@ async def lookup_grade(
         grade_letter=grade.grade_letter,
         grade_point=float(grade.grade_point),
     )
-
-
-@router.get("/grades/{grade_id}", response_model=GradeMasterResponse)
-async def get_grade(
-    grade_id: uuid.UUID,
-    current_user: CurrentUser = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    school_id = _require_school(current_user)
-    service = MastersService(db)
-    return await service.get_grade(grade_id, school_id)
 
 
 @router.patch("/grades/{grade_id}", response_model=GradeMasterResponse)

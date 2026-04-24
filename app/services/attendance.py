@@ -12,8 +12,6 @@ from app.schemas.attendance import (
     MarkAttendanceResponse,
     StudentAttendanceAnalytics,
     SubjectAttendanceStat,
-    ClassAttendanceSnapshot,
-    ClassSnapshotRecord,
     BelowThresholdResponse,
     BelowThresholdStudent,
 )
@@ -328,63 +326,6 @@ class AttendanceService:
             year=year,
             overall_percentage=overall,
             subjects=subject_stats,
-        )
-
-    async def class_snapshot(
-        self,
-        standard_id: uuid.UUID,
-        academic_year_id: uuid.UUID,
-        record_date: date,
-        current_user: CurrentUser,
-        section: Optional[str] = None,
-        subject_id: Optional[uuid.UUID] = None,
-    ) -> ClassAttendanceSnapshot:
-        school_id = current_user.school_id
-        if not school_id:
-            raise ValidationException("school_id is required")
-
-        if current_user.role == RoleEnum.TEACHER:
-            teacher = await self._get_teacher_for_user(current_user)
-            if not subject_id:
-                raise ValidationException(
-                    "subject_id is required for teacher class attendance view"
-                )
-            if not section:
-                raise ValidationException(
-                    "section is required for teacher class attendance view"
-                )
-            await self.tcs_service.assert_teacher_owns_class_subject(
-                teacher_id=teacher.id,
-                standard_id=standard_id,
-                subject_id=subject_id,
-                academic_year_id=academic_year_id,
-                section=section,
-            )
-
-        rows = await self.repo.get_class_snapshot(
-            standard_id=standard_id,
-            section=section,
-            school_id=school_id,
-            record_date=record_date,
-            academic_year_id=academic_year_id,
-            subject_id=subject_id,
-        )
-
-        records = [ClassSnapshotRecord(**r) for r in rows]
-        present = sum(1 for r in records if r.status == AttendanceStatus.PRESENT)
-        absent = sum(1 for r in records if r.status == AttendanceStatus.ABSENT)
-        late = sum(1 for r in records if r.status == AttendanceStatus.LATE)
-        not_marked = sum(1 for r in records if r.status is None)
-
-        return ClassAttendanceSnapshot(
-            standard_id=standard_id,
-            date=record_date,
-            total_students=len(records),
-            present=present,
-            absent=absent,
-            late=late,
-            not_marked=not_marked,
-            records=records,
         )
 
     async def below_threshold(

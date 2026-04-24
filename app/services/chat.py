@@ -19,6 +19,8 @@ from app.schemas.chat import (
     MessageCreate,
     MessageResponse,
     MessageListResponse,
+    MessageReactionSummary,
+    MessageReactionUpdateResponse,
 )
 from app.integrations.minio_client import minio_client
 from app.services.academic_year import get_active_year
@@ -95,6 +97,40 @@ class ChatService:
                     conversation, current_user_id
                 )
             }
+        )
+
+    @staticmethod
+    def _reaction_summary(reactions) -> list[MessageReactionSummary]:
+        counts: dict[str, int] = {}
+        for reaction in reactions or []:
+            emoji = (reaction.emoji or "").strip()
+            if not emoji:
+                continue
+            counts[emoji] = counts.get(emoji, 0) + 1
+        return [
+            MessageReactionSummary(emoji=emoji, count=count)
+            for emoji, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+        ]
+
+    def _to_message_response(self, message, current_user_id: uuid.UUID) -> MessageResponse:
+        my_reaction = None
+        for reaction in message.reactions or []:
+            if reaction.user_id == current_user_id:
+                my_reaction = reaction.emoji
+                break
+        return MessageResponse(
+            id=message.id,
+            conversation_id=message.conversation_id,
+            sender_id=message.sender_id,
+            content=message.content,
+            message_type=message.message_type,
+            file_key=message.file_key,
+            sent_at=message.sent_at,
+            school_id=message.school_id,
+            created_at=message.created_at,
+            updated_at=message.updated_at,
+            reactions=self._reaction_summary(message.reactions),
+            my_reaction=my_reaction,
         )
 
     @staticmethod
@@ -627,7 +663,7 @@ class ChatService:
             page_size=page_size,
         )
         return MessageListResponse(
-            items=[MessageResponse.model_validate(m) for m in items],
+            items=[self._to_message_response(m, current_user.id) for m in items],
             total=total,
             page=page,
             page_size=page_size,
@@ -659,7 +695,10 @@ class ChatService:
         )
         await self.db.commit()
         await self.db.refresh(message)
-        return MessageResponse.model_validate(message)
+        hydrated = await self.repo.get_message_by_id(message.id, school_id)
+        if hydrated is None:
+            raise NotFoundException("Message")
+        return self._to_message_response(hydrated, current_user.id)
 
     async def mark_read(
         self,
@@ -710,3 +749,84 @@ class ChatService:
             content_type=file.content_type or "application/octet-stream",
         )
         return file_key
+
+    async def delete_conversation(
+        self,
+        conversation_id: uuid.UUID,
+        current_user: CurrentUser,
+    ) -> None:
+        school_id = self._ensure_school(current_user)
+        conversation = await self.repo.get_conversation_by_id(conversation_id, school_id)
+        if conversation is None:
+            raise NotFoundException("Conversation")
+
+        if current_user.role not in (RoleEnum.PRINCIPAL, RoleEnum.TEACHER):
+            raise ForbiddenException("Only principal and teacher can delete chats")
+
+        is_member = await self.repo.is_participant(conversation_id, current_user.id)
+        if not is_member:
+            raise ForbiddenException("You are not part of this conversation")
+
+        await self.repo.delete_conversation(conversation)
+        await self.db.commit()
+
+    async def react_to_message(
+        self,
+        message_id: uuid.UUID,
+        emoji: str,
+        current_user: CurrentUser,
+    ) -> MessageReactionUpdateResponse:
+        school_id = self._ensure_school(current_user)
+        reaction_value = (emoji or "").strip()
+        if not reaction_value:
+            raise ValidationException("emoji is required")
+
+        if current_user.role not in (
+            RoleEnum.PARENT,
+            RoleEnum.STUDENT,
+            RoleEnum.TEACHER,
+            RoleEnum.PRINCIPAL,
+        ):
+            raise ForbiddenException("Only parent, student, teacher, and principal can react")
+
+        message = await self.repo.get_message_by_id(message_id, school_id)
+        if message is None:
+            raise NotFoundException("Message")
+
+        is_member = await self.repo.is_participant(message.conversation_id, current_user.id)
+        if not is_member:
+            raise ForbiddenException("You are not part of this conversation")
+
+        existing = await self.repo.get_message_reaction(message_id, current_user.id)
+        status = "added"
+        my_reaction: Optional[str] = reaction_value
+
+        if existing is not None and existing.emoji == reaction_value:
+            await self.repo.delete_message_reaction(existing)
+            status = "removed"
+            my_reaction = None
+        elif existing is not None:
+            existing.emoji = reaction_value
+            status = "updated"
+        else:
+            await self.repo.create_message_reaction(
+                {
+                    "message_id": message_id,
+                    "user_id": current_user.id,
+                    "emoji": reaction_value,
+                }
+            )
+
+        await self.db.commit()
+        updated = await self.repo.get_message_by_id(message_id, school_id)
+        if updated is None:
+            raise NotFoundException("Message")
+
+        return MessageReactionUpdateResponse(
+            message_id=updated.id,
+            conversation_id=updated.conversation_id,
+            status=status,
+            reaction=my_reaction,
+            reactions=self._reaction_summary(updated.reactions),
+            my_reaction=my_reaction,
+        )

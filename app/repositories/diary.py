@@ -7,11 +7,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.student_diary import StudentDiary
+from app.models.teacher import Teacher
 
 
 def _with_relations(stmt):
     return stmt.options(
         selectinload(StudentDiary.teacher),
+        selectinload(StudentDiary.teacher).selectinload(Teacher.user),
         selectinload(StudentDiary.standard),
         selectinload(StudentDiary.subject),
         selectinload(StudentDiary.academic_year),

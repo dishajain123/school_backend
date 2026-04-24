@@ -65,6 +65,9 @@ class Message(BaseModel):
     school: Mapped["School"] = relationship(
         "School", foreign_keys=[school_id], lazy="select"
     )
+    reactions: Mapped[list["MessageReaction"]] = relationship(
+        "MessageReaction", back_populates="message", lazy="select"
+    )
 
 
 class MessageRead(BaseModel):
@@ -97,6 +100,43 @@ class MessageRead(BaseModel):
 
     message: Mapped["Message"] = relationship(
         "Message", foreign_keys=[message_id], lazy="select"
+    )
+    user: Mapped["User"] = relationship(
+        "User", foreign_keys=[user_id], lazy="select"
+    )
+
+
+class MessageReaction(BaseModel):
+    __tablename__ = "message_reactions"
+    __table_args__ = (
+        UniqueConstraint(
+            "message_id",
+            "user_id",
+            name="uq_message_reaction_user",
+        ),
+    )
+
+    message_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("messages.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    emoji: Mapped[str] = mapped_column(String(32), nullable=False)
+    reacted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    message: Mapped["Message"] = relationship(
+        "Message", foreign_keys=[message_id], back_populates="reactions", lazy="select"
     )
     user: Mapped["User"] = relationship(
         "User", foreign_keys=[user_id], lazy="select"

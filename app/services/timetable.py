@@ -225,6 +225,11 @@ class TimetableService:
             await self.db.commit()
             await self.db.refresh(updated)
             data = TimetableUploadResponse.model_validate(updated)
+            data.uploaded_by_name = (
+                updated.uploader.full_name.strip()
+                if updated.uploader and updated.uploader.full_name
+                else None
+            )
         else:
             created = await self.repo.create(
                 {
@@ -246,11 +251,82 @@ class TimetableService:
             await self.db.commit()
             await self.db.refresh(created)
             data = TimetableUploadResponse.model_validate(created)
+            data.uploaded_by_name = (
+                created.uploader.full_name.strip()
+                if created.uploader and created.uploader.full_name
+                else None
+            )
 
         data.file_url = minio_client.generate_presigned_url(
             TIMETABLE_BUCKET, file_key
         )
         return data
+
+    async def delete_timetable(
+        self,
+        standard_id: uuid.UUID,
+        academic_year_id: Optional[uuid.UUID],
+        current_user: CurrentUser,
+        section: Optional[str] = None,
+    ) -> None:
+        school_id = self._ensure_school(current_user)
+        normalized_section = self._normalize_section(section)
+
+        resolved_year_id = academic_year_id
+        if not resolved_year_id:
+            resolved_year_id = (await get_active_year(school_id, self.db)).id
+
+        if current_user.role == RoleEnum.TEACHER:
+            teacher_id = await self._get_teacher_id(
+                current_user=current_user,
+                school_id=school_id,
+            )
+            teacher_sections = await self._get_teacher_sections(
+                teacher_id=teacher_id,
+                standard_id=standard_id,
+                academic_year_id=resolved_year_id,
+            )
+            if not teacher_sections:
+                raise ForbiddenException(
+                    "You can delete timetable only for your assigned class/section"
+                )
+            if normalized_section is not None and normalized_section not in teacher_sections:
+                raise ForbiddenException(
+                    "You can delete timetable only for your assigned class/section"
+                )
+            if normalized_section is None:
+                class_wide = await self.repo.get_by_standard(
+                    school_id=school_id,
+                    standard_id=standard_id,
+                    academic_year_id=resolved_year_id,
+                    section=None,
+                )
+                if class_wide is None:
+                    if len(teacher_sections) == 1:
+                        normalized_section = next(iter(teacher_sections))
+                    else:
+                        raise ForbiddenException(
+                            "Please select one of your assigned sections to delete timetable"
+                        )
+
+        timetable = await self.repo.get_by_standard(
+            school_id=school_id,
+            standard_id=standard_id,
+            academic_year_id=resolved_year_id,
+            section=normalized_section,
+        )
+        if not timetable:
+            raise NotFoundException("Timetable")
+
+        file_key = timetable.file_key
+        await self.repo.delete(timetable)
+        await self.db.commit()
+
+        try:
+            minio_client.delete_file(TIMETABLE_BUCKET, file_key)
+        except Exception:
+            # Deletion from object storage is best-effort; DB state is source of truth.
+            pass
 
     async def get_timetable(
         self,
@@ -327,12 +403,15 @@ class TimetableService:
                         Student.standard_id == standard_id,
                         Student.parent_id == current_user.parent_id,
                         Student.school_id == school_id,
+                        Student.academic_year_id == resolved_year_id,
                     )
                 )
             )
             rows = result.scalars().all()
             if not rows:
-                raise ForbiddenException("You do not have a child in this class")
+                raise ForbiddenException(
+                    "You can only view timetable for your linked child's class/section"
+                )
             child_sections = {
                 normalized
                 for raw in rows
@@ -340,10 +419,21 @@ class TimetableService:
             }
             if normalized_section is not None and normalized_section not in child_sections:
                 raise ForbiddenException(
-                    "You can only view timetable for your child's assigned section"
+                    "You can only view timetable for your linked child's class/section"
                 )
-            if normalized_section is None and len(child_sections) == 1:
-                normalized_section = next(iter(child_sections))
+            if normalized_section is None:
+                if len(child_sections) == 1:
+                    normalized_section = next(iter(child_sections))
+                elif len(child_sections) > 1:
+                    raise ForbiddenException(
+                        "Please select your child's section to view timetable"
+                    )
+        elif current_user.role in (RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN):
+            pass
+        else:
+            raise ForbiddenException(
+                "Timetable is visible only to assigned teachers and students"
+            )
 
         timetable = await self.repo.get_by_standard(
             school_id=school_id,
@@ -355,6 +445,11 @@ class TimetableService:
             raise NotFoundException("Timetable")
 
         data = TimetableResponse.model_validate(timetable)
+        data.uploaded_by_name = (
+            timetable.uploader.full_name.strip()
+            if timetable.uploader and timetable.uploader.full_name
+            else None
+        )
         data.file_url = minio_client.generate_presigned_url(
             TIMETABLE_BUCKET, timetable.file_key
         )

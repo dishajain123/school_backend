@@ -25,6 +25,30 @@ class DiaryService:
             raise ValidationException("school_id is required")
         return current_user.school_id
 
+    def _to_response(self, entry) -> DiaryResponse:
+        subject_name = None
+        if getattr(entry, "subject", None) is not None:
+            subject_name = getattr(entry.subject, "name", None)
+
+        created_by_name = None
+        teacher = getattr(entry, "teacher", None)
+        if teacher is not None and getattr(teacher, "user", None) is not None:
+            user = teacher.user
+            if getattr(user, "full_name", None):
+                created_by_name = user.full_name
+            elif getattr(user, "email", None):
+                created_by_name = user.email
+            elif getattr(user, "phone", None):
+                created_by_name = user.phone
+
+        base = DiaryResponse.model_validate(entry)
+        return base.model_copy(
+            update={
+                "subject_name": subject_name,
+                "created_by_name": created_by_name,
+            }
+        )
+
     async def create_entry(
         self,
         body: DiaryCreate,
@@ -70,7 +94,7 @@ class DiaryService:
         )
         await self.db.commit()
         await self.db.refresh(entry)
-        return DiaryResponse.model_validate(entry)
+        return self._to_response(entry)
 
     async def list_entries(
         self,
@@ -158,7 +182,7 @@ class DiaryService:
         )
 
         return DiaryListResponse(
-            items=[DiaryResponse.model_validate(d) for d in items],
+            items=[self._to_response(d) for d in items],
             total=total,
             page=page,
             page_size=page_size,

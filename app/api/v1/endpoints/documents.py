@@ -15,7 +15,6 @@ from app.schemas.document import (
     DocumentRequirementsUpsertRequest,
     DocumentRequirementsResponse,
     DocumentRequirementStatusResponse,
-    DocumentReviewQueueResponse,
 )
 from app.services.document import DocumentService
 from app.utils.enums import DocumentType
@@ -110,14 +109,3 @@ async def list_required_documents_status(
         current_user=current_user,
     )
 
-
-@router.get("/review-queue", response_model=DocumentReviewQueueResponse)
-async def list_review_queue(
-    student_id: Optional[uuid.UUID] = Query(None),
-    current_user: CurrentUser = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    return await DocumentService(db).list_review_queue(
-        current_user=current_user,
-        student_id=student_id,
-    )

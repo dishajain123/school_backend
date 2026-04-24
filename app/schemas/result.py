@@ -2,14 +2,11 @@ import uuid
 from datetime import date, datetime
 from typing import Optional
 
-from pydantic import BaseModel, field_validator
-
-from app.utils.enums import ExamType
+from pydantic import BaseModel, field_validator, model_validator
 
 
 class ExamCreate(BaseModel):
     name: str
-    exam_type: ExamType
     standard_id: uuid.UUID
     academic_year_id: Optional[uuid.UUID] = None
     start_date: date
@@ -27,7 +24,6 @@ class ExamCreate(BaseModel):
 class ExamResponse(BaseModel):
     id: uuid.UUID
     name: str
-    exam_type: ExamType
     standard_id: uuid.UUID
     academic_year_id: uuid.UUID
     start_date: date
@@ -38,6 +34,30 @@ class ExamResponse(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class ExamBulkCreate(BaseModel):
+    name: str
+    standard_ids: Optional[list[uuid.UUID]] = None
+    apply_to_all_standards: bool = False
+    academic_year_id: Optional[uuid.UUID] = None
+    start_date: date
+    end_date: date
+
+    @field_validator("name")
+    @classmethod
+    def bulk_name_not_empty(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Name cannot be empty")
+        return v
+
+
+class ExamBulkCreateResponse(BaseModel):
+    created: list[ExamResponse]
+    created_count: int
+    skipped_standard_ids: list[uuid.UUID]
+    skipped_count: int
 
 
 class ResultEntryCreate(BaseModel):
@@ -59,6 +79,12 @@ class ResultEntryCreate(BaseModel):
         if v <= 0:
             raise ValueError("Max marks must be positive")
         return v
+
+    @model_validator(mode="after")
+    def marks_not_above_max(self):
+        if self.marks_obtained > self.max_marks:
+            raise ValueError("marks_obtained cannot be greater than max_marks")
+        return self
 
 
 class ResultBulkCreate(BaseModel):

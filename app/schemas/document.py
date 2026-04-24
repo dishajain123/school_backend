@@ -86,13 +86,3 @@ class DocumentRequirementStatusResponse(BaseModel):
     needs_reupload: bool = False
     is_completed: bool = False
 
-
-class DocumentReviewQueueItemResponse(DocumentResponse):
-    student_name: Optional[str] = None
-    student_admission_number: Optional[str] = None
-    parent_name: Optional[str] = None
-
-
-class DocumentReviewQueueResponse(BaseModel):
-    items: list[DocumentReviewQueueItemResponse]
-    total: int

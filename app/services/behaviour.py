@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import BackgroundTasks
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import CurrentUser
@@ -42,12 +42,13 @@ async def _assert_teacher_owns_student_class(
     if not standard_id or not section:
         raise ValidationException("Student class or section not set")
 
+    normalized_section = func.upper(func.trim(section))
     result = await db.execute(
         select(TeacherClassSubject.id).where(
             and_(
                 TeacherClassSubject.teacher_id == teacher_id,
                 TeacherClassSubject.standard_id == standard_id,
-                TeacherClassSubject.section == section,
+                func.upper(func.trim(TeacherClassSubject.section)) == normalized_section,
                 TeacherClassSubject.academic_year_id == academic_year_id,
             )
         )
@@ -142,7 +143,7 @@ class BehaviourService:
                 "student_id": body.student_id,
                 "teacher_id": teacher_id,
                 "incident_type": body.incident_type,
-                "description": body.description,
+                "description": (body.description or "").strip(),
                 "severity": body.severity,
                 "incident_date": incident_date,
                 "academic_year_id": academic_year_id,
@@ -161,18 +162,86 @@ class BehaviourService:
                 log.id,
             )
 
-        return BehaviourResponse.model_validate(log)
+        return await self._to_behaviour_response(log)
+
+    async def _to_behaviour_response(self, log) -> BehaviourResponse:
+        from app.models.student import Student
+        from app.models.user import User
+
+        student_row = await self.db.execute(
+            select(Student, User)
+            .join(User, User.id == Student.user_id, isouter=True)
+            .where(Student.id == log.student_id)
+        )
+        row = student_row.one_or_none()
+        student_name: Optional[str] = None
+        if row:
+            student, user = row
+            student_name = student.student_name
+            if not student_name and user is not None:
+                student_name = user.email or user.phone
+            if not student_name:
+                student_name = student.admission_number
+
+        data = BehaviourResponse.model_validate(log)
+        return data.model_copy(update={"student_name": student_name})
+
+    async def _to_behaviour_responses(self, logs: list) -> list[BehaviourResponse]:
+        from app.models.student import Student
+        from app.models.user import User
+
+        if not logs:
+            return []
+
+        student_ids = list({log.student_id for log in logs})
+        rows = (
+            await self.db.execute(
+                select(Student.id, Student.admission_number, User.email, User.phone)
+                .join(User, User.id == Student.user_id, isouter=True)
+                .where(Student.id.in_(student_ids))
+            )
+        ).all()
+
+        name_map: dict[uuid.UUID, str] = {}
+        for row in rows:
+            derived = None
+            if row.email:
+                local = row.email.split("@", 1)[0]
+                cleaned = local.replace(".", " ").replace("_", " ").replace("-", " ").strip()
+                if cleaned:
+                    derived = " ".join(w.capitalize() for w in cleaned.split())
+            if not derived and row.phone:
+                derived = row.phone
+            if not derived:
+                derived = row.admission_number or "Student"
+            name_map[row.id] = derived
+
+        items: list[BehaviourResponse] = []
+        for log in logs:
+            data = BehaviourResponse.model_validate(log)
+            items.append(
+                data.model_copy(
+                    update={"student_name": name_map.get(log.student_id, "Student")}
+                )
+            )
+        return items
 
     async def list_logs(
         self,
-        student_id: uuid.UUID,
+        student_id: Optional[uuid.UUID],
+        incident_type: Optional[IncidentType],
+        standard_id: Optional[uuid.UUID],
+        section: Optional[str],
         current_user: CurrentUser,
     ) -> BehaviourListResponse:
         school_id = self._ensure_school(current_user)
+        section = section.strip() if section and section.strip() else None
 
         from app.models.student import Student
 
         if current_user.role == RoleEnum.PARENT:
+            if not student_id:
+                raise ValidationException("student_id is required for parent users")
             result = await self.db.execute(
                 select(Student.id).where(
                     and_(
@@ -185,19 +254,56 @@ class BehaviourService:
             if not result.scalar_one_or_none():
                 raise ForbiddenException("Not your child")
 
+        if current_user.role == RoleEnum.STUDENT:
+            result = await self.db.execute(
+                select(Student.id).where(
+                    and_(
+                        Student.user_id == current_user.id,
+                        Student.school_id == school_id,
+                    )
+                )
+            )
+            own_student_id = result.scalar_one_or_none()
+            if not own_student_id:
+                raise NotFoundException("Student")
+            if student_id and student_id != own_student_id:
+                raise ForbiddenException("You can only view your own behaviour logs")
+            student_id = own_student_id
+
         if current_user.role == RoleEnum.TEACHER:
             teacher_id = await _get_teacher_id(self.db, current_user.id, school_id)
             academic_year_id = (await get_active_year(school_id, self.db)).id
-            await _assert_teacher_owns_student_class(
-                self.db,
-                teacher_id=teacher_id,
-                student_id=student_id,
-                academic_year_id=academic_year_id,
+            if student_id:
+                await _assert_teacher_owns_student_class(
+                    self.db,
+                    teacher_id=teacher_id,
+                    student_id=student_id,
+                    academic_year_id=academic_year_id,
+                    school_id=school_id,
+                )
+            logs = await self.repo.list_for_teacher_scope(
                 school_id=school_id,
+                teacher_id=teacher_id,
+                academic_year_id=academic_year_id,
+                student_id=student_id,
+                incident_type=incident_type,
+                standard_id=standard_id,
+                section=section,
+                own_logs_only=True,
+            )
+            return BehaviourListResponse(
+                items=await self._to_behaviour_responses(logs),
+                total=len(logs),
             )
 
-        logs = await self.repo.list_by_student(school_id, student_id)
+        logs = await self.repo.list_by_school(
+            school_id=school_id,
+            student_id=student_id,
+            incident_type=incident_type,
+            standard_id=standard_id,
+            section=section,
+        )
         return BehaviourListResponse(
-            items=[BehaviourResponse.model_validate(l) for l in logs],
+            items=await self._to_behaviour_responses(logs),
             total=len(logs),
         )

@@ -71,6 +71,7 @@ class CurrentUserSchema(BaseModel):
     school_id: Optional[uuid.UUID]
     parent_id: Optional[uuid.UUID]
     permissions: list[str]
+    full_name: Optional[str]
     email: Optional[str]
     phone: Optional[str]
     is_active: bool

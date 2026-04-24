@@ -1,9 +1,13 @@
 import io
 import socket
 import warnings
+import hmac
+import hashlib
+import base64
 from pathlib import Path
 from urllib.parse import quote
 from typing import Optional
+from datetime import datetime, timezone
 
 warnings.filterwarnings(
     "ignore",
@@ -128,8 +132,7 @@ def generate_presigned_url(
     expiry: int = PRESIGNED_URL_EXPIRY,
 ) -> str:
     if _use_local_storage():
-        encoded_key = quote(key.lstrip("/"), safe="/")
-        return f"{settings.BACKEND_BASE_URL}/api/v1/files/{quote(bucket)}/{encoded_key}"
+        return generate_local_signed_file_url(bucket=bucket, key=key, expiry=expiry)
 
     try:
         client = get_minio_client()
@@ -143,8 +146,7 @@ def generate_presigned_url(
         logger.warning(
             f"Failed to generate MinIO presigned URL for {bucket}/{key}; using local URL: {e}"
         )
-        encoded_key = quote(key.lstrip("/"), safe="/")
-        return f"{settings.BACKEND_BASE_URL}/api/v1/files/{quote(bucket)}/{encoded_key}"
+        return generate_local_signed_file_url(bucket=bucket, key=key, expiry=expiry)
 
 
 def delete_file(bucket: str, key: str) -> None:
@@ -175,6 +177,45 @@ def file_exists(bucket: str, key: str) -> bool:
         return False
 
 
+def _sign_local_file_payload(bucket: str, key: str, expires_at: int) -> str:
+    payload = f"{bucket}:{key}:{expires_at}"
+    digest = hmac.new(
+        settings.SECRET_KEY.encode("utf-8"),
+        payload.encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+    return base64.urlsafe_b64encode(digest).decode("utf-8").rstrip("=")
+
+
+def generate_local_signed_file_url(
+    bucket: str,
+    key: str,
+    expiry: int = PRESIGNED_URL_EXPIRY,
+) -> str:
+    normalized_key = key.lstrip("/")
+    expires_at = int(datetime.now(timezone.utc).timestamp()) + int(expiry)
+    signature = _sign_local_file_payload(bucket, normalized_key, expires_at)
+    encoded_key = quote(normalized_key, safe="/")
+    return (
+        f"{settings.BACKEND_BASE_URL}/api/v1/files/local/{quote(bucket)}/{encoded_key}"
+        f"?exp={expires_at}&sig={signature}"
+    )
+
+
+def validate_local_file_signature(
+    bucket: str,
+    key: str,
+    expires_at: int,
+    signature: str,
+) -> bool:
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    if expires_at < now_ts:
+        return False
+
+    expected = _sign_local_file_payload(bucket, key.lstrip("/"), expires_at)
+    return hmac.compare_digest(expected, signature)
+
+
 class _MinioClientFacade:
     def get_minio_client(self) -> Minio:
         return get_minio_client()
@@ -198,6 +239,28 @@ class _MinioClientFacade:
         expiry: int = PRESIGNED_URL_EXPIRY,
     ) -> str:
         return generate_presigned_url(bucket=bucket, key=key, expiry=expiry)
+
+    def generate_local_signed_file_url(
+        self,
+        bucket: str,
+        key: str,
+        expiry: int = PRESIGNED_URL_EXPIRY,
+    ) -> str:
+        return generate_local_signed_file_url(bucket=bucket, key=key, expiry=expiry)
+
+    def validate_local_file_signature(
+        self,
+        bucket: str,
+        key: str,
+        expires_at: int,
+        signature: str,
+    ) -> bool:
+        return validate_local_file_signature(
+            bucket=bucket,
+            key=key,
+            expires_at=expires_at,
+            signature=signature,
+        )
 
     def delete_file(self, bucket: str, key: str) -> None:
         delete_file(bucket=bucket, key=key)

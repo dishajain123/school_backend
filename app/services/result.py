@@ -19,6 +19,8 @@ from app.repositories.notification import NotificationRepository
 from app.repositories.teacher_class_subject import TeacherClassSubjectRepository
 from app.schemas.result import (
     ExamCreate,
+    ExamBulkCreate,
+    ExamBulkCreateResponse,
     ExamResponse,
     ResultBulkCreate,
     ResultEntryResponse,
@@ -34,7 +36,14 @@ from app.services.assignment import _get_teacher_id, _assert_teacher_owns_class_
 from app.services.student import StudentService
 from app.integrations.minio_client import minio_client
 from app.integrations import pdf_service
-from app.utils.enums import RoleEnum, NotificationType, NotificationPriority, DocumentType, DocumentStatus
+from app.utils.enums import (
+    RoleEnum,
+    NotificationType,
+    NotificationPriority,
+    DocumentType,
+    DocumentStatus,
+    ExamType,
+)
 
 DOCUMENTS_BUCKET = "documents"
 
@@ -221,9 +230,16 @@ class ResultService:
                 for assignment in teacher_assignments
             )
             if not teaches_class_or_section:
-                raise ForbiddenException(
-                    "You can only view results for sections you taught"
+                historical_entries = await self.repo.list_results(
+                    school_id=school_id,
+                    student_id=student_id,
+                    exam_id=exam_id,
+                    entered_by=current_user.id,
                 )
+                if not historical_entries:
+                    raise ForbiddenException(
+                        "You can only view results for sections you taught or marks entered by you"
+                    )
 
         return published_only
 
@@ -233,6 +249,9 @@ class ResultService:
         current_user: CurrentUser,
     ) -> ExamResponse:
         school_id = self._ensure_school(current_user)
+        if current_user.role not in (RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN):
+            raise ForbiddenException("Only principal or superadmin can define exams")
+
         academic_year_id = body.academic_year_id
         if not academic_year_id:
             academic_year_id = (await get_active_year(school_id, self.db)).id
@@ -249,25 +268,11 @@ class ResultService:
         if existing:
             raise ConflictException("Exam already exists for this class and year")
 
-        if current_user.role == RoleEnum.TEACHER:
-            teacher_id = await _get_teacher_id(self.db, current_user.id, school_id)
-            assignment_repo = TeacherClassSubjectRepository(self.db)
-            assignments, _ = await assignment_repo.list_by_teacher(
-                teacher_id=teacher_id,
-                academic_year_id=academic_year_id,
-            )
-            can_create_for_standard = any(
-                assignment.standard_id == body.standard_id for assignment in assignments
-            )
-            if not can_create_for_standard:
-                raise ForbiddenException(
-                    "You can create exams only for classes assigned to you"
-                )
-
         exam = await self.repo.create_exam(
             {
                 "name": body.name,
-                "exam_type": body.exam_type,
+                # exam_type is kept internal for DB compatibility; API is name-driven.
+                "exam_type": ExamType.UNIT,
                 "standard_id": body.standard_id,
                 "academic_year_id": academic_year_id,
                 "start_date": body.start_date,
@@ -279,6 +284,94 @@ class ResultService:
         await self.db.commit()
         await self.db.refresh(exam)
         return ExamResponse.model_validate(exam)
+
+    async def create_exams_bulk(
+        self,
+        body: ExamBulkCreate,
+        current_user: CurrentUser,
+    ) -> ExamBulkCreateResponse:
+        school_id = self._ensure_school(current_user)
+        if current_user.role not in (RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN):
+            raise ForbiddenException("Only principal or superadmin can define exams")
+
+        if body.end_date < body.start_date:
+            raise ValidationException("end_date must be on or after start_date")
+
+        academic_year_id = body.academic_year_id
+        if not academic_year_id:
+            academic_year_id = (await get_active_year(school_id, self.db)).id
+
+        from app.models.masters import Standard
+
+        standard_ids: list[uuid.UUID] = []
+        if body.apply_to_all_standards:
+            result = await self.db.execute(
+                select(Standard.id).where(
+                    and_(
+                        Standard.school_id == school_id,
+                        Standard.academic_year_id == academic_year_id,
+                    )
+                )
+            )
+            standard_ids = [row[0] for row in result.all()]
+            if not standard_ids:
+                raise ValidationException("No classes found for selected academic year")
+        else:
+            standard_ids = list(dict.fromkeys(body.standard_ids or []))
+            if not standard_ids:
+                raise ValidationException(
+                    "standard_ids is required when apply_to_all_standards is false"
+                )
+            existing_standard_rows = await self.db.execute(
+                select(Standard.id).where(
+                    and_(
+                        Standard.id.in_(standard_ids),
+                        Standard.school_id == school_id,
+                    )
+                )
+            )
+            existing_standard_ids = {row[0] for row in existing_standard_rows.all()}
+            missing = [sid for sid in standard_ids if sid not in existing_standard_ids]
+            if missing:
+                raise ValidationException("One or more class IDs are invalid")
+
+        created: list[ExamResponse] = []
+        skipped_standard_ids: list[uuid.UUID] = []
+
+        for standard_id in standard_ids:
+            duplicate = await self.repo.get_exam_duplicate(
+                school_id=school_id,
+                standard_id=standard_id,
+                academic_year_id=academic_year_id,
+                name=body.name,
+            )
+            if duplicate:
+                skipped_standard_ids.append(standard_id)
+                continue
+
+            exam = await self.repo.create_exam(
+                {
+                    "name": body.name,
+                    # exam_type is kept internal for DB compatibility; API is name-driven.
+                    "exam_type": ExamType.UNIT,
+                    "standard_id": standard_id,
+                    "academic_year_id": academic_year_id,
+                    "start_date": body.start_date,
+                    "end_date": body.end_date,
+                    "created_by": current_user.id,
+                    "school_id": school_id,
+                }
+            )
+            created.append(ExamResponse.model_validate(exam))
+
+        await self.db.commit()
+
+        return ExamBulkCreateResponse(
+            created=created,
+            created_count=len(created),
+            skipped_standard_ids=skipped_standard_ids,
+            skipped_count=len(skipped_standard_ids),
+        )
 
     async def list_exams(
         self,
@@ -292,6 +385,7 @@ class ResultService:
         from app.models.student import Student
 
         resolved_student_id = student_id
+        published_only = False
 
         if current_user.role == RoleEnum.STUDENT:
             result = await self.db.execute(
@@ -308,6 +402,7 @@ class ResultService:
             if resolved_student_id and resolved_student_id != own_student_id:
                 raise ForbiddenException("You can only view your own exams")
             resolved_student_id = own_student_id
+            published_only = True
 
         elif current_user.role == RoleEnum.PARENT:
             if resolved_student_id is None:
@@ -323,6 +418,7 @@ class ResultService:
             )
             if not result.scalar_one_or_none():
                 raise ForbiddenException("Not your child")
+            published_only = True
 
         elif resolved_student_id is not None:
             exists = await self.db.execute(
@@ -337,6 +433,7 @@ class ResultService:
                 raise NotFoundException("Student")
 
         teacher_standard_ids: Optional[list[uuid.UUID]] = None
+        teacher_id: Optional[uuid.UUID] = None
         if current_user.role == RoleEnum.TEACHER:
             teacher_id = await _get_teacher_id(self.db, current_user.id, school_id)
             assignment_repo = TeacherClassSubjectRepository(self.db)
@@ -348,15 +445,58 @@ class ResultService:
                 {assignment.standard_id for assignment in assignments}
             )
             if standard_id is not None and standard_id not in teacher_standard_ids:
-                raise ForbiddenException("You can only view exams for assigned classes")
+                # Allow historical review only when this teacher has entered marks
+                # for exams in that class.
+                historical = await self.repo.list_exams_entered_by(
+                    school_id=school_id,
+                    entered_by=current_user.id,
+                    academic_year_id=academic_year_id,
+                    standard_id=standard_id,
+                    student_id=resolved_student_id,
+                    published_only=published_only,
+                )
+                if not historical:
+                    raise ForbiddenException(
+                        "You can only view exams for assigned classes or classes where you entered marks"
+                    )
+                exams = historical
+                return [ExamResponse.model_validate(exam) for exam in exams]
 
-        exams = await self.repo.list_exams(
-            school_id=school_id,
-            academic_year_id=academic_year_id,
-            standard_id=standard_id,
-            standard_ids=teacher_standard_ids if standard_id is None else None,
-            student_id=resolved_student_id,
-        )
+        exams: list = []
+        if current_user.role == RoleEnum.TEACHER:
+            assigned_exams = await self.repo.list_exams(
+                school_id=school_id,
+                academic_year_id=academic_year_id,
+                standard_id=standard_id,
+                standard_ids=teacher_standard_ids if standard_id is None else None,
+                student_id=resolved_student_id,
+                published_only=published_only,
+            )
+            historical_exams = await self.repo.list_exams_entered_by(
+                school_id=school_id,
+                entered_by=current_user.id,
+                academic_year_id=academic_year_id,
+                standard_id=standard_id,
+                student_id=resolved_student_id,
+                published_only=published_only,
+            )
+            by_id = {exam.id: exam for exam in assigned_exams}
+            for exam in historical_exams:
+                by_id.setdefault(exam.id, exam)
+            exams = sorted(
+                by_id.values(),
+                key=lambda exam: (exam.start_date, exam.created_at),
+                reverse=True,
+            )
+        else:
+            exams = await self.repo.list_exams(
+                school_id=school_id,
+                academic_year_id=academic_year_id,
+                standard_id=standard_id,
+                standard_ids=teacher_standard_ids if standard_id is None else None,
+                student_id=resolved_student_id,
+                published_only=published_only,
+            )
         return [ExamResponse.model_validate(exam) for exam in exams]
 
     async def bulk_enter_results(
@@ -365,6 +505,8 @@ class ResultService:
         current_user: CurrentUser,
     ) -> ResultListResponse:
         school_id = self._ensure_school(current_user)
+        if current_user.role != RoleEnum.TEACHER:
+            raise ForbiddenException("Only teachers can enter results")
 
         exam = await self.repo.get_exam_by_id(body.exam_id, school_id)
         if not exam:
@@ -416,11 +558,6 @@ class ResultService:
             existing = await self.repo.get_result_existing(
                 body.exam_id, entry.student_id, entry.subject_id
             )
-            if existing:
-                raise ConflictException(
-                    "Result already exists for this student and subject"
-                )
-
             percentage = round((entry.marks_obtained / entry.max_marks) * 100, 2)
 
             grade_row = await self.db.execute(
@@ -436,20 +573,26 @@ class ResultService:
             if not grade:
                 raise ValidationException("No grade mapping found for percentage")
 
-            result = await self.repo.create_result(
-                {
-                    "exam_id": body.exam_id,
-                    "student_id": entry.student_id,
-                    "subject_id": entry.subject_id,
-                    "marks_obtained": entry.marks_obtained,
-                    "max_marks": entry.max_marks,
-                    "percentage": percentage,
-                    "grade_id": grade.id,
-                    "is_published": False,
-                    "entered_by": current_user.id,
-                    "school_id": school_id,
-                }
-            )
+            payload = {
+                "marks_obtained": entry.marks_obtained,
+                "max_marks": entry.max_marks,
+                "percentage": percentage,
+                "grade_id": grade.id,
+                "entered_by": current_user.id,
+            }
+            if existing:
+                result = await self.repo.update_result(existing, payload)
+            else:
+                result = await self.repo.create_result(
+                    {
+                        "exam_id": body.exam_id,
+                        "student_id": entry.student_id,
+                        "subject_id": entry.subject_id,
+                        "is_published": False,
+                        "school_id": school_id,
+                        **payload,
+                    }
+                )
             results.append(ResultEntryResponse.model_validate(result))
 
         await self.db.commit()
@@ -462,6 +605,8 @@ class ResultService:
         background_tasks: BackgroundTasks,
     ) -> int:
         school_id = self._ensure_school(current_user)
+        if current_user.role not in (RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN):
+            raise ForbiddenException("Only principal or superadmin can publish results")
 
         exam = await self.repo.get_exam_by_id(exam_id, school_id)
         if not exam:
@@ -498,13 +643,8 @@ class ResultService:
             student_id=student_id,
             exam_id=exam_id,
             published_only=published_only,
+            entered_by=current_user.id if current_user.role == RoleEnum.TEACHER else None,
         )
-        if current_user.role == RoleEnum.TEACHER:
-            results = [r for r in results if r.entered_by == current_user.id]
-            if not results:
-                raise ForbiddenException(
-                    "You can only view results that were entered by you"
-                )
         report_card_url = self._resolve_report_card_url(
             school_id=school_id,
             student_id=student_id,
@@ -691,13 +831,6 @@ class ResultService:
     ) -> ResultDistributionResponse:
         school_id = self._ensure_school(current_user)
 
-        if current_user.role not in (
-            RoleEnum.PRINCIPAL,
-            RoleEnum.TRUSTEE,
-            RoleEnum.SUPERADMIN,
-        ):
-            raise ForbiddenException("Only management can view exam distribution")
-
         exam = await self.repo.get_exam_by_id(exam_id, school_id)
         if not exam:
             raise NotFoundException("Exam")
@@ -705,10 +838,52 @@ class ResultService:
         rows = await self.repo.list_results_by_exam(
             school_id=school_id,
             exam_id=exam_id,
+            entered_by=current_user.id if current_user.role == RoleEnum.TEACHER else None,
         )
+        teacher_has_class_scope = False
+        teacher_assigned_sections: set[str] = set()
+
+        if current_user.role == RoleEnum.TEACHER:
+            teacher_id = await _get_teacher_id(self.db, current_user.id, school_id)
+            assignment_repo = TeacherClassSubjectRepository(self.db)
+            assignments, _ = await assignment_repo.list_by_teacher(
+                teacher_id=teacher_id,
+                academic_year_id=exam.academic_year_id,
+            )
+            class_assignments = [
+                assignment
+                for assignment in assignments
+                if assignment.standard_id == exam.standard_id
+            ]
+            if class_assignments:
+                teacher_assigned_sections = {
+                    (assignment.section or "").strip()
+                    for assignment in class_assignments
+                    if (assignment.section or "").strip()
+                }
+                teacher_has_class_scope = any(
+                    not (assignment.section or "").strip()
+                    for assignment in class_assignments
+                )
+            else:
+                # No current assignment for this class: allow teacher to review
+                # only historically entered marks (rows already scoped by entered_by).
+                teacher_has_class_scope = True
+        elif current_user.role not in (
+            RoleEnum.PRINCIPAL,
+            RoleEnum.TRUSTEE,
+            RoleEnum.SUPERADMIN,
+        ):
+            raise ForbiddenException("Only management or assigned teachers can view exam distribution")
 
         normalized_section = section.strip() if section and section.strip() else None
         if normalized_section is not None:
+            if current_user.role == RoleEnum.TEACHER:
+                if (
+                    not teacher_has_class_scope
+                    and normalized_section not in teacher_assigned_sections
+                ):
+                    raise ForbiddenException("You can only view your assigned sections")
             rows = [
                 row for row in rows
                 if row.student and (row.student.section or "").strip() == normalized_section
@@ -811,15 +986,27 @@ class ResultService:
                 for assignment in assignments
                 if assignment.standard_id == standard_id
             ]
-            if not class_assignments:
-                raise ForbiddenException("You can only view sections for assigned classes")
             # If teacher assignments are section-scoped, restrict output accordingly.
             assigned_sections = {
                 (assignment.section or "").strip()
                 for assignment in class_assignments
                 if (assignment.section or "").strip()
             }
+            historical_sections = await self.repo.list_sections_for_standard(
+                school_id=school_id,
+                standard_id=standard_id,
+                academic_year_id=academic_year_id,
+                entered_by=current_user.id,
+            )
+
+            if not class_assignments and not historical_sections:
+                raise ForbiddenException(
+                    "You can only view sections for assigned classes or classes where you entered marks"
+                )
+
             if assigned_sections:
                 sections = [s for s in sections if s in assigned_sections]
+
+            sections = sorted(set(sections).union(historical_sections), key=str.lower)
 
         return sections

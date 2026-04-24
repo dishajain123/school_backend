@@ -19,6 +19,7 @@ from app.core.exceptions import (
     ValidationException,
 )
 from app.utils.enums import RoleEnum, PromotionStatus
+from app.services.academic_year import get_active_year
 
 
 async def assert_parent_owns_student(
@@ -383,6 +384,8 @@ class StudentService:
         school_id: uuid.UUID,
         data: StudentPromotionUpdate,
         current_user: CurrentUser,
+        *,
+        commit: bool = True,
     ) -> Student:
         student = await self.repo.get_by_id(student_id, school_id)
         if not student:
@@ -468,6 +471,7 @@ class StudentService:
                         "school_id": school_id,
                     }
                 )
+        if commit:
             await self.db.commit()
 
         updated = await self.repo.get_by_id(student_id, school_id)
@@ -490,16 +494,22 @@ class StudentService:
             unique_ids.append(sid)
 
         updated_items: list[Student] = []
-        for sid in unique_ids:
-            updated = await self.update_promotion_status(
-                student_id=sid,
-                school_id=school_id,
-                data=data,
-                current_user=current_user,
-            )
-            if updated:
-                updated_items.append(updated)
-        return updated_items
+        try:
+            for sid in unique_ids:
+                updated = await self.update_promotion_status(
+                    student_id=sid,
+                    school_id=school_id,
+                    data=data,
+                    current_user=current_user,
+                    commit=False,
+                )
+                if updated:
+                    updated_items.append(updated)
+            await self.db.commit()
+            return updated_items
+        except Exception:
+            await self.db.rollback()
+            raise
 
     async def bulk_update_promotion_status_by_section(
         self,
@@ -513,6 +523,9 @@ class StudentService:
     ) -> list[Student]:
         normalized_section = self._normalize_section(section)
         excluded = set(excluded_student_ids or [])
+        resolved_year_id = academic_year_id
+        if resolved_year_id is None:
+            resolved_year_id = (await get_active_year(school_id, self.db)).id
 
         page = 1
         page_size = 100
@@ -523,7 +536,7 @@ class StudentService:
                 school_id=school_id,
                 standard_id=standard_id,
                 section=normalized_section,
-                academic_year_id=academic_year_id,
+                academic_year_id=resolved_year_id,
                 page=page,
                 page_size=page_size,
             )

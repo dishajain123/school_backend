@@ -4,7 +4,8 @@ import uuid
 from datetime import date
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import String, Date, Numeric, ForeignKey, Enum, UniqueConstraint
+from sqlalchemy import String, Date, Numeric, ForeignKey, UniqueConstraint
+from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -27,6 +28,7 @@ class FeeStructure(BaseModel):
             "standard_id",
             "academic_year_id",
             "fee_category",
+            "custom_fee_head",
             name="uq_fee_structure_category_standard_year_school",
         ),
     )
@@ -44,9 +46,15 @@ class FeeStructure(BaseModel):
         index=True,
     )
     fee_category: Mapped[FeeCategory] = mapped_column(
-        Enum(FeeCategory, name="fee_category_enum"),
+        SAEnum(FeeCategory, name="fee_category_enum"),
         nullable=False,
         index=True,
+    )
+    custom_fee_head: Mapped[str] = mapped_column(
+        String(120),
+        nullable=False,
+        default="",
+        server_default="",
     )
     amount: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     due_date: Mapped[date] = mapped_column(Date, nullable=False)
@@ -74,6 +82,13 @@ class FeeStructure(BaseModel):
 
 class FeeLedger(BaseModel):
     __tablename__ = "fee_ledger"
+    __table_args__ = (
+        UniqueConstraint(
+            "student_id",
+            "fee_structure_id",
+            name="uq_fee_ledger_student_structure",
+        ),
+    )
 
     student_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -92,7 +107,7 @@ class FeeLedger(BaseModel):
         Numeric(10, 2), nullable=False, default=0, server_default="0"
     )
     status: Mapped[FeeStatus] = mapped_column(
-        Enum(FeeStatus, name="fee_status_enum"),
+        SAEnum(FeeStatus, name="fee_status_enum"),
         nullable=False,
         default=FeeStatus.PENDING,
         server_default=FeeStatus.PENDING.value,
@@ -108,7 +123,10 @@ class FeeLedger(BaseModel):
         "Student", foreign_keys=[student_id], lazy="select"
     )
     fee_structure: Mapped["FeeStructure"] = relationship(
-        "FeeStructure", foreign_keys=[fee_structure_id], back_populates="ledgers", lazy="select"
+        "FeeStructure",
+        foreign_keys=[fee_structure_id],
+        back_populates="ledgers",
+        lazy="select",
     )
     school: Mapped["School"] = relationship(
         "School", foreign_keys=[school_id], lazy="select"

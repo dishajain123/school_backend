@@ -41,6 +41,8 @@ class DiaryResponse(BaseModel):
     teacher_id: uuid.UUID
     standard_id: uuid.UUID
     subject_id: uuid.UUID
+    subject_name: Optional[str] = None
+    created_by_name: Optional[str] = None
     academic_year_id: uuid.UUID
     school_id: uuid.UUID
     created_at: datetime

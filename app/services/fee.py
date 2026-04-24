@@ -2,19 +2,28 @@ import uuid
 from datetime import date, datetime, timezone
 from typing import Optional
 
-from fastapi import BackgroundTasks, HTTPException
+from fastapi import HTTPException
 from sqlalchemy import select, and_, case, distinct, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import CurrentUser
-from app.core.exceptions import ForbiddenException, ConflictException, ValidationException, NotFoundException
+from app.core.exceptions import (
+    ForbiddenException,
+    ValidationException,
+    NotFoundException,
+)
 from app.models.fee import FeeLedger, FeeStructure
+from app.models.masters import Standard
 from app.models.payment import Payment
 from app.models.student import Student
 from app.repositories.fee import FeeRepository
 from app.schemas.fee import (
-    FeeStructureCreate,
     FeeStructureResponse,
+    FeeStructureListResponse,
+    FeeStructureBatchCreate,
+    FeeStructureBatchResponse,
+    FeeStructureUpdate,
+    FeeStructureUpdateResponse,
     LedgerGenerateRequest,
     LedgerGenerateResponse,
     PaymentCreate,
@@ -32,7 +41,7 @@ from app.schemas.fee import (
 from app.services.academic_year import get_active_year
 from app.integrations.minio_client import minio_client
 from app.integrations import pdf_service
-from app.utils.enums import RoleEnum, FeeStatus
+from app.utils.enums import RoleEnum, FeeStatus, FeeCategory
 
 RECEIPTS_BUCKET = "receipts"
 
@@ -42,44 +51,309 @@ class FeeService:
         self.db = db
         self.repo = FeeRepository(db)
 
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
     def _ensure_school(self, current_user: CurrentUser) -> uuid.UUID:
         if not current_user.school_id:
             raise ValidationException("school_id is required")
         return current_user.school_id
 
-    async def create_structure(
-        self,
-        body: FeeStructureCreate,
-        current_user: CurrentUser,
-    ) -> FeeStructureResponse:
-        school_id = self._ensure_school(current_user)
-        academic_year_id = body.academic_year_id
-        if not academic_year_id:
-            academic_year_id = (await get_active_year(school_id, self.db)).id
+    async def _resolve_academic_year(
+        self, school_id: uuid.UUID, academic_year_id: Optional[uuid.UUID]
+    ) -> uuid.UUID:
+        if academic_year_id:
+            return academic_year_id
+        return (await get_active_year(school_id, self.db)).id
 
+    async def _assert_student_access(
+        self,
+        school_id: uuid.UUID,
+        student_id: uuid.UUID,
+        current_user: CurrentUser,
+    ) -> None:
+        """Raise ForbiddenException if current_user cannot access this student's data."""
+        if current_user.role == RoleEnum.STUDENT:
+            result = await self.db.execute(
+                select(Student.id).where(
+                    and_(
+                        Student.user_id == current_user.id,
+                        Student.school_id == school_id,
+                    )
+                )
+            )
+            own_id = result.scalar_one_or_none()
+            if not own_id or own_id != student_id:
+                raise ForbiddenException("You can only view your own fees")
+
+        elif current_user.role == RoleEnum.PARENT:
+            result = await self.db.execute(
+                select(Student.id).where(
+                    and_(
+                        Student.id == student_id,
+                        Student.parent_id == current_user.parent_id,
+                        Student.school_id == school_id,
+                    )
+                )
+            )
+            if not result.scalar_one_or_none():
+                raise ForbiddenException("Not your child")
+
+    @staticmethod
+    def _normalize_custom_fee_head(custom_fee_head: Optional[str]) -> str:
+        if not custom_fee_head:
+            return ""
+        return " ".join(custom_fee_head.strip().split())
+
+    @staticmethod
+    def _compute_ledger_status(total_amount: float, paid_amount: float) -> FeeStatus:
+        if paid_amount <= 0:
+            return FeeStatus.PENDING
+        if paid_amount >= total_amount - 0.01:
+            return FeeStatus.PAID
+        return FeeStatus.PARTIAL
+
+    async def _sync_ledgers_for_structure(
+        self,
+        *,
+        school_id: uuid.UUID,
+        structure: FeeStructure,
+    ) -> None:
+        ledgers = await self.repo.list_ledgers_for_structure(
+            school_id=school_id,
+            fee_structure_id=structure.id,
+        )
+        base_total = float(structure.amount)
+        for ledger in ledgers:
+            paid_amount = float(ledger.paid_amount)
+            total_amount = max(base_total, paid_amount)
+            status = self._compute_ledger_status(total_amount=total_amount, paid_amount=paid_amount)
+            await self.repo.update_ledger(
+                ledger,
+                {
+                    "total_amount": total_amount,
+                    "status": status,
+                },
+            )
+
+    async def _upsert_structure(
+        self,
+        *,
+        school_id: uuid.UUID,
+        standard_id: uuid.UUID,
+        academic_year_id: uuid.UUID,
+        fee_category: FeeCategory,
+        custom_fee_head: str,
+        amount: float,
+        due_date: date,
+        description: Optional[str],
+    ) -> tuple[FeeStructure, bool]:
         existing = await self.repo.get_structure_duplicate(
             school_id=school_id,
-            standard_id=body.standard_id,
+            standard_id=standard_id,
             academic_year_id=academic_year_id,
-            fee_category=body.fee_category,
+            fee_category=fee_category,
+            custom_fee_head=custom_fee_head,
         )
         if existing:
-            raise ConflictException("Fee structure already exists for this class and year")
+            structure = await self.repo.update_structure(
+                existing,
+                {
+                    "amount": amount,
+                    "due_date": due_date,
+                    "description": description,
+                },
+            )
+            await self._sync_ledgers_for_structure(school_id=school_id, structure=structure)
+            return structure, False
 
         structure = await self.repo.create_structure(
             {
-                "standard_id": body.standard_id,
+                "standard_id": standard_id,
                 "academic_year_id": academic_year_id,
-                "fee_category": body.fee_category,
-                "amount": body.amount,
-                "due_date": body.due_date,
-                "description": body.description,
+                "fee_category": fee_category,
+                "custom_fee_head": custom_fee_head,
+                "amount": amount,
+                "due_date": due_date,
+                "description": description,
                 "school_id": school_id,
             }
         )
+        return structure, True
+
+    # ------------------------------------------------------------------
+    # Fee Structure
+    # ------------------------------------------------------------------
+
+    async def create_structures_batch(
+        self,
+        body: FeeStructureBatchCreate,
+        current_user: CurrentUser,
+    ) -> FeeStructureBatchResponse:
+        school_id = self._ensure_school(current_user)
+        academic_year_id = await self._resolve_academic_year(
+            school_id, body.academic_year_id
+        )
+
+        if body.apply_to_all_classes:
+            standards_result = await self.db.execute(
+                select(Standard.id).where(
+                    and_(
+                        Standard.school_id == school_id,
+                        Standard.academic_year_id == academic_year_id,
+                    )
+                )
+            )
+            target_standard_ids = [row[0] for row in standards_result.all()]
+        elif body.standard_ids:
+            target_standard_ids = body.standard_ids
+        elif body.standard_id:
+            target_standard_ids = [body.standard_id]
+        else:
+            raise ValidationException(
+                "standard_id or standard_ids is required (or set apply_to_all_classes=true)"
+            )
+
+        if not target_standard_ids:
+            raise ValidationException("No classes found to create fee structure")
+
+        created = 0
+        updated = 0
+        structures: list[FeeStructure] = []
+        seen_structure_ids: set[uuid.UUID] = set()
+        for standard_id in target_standard_ids:
+            for fee_head in body.fee_heads:
+                custom_fee_head = self._normalize_custom_fee_head(fee_head.name)
+                structure, is_created = await self._upsert_structure(
+                    school_id=school_id,
+                    standard_id=standard_id,
+                    academic_year_id=academic_year_id,
+                    fee_category=FeeCategory.MISCELLANEOUS,
+                    custom_fee_head=custom_fee_head,
+                    amount=fee_head.amount,
+                    due_date=body.due_date,
+                    description=body.description,
+                )
+                if structure.id not in seen_structure_ids:
+                    structures.append(structure)
+                    seen_structure_ids.add(structure.id)
+                if is_created:
+                    created += 1
+                else:
+                    updated += 1
+
         await self.db.commit()
-        await self.db.refresh(structure)
-        return FeeStructureResponse.model_validate(structure)
+        for structure in structures:
+            await self.db.refresh(structure)
+
+        return FeeStructureBatchResponse(
+            items=[FeeStructureResponse.model_validate(item) for item in structures],
+            total=len(structures),
+            created=created,
+            updated=updated,
+        )
+
+    async def update_structure(
+        self,
+        *,
+        structure_id: uuid.UUID,
+        body: FeeStructureUpdate,
+        current_user: CurrentUser,
+    ) -> FeeStructureUpdateResponse:
+        school_id = self._ensure_school(current_user)
+        source_structure = await self.repo.get_structure_by_id(structure_id, school_id)
+        if not source_structure:
+            raise NotFoundException("Fee structure")
+
+        target_structures = [source_structure]
+        if body.apply_to_all_classes:
+            matching = await self.db.execute(
+                select(FeeStructure).where(
+                    and_(
+                        FeeStructure.school_id == school_id,
+                        FeeStructure.academic_year_id == source_structure.academic_year_id,
+                        FeeStructure.fee_category == source_structure.fee_category,
+                        FeeStructure.custom_fee_head == (source_structure.custom_fee_head or ""),
+                    )
+                )
+            )
+            target_structures = list(matching.scalars().all())
+
+        requested_fields = body.model_fields_set
+        if not requested_fields.intersection({"custom_fee_head", "amount", "due_date", "description"}):
+            raise ValidationException("Provide at least one field to update")
+
+        updated_items: list[FeeStructure] = []
+        for structure in target_structures:
+            next_head = (
+                self._normalize_custom_fee_head(body.custom_fee_head)
+                if "custom_fee_head" in requested_fields
+                else (structure.custom_fee_head or "")
+            )
+
+            if next_head != (structure.custom_fee_head or ""):
+                duplicate = await self.repo.get_structure_duplicate(
+                    school_id=school_id,
+                    standard_id=structure.standard_id,
+                    academic_year_id=structure.academic_year_id,
+                    fee_category=structure.fee_category,
+                    custom_fee_head=next_head,
+                )
+                if duplicate and duplicate.id != structure.id:
+                    raise ValidationException(
+                        f"Fee head '{next_head}' already exists for one of the selected classes"
+                    )
+
+            updated_structure = await self.repo.update_structure(
+                structure,
+                {
+                    "custom_fee_head": next_head,
+                    "amount": body.amount if "amount" in requested_fields else structure.amount,
+                    "due_date": body.due_date if "due_date" in requested_fields else structure.due_date,
+                    "description": body.description if "description" in requested_fields else structure.description,
+                },
+            )
+            await self._sync_ledgers_for_structure(
+                school_id=school_id,
+                structure=updated_structure,
+            )
+            updated_items.append(updated_structure)
+
+        await self.db.commit()
+        for item in updated_items:
+            await self.db.refresh(item)
+
+        return FeeStructureUpdateResponse(
+            items=[FeeStructureResponse.model_validate(item) for item in updated_items],
+            total=len(updated_items),
+        )
+
+    async def list_structures(
+        self,
+        *,
+        standard_id: uuid.UUID,
+        academic_year_id: Optional[uuid.UUID],
+        current_user: CurrentUser,
+    ) -> FeeStructureListResponse:
+        school_id = self._ensure_school(current_user)
+        resolved_year_id = await self._resolve_academic_year(
+            school_id, academic_year_id
+        )
+        structures = await self.repo.list_structures_for_standard(
+            school_id=school_id,
+            standard_id=standard_id,
+            academic_year_id=resolved_year_id,
+        )
+        items = [
+            FeeStructureResponse.model_validate(structure)
+            for structure in structures
+        ]
+        return FeeStructureListResponse(items=items, total=len(items))
+
+    # ------------------------------------------------------------------
+    # Ledger Generation
+    # ------------------------------------------------------------------
 
     async def generate_ledger(
         self,
@@ -87,17 +361,35 @@ class FeeService:
         current_user: CurrentUser,
     ) -> LedgerGenerateResponse:
         school_id = self._ensure_school(current_user)
-        academic_year_id = body.academic_year_id
-        if not academic_year_id:
-            academic_year_id = (await get_active_year(school_id, self.db)).id
+        academic_year_id = await self._resolve_academic_year(
+            school_id, body.academic_year_id
+        )
+        created_structures = 0
+        updated_structures = 0
 
-        from app.models.student import Student
+        for custom_head in body.custom_fee_heads:
+            custom_name = self._normalize_custom_fee_head(custom_head.name)
+            _, created = await self._upsert_structure(
+                school_id=school_id,
+                standard_id=body.standard_id,
+                academic_year_id=academic_year_id,
+                fee_category=FeeCategory.MISCELLANEOUS,
+                custom_fee_head=custom_name,
+                amount=custom_head.amount,
+                due_date=custom_head.due_date or date.today(),
+                description=custom_head.description,
+            )
+            if created:
+                created_structures += 1
+            else:
+                updated_structures += 1
 
         students_result = await self.db.execute(
             select(Student.id).where(
                 and_(
                     Student.school_id == school_id,
                     Student.standard_id == body.standard_id,
+                    Student.academic_year_id == academic_year_id,
                 )
             )
         )
@@ -135,7 +427,16 @@ class FeeService:
                 created += 1
 
         await self.db.commit()
-        return LedgerGenerateResponse(created=created, skipped=skipped)
+        return LedgerGenerateResponse(
+            created=created,
+            skipped=skipped,
+            created_structures=created_structures,
+            updated_structures=updated_structures,
+        )
+
+    # ------------------------------------------------------------------
+    # Payment Recording
+    # ------------------------------------------------------------------
 
     async def record_payment(
         self,
@@ -159,33 +460,35 @@ class FeeService:
         if new_paid < 0:
             raise ValidationException("Invalid payment amount")
         if new_paid > float(ledger.total_amount) + 0.01:
-            raise HTTPException(status_code=422, detail="Payment exceeds total amount")
+            raise HTTPException(
+                status_code=422,
+                detail=f"Payment would exceed total amount. "
+                       f"Outstanding: {float(ledger.total_amount) - float(ledger.paid_amount):.2f}",
+            )
 
         if new_paid == 0:
             new_status = FeeStatus.PENDING
-        elif new_paid < float(ledger.total_amount):
-            new_status = FeeStatus.PARTIAL
-        else:
+        elif new_paid >= float(ledger.total_amount) - 0.01:
             new_status = FeeStatus.PAID
+        else:
+            new_status = FeeStatus.PARTIAL
 
         late_fee_applied = payment_date > structure.due_date
 
-        # Generate receipt PDF
-        receipt_html = f"""
-        <html><body>
-        <h2>Fee Receipt</h2>
-        <p>Student ID: {body.student_id}</p>
-        <p>Fee Category: {structure.fee_category}</p>
-        <p>Amount Paid: {body.amount}</p>
-        <p>Payment Date: {payment_date}</p>
-        <p>Mode: {body.payment_mode}</p>
-        <p>Reference: {body.reference_number or '-'}</p>
-        </body></html>
-        """
-        pdf_bytes = pdf_service.generate_pdf(receipt_html)
-        receipt_key = (
-            f"{school_id}/{body.student_id}/{uuid.uuid4()}_fee_receipt.pdf"
+        receipt_html = _build_receipt_html(
+            student_id=body.student_id,
+            fee_head=(structure.custom_fee_head or structure.fee_category.value),
+            amount=body.amount,
+            payment_date=payment_date,
+            payment_mode=body.payment_mode,
+            reference_number=body.reference_number,
+            total_amount=float(ledger.total_amount),
+            paid_so_far=new_paid,
+            due_date=structure.due_date,
+            late_fee_applied=late_fee_applied,
         )
+        pdf_bytes = pdf_service.generate_pdf(receipt_html)
+        receipt_key = f"{school_id}/{body.student_id}/{uuid.uuid4()}_fee_receipt.pdf"
         minio_client.upload_file(
             bucket=RECEIPTS_BUCKET,
             key=receipt_key,
@@ -218,52 +521,49 @@ class FeeService:
         await self.db.refresh(payment)
         return PaymentResponse.model_validate(payment)
 
+    # ------------------------------------------------------------------
+    # Fee Dashboard (student ledger view)
+    # ------------------------------------------------------------------
+
     async def fee_dashboard(
         self,
         student_id: uuid.UUID,
         current_user: CurrentUser,
+        academic_year_id: Optional[uuid.UUID] = None,
     ) -> FeeDashboardResponse:
         school_id = self._ensure_school(current_user)
-
-        from app.models.student import Student
-
-        if current_user.role == RoleEnum.STUDENT:
-            result = await self.db.execute(
-                select(Student.id).where(
-                    and_(
-                        Student.user_id == current_user.id,
-                        Student.school_id == school_id,
-                    )
-                )
-            )
-            own_student_id = result.scalar_one_or_none()
-            if not own_student_id or own_student_id != student_id:
-                raise ForbiddenException("You can only view your own fees")
-
-        elif current_user.role == RoleEnum.PARENT:
-            result = await self.db.execute(
-                select(Student.id).where(
-                    and_(
-                        Student.id == student_id,
-                        Student.parent_id == current_user.parent_id,
-                        Student.school_id == school_id,
-                    )
-                )
-            )
-            if not result.scalar_one_or_none():
-                raise ForbiddenException("Not your child")
+        await self._assert_student_access(school_id, student_id, current_user)
 
         ledgers = await self.repo.list_ledger_for_student(school_id, student_id)
+
+        # Optional: filter by academic year via the nested fee_structure relation
+        resolved_year = academic_year_id
+        if resolved_year is None and current_user.role in (RoleEnum.STUDENT, RoleEnum.PARENT):
+            resolved_year = await self._resolve_academic_year(school_id, None)
+        if resolved_year:
+            ledgers = [
+                l for l in ledgers
+                if l.fee_structure and l.fee_structure.academic_year_id == resolved_year
+            ]
+
         items = []
         for ledger in ledgers:
             outstanding = float(ledger.total_amount) - float(ledger.paid_amount)
             data = FeeLedgerResponse.model_validate(ledger)
             data.outstanding_amount = max(outstanding, 0.0)
+            if ledger.fee_structure:
+                data.fee_category = ledger.fee_structure.fee_category
+                data.custom_fee_head = ledger.fee_structure.custom_fee_head or None
+                data.due_date = ledger.fee_structure.due_date
+                data.fee_description = ledger.fee_structure.description
             items.append(data)
 
         return FeeDashboardResponse(items=items, total=len(items))
 
-    
+    # ------------------------------------------------------------------
+    # Payment List
+    # ------------------------------------------------------------------
+
     async def list_payments(
         self,
         fee_ledger_id: uuid.UUID,
@@ -275,39 +575,15 @@ class FeeService:
         if not ledger:
             raise NotFoundException("Fee ledger")
 
-        from app.models.student import Student
+        await self._assert_student_access(school_id, ledger.student_id, current_user)
 
-        if current_user.role == RoleEnum.STUDENT:
-            result = await self.db.execute(
-                select(Student.id).where(
-                    and_(
-                        Student.user_id == current_user.id,
-                        Student.school_id == school_id,
-                    )
-                )
-            )
-            own_student_id = result.scalar_one_or_none()
-            if not own_student_id or own_student_id != ledger.student_id:
-                raise ForbiddenException("You can only view your own payments")
-
-        elif current_user.role == RoleEnum.PARENT:
-            result = await self.db.execute(
-                select(Student.id).where(
-                    and_(
-                        Student.id == ledger.student_id,
-                        Student.parent_id == current_user.parent_id,
-                        Student.school_id == school_id,
-                    )
-                )
-            )
-            if not result.scalar_one_or_none():
-                raise ForbiddenException("Not your child")
-
-        payments = await self.repo.list_payments_for_ledger(
-            school_id, fee_ledger_id
-        )
+        payments = await self.repo.list_payments_for_ledger(school_id, fee_ledger_id)
         items = [PaymentResponse.model_validate(p) for p in payments]
         return PaymentListResponse(items=items, total=len(items))
+
+    # ------------------------------------------------------------------
+    # Receipt URL
+    # ------------------------------------------------------------------
 
     async def get_receipt_url(
         self,
@@ -319,40 +595,16 @@ class FeeService:
         if not payment:
             raise NotFoundException("Payment")
 
-        from app.models.student import Student
-
-        if current_user.role == RoleEnum.STUDENT:
-            result = await self.db.execute(
-                select(Student.id).where(
-                    and_(
-                        Student.user_id == current_user.id,
-                        Student.school_id == school_id,
-                    )
-                )
-            )
-            own_student_id = result.scalar_one_or_none()
-            if not own_student_id or own_student_id != payment.student_id:
-                raise ForbiddenException("You can only view your own receipt")
-
-        elif current_user.role == RoleEnum.PARENT:
-            result = await self.db.execute(
-                select(Student.id).where(
-                    and_(
-                        Student.id == payment.student_id,
-                        Student.parent_id == current_user.parent_id,
-                        Student.school_id == school_id,
-                    )
-                )
-            )
-            if not result.scalar_one_or_none():
-                raise ForbiddenException("Not your child")
+        await self._assert_student_access(school_id, payment.student_id, current_user)
 
         if not payment.receipt_key:
             raise NotFoundException("Receipt")
 
-        return minio_client.generate_presigned_url(
-            RECEIPTS_BUCKET, payment.receipt_key
-        )
+        return minio_client.generate_presigned_url(RECEIPTS_BUCKET, payment.receipt_key)
+
+    # ------------------------------------------------------------------
+    # Analytics
+    # ------------------------------------------------------------------
 
     async def fee_analytics(
         self,
@@ -364,13 +616,10 @@ class FeeService:
         student_id: Optional[uuid.UUID] = None,
     ) -> FeeAnalyticsResponse:
         school_id = self._ensure_school(current_user)
-        resolved_year_id = (
-            academic_year_id
-            if academic_year_id is not None
-            else (await get_active_year(school_id, self.db)).id
-        )
+        resolved_year_id = await self._resolve_academic_year(school_id, academic_year_id)
         section_value = section.strip() if section else None
 
+        # Base WHERE clauses shared across ledger queries
         ledger_where = [
             FeeLedger.school_id == school_id,
             Student.school_id == school_id,
@@ -383,28 +632,21 @@ class FeeService:
         if student_id is not None:
             ledger_where.append(FeeLedger.student_id == student_id)
 
+        # Summary
         summary_stmt = (
             select(
                 func.coalesce(func.sum(FeeLedger.total_amount), 0).label("billed"),
                 func.coalesce(func.sum(FeeLedger.paid_amount), 0).label("paid"),
                 func.coalesce(func.count(FeeLedger.id), 0).label("ledgers"),
-                func.coalesce(func.count(distinct(FeeLedger.student_id)), 0).label(
-                    "students"
-                ),
+                func.coalesce(func.count(distinct(FeeLedger.student_id)), 0).label("students"),
                 func.coalesce(
                     func.sum(case((FeeLedger.status == FeeStatus.PAID, 1), else_=0)), 0
                 ).label("paid_ledgers"),
                 func.coalesce(
-                    func.sum(
-                        case((FeeLedger.status == FeeStatus.PARTIAL, 1), else_=0)
-                    ),
-                    0,
+                    func.sum(case((FeeLedger.status == FeeStatus.PARTIAL, 1), else_=0)), 0
                 ).label("partial_ledgers"),
                 func.coalesce(
-                    func.sum(
-                        case((FeeLedger.status == FeeStatus.PENDING, 1), else_=0)
-                    ),
-                    0,
+                    func.sum(case((FeeLedger.status == FeeStatus.PENDING, 1), else_=0)), 0
                 ).label("pending_ledgers"),
                 func.coalesce(
                     func.sum(
@@ -431,8 +673,11 @@ class FeeService:
         total_billed = float(summary_row.billed or 0)
         total_paid = float(summary_row.paid or 0)
         total_outstanding = max(total_billed - total_paid, 0.0)
-        collection_pct = round((total_paid / total_billed) * 100, 2) if total_billed > 0 else 0.0
+        collection_pct = (
+            round((total_paid / total_billed) * 100, 2) if total_billed > 0 else 0.0
+        )
 
+        # Payment-level WHERE clauses
         payment_where = [
             Payment.school_id == school_id,
             Student.school_id == school_id,
@@ -449,8 +694,7 @@ class FeeService:
             select(
                 func.coalesce(func.count(Payment.id), 0).label("transactions"),
                 func.coalesce(
-                    func.sum(case((Payment.late_fee_applied.is_(True), 1), else_=0)),
-                    0,
+                    func.sum(case((Payment.late_fee_applied.is_(True), 1), else_=0)), 0
                 ).label("late_transactions"),
             )
             .select_from(Payment)
@@ -461,6 +705,7 @@ class FeeService:
         )
         payments_row = (await self.db.execute(payments_stmt)).one()
 
+        # By category
         by_category_stmt = (
             select(
                 FeeStructure.fee_category,
@@ -481,12 +726,15 @@ class FeeService:
                 fee_category=row.fee_category,
                 billed_amount=round(float(row.billed or 0), 2),
                 paid_amount=round(float(row.paid or 0), 2),
-                outstanding_amount=round(max(float(row.billed or 0) - float(row.paid or 0), 0.0), 2),
+                outstanding_amount=round(
+                    max(float(row.billed or 0) - float(row.paid or 0), 0.0), 2
+                ),
                 ledgers=int(row.ledgers or 0),
             )
             for row in by_category_rows
         ]
 
+        # By status
         by_status_stmt = (
             select(
                 FeeLedger.status,
@@ -508,11 +756,14 @@ class FeeService:
                 ledgers=int(row.ledgers or 0),
                 billed_amount=round(float(row.billed or 0), 2),
                 paid_amount=round(float(row.paid or 0), 2),
-                outstanding_amount=round(max(float(row.billed or 0) - float(row.paid or 0), 0.0), 2),
+                outstanding_amount=round(
+                    max(float(row.billed or 0) - float(row.paid or 0), 0.0), 2
+                ),
             )
             for row in by_status_rows
         ]
 
+        # By payment mode
         by_payment_mode_stmt = (
             select(
                 Payment.payment_mode,
@@ -537,6 +788,7 @@ class FeeService:
             for row in by_payment_mode_rows
         ]
 
+        # By student
         by_student_stmt = (
             select(
                 Student.id.label("student_id"),
@@ -550,16 +802,10 @@ class FeeService:
                     func.sum(case((FeeLedger.status == FeeStatus.PAID, 1), else_=0)), 0
                 ).label("paid_ledgers"),
                 func.coalesce(
-                    func.sum(
-                        case((FeeLedger.status == FeeStatus.PARTIAL, 1), else_=0)
-                    ),
-                    0,
+                    func.sum(case((FeeLedger.status == FeeStatus.PARTIAL, 1), else_=0)), 0
                 ).label("partial_ledgers"),
                 func.coalesce(
-                    func.sum(
-                        case((FeeLedger.status == FeeStatus.PENDING, 1), else_=0)
-                    ),
-                    0,
+                    func.sum(case((FeeLedger.status == FeeStatus.PENDING, 1), else_=0)), 0
                 ).label("pending_ledgers"),
                 func.coalesce(
                     func.sum(
@@ -581,7 +827,13 @@ class FeeService:
             .select_from(FeeLedger)
             .join(FeeStructure, FeeStructure.id == FeeLedger.fee_structure_id)
             .join(Student, Student.id == FeeLedger.student_id)
-            .outerjoin(Payment, and_(Payment.fee_ledger_id == FeeLedger.id, Payment.school_id == school_id))
+            .outerjoin(
+                Payment,
+                and_(
+                    Payment.fee_ledger_id == FeeLedger.id,
+                    Payment.school_id == school_id,
+                ),
+            )
             .where(*ledger_where)
             .group_by(
                 Student.id,
@@ -590,7 +842,9 @@ class FeeService:
                 Student.section,
             )
             .order_by(
-                (func.sum(FeeLedger.total_amount) - func.sum(FeeLedger.paid_amount)).desc(),
+                (
+                    func.sum(FeeLedger.total_amount) - func.sum(FeeLedger.paid_amount)
+                ).desc(),
                 Student.admission_number.asc(),
             )
         )
@@ -603,7 +857,9 @@ class FeeService:
                 section=row.section,
                 billed_amount=round(float(row.billed or 0), 2),
                 paid_amount=round(float(row.paid or 0), 2),
-                outstanding_amount=round(max(float(row.billed or 0) - float(row.paid or 0), 0.0), 2),
+                outstanding_amount=round(
+                    max(float(row.billed or 0) - float(row.paid or 0), 0.0), 2
+                ),
                 ledgers=int(row.ledgers or 0),
                 paid_ledgers=int(row.paid_ledgers or 0),
                 partial_ledgers=int(row.partial_ledgers or 0),
@@ -641,3 +897,63 @@ class FeeService:
             by_payment_mode=by_payment_mode,
             by_student=by_student,
         )
+
+
+# ---------------------------------------------------------------------------
+# Receipt HTML builder
+# ---------------------------------------------------------------------------
+
+def _build_receipt_html(
+    *,
+    student_id: uuid.UUID,
+    fee_head: str,
+    amount: float,
+    payment_date: date,
+    payment_mode,
+    reference_number: Optional[str],
+    total_amount: float,
+    paid_so_far: float,
+    due_date: date,
+    late_fee_applied: bool,
+) -> str:
+    outstanding = max(total_amount - paid_so_far, 0.0)
+    late_note = (
+        "<p style='color:red;font-weight:bold;'>⚠ Late payment — paid after due date.</p>"
+        if late_fee_applied
+        else ""
+    )
+    return f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8"/>
+      <style>
+        body {{ font-family: Arial, sans-serif; margin: 40px; color: #333; }}
+        h2   {{ color: #2c3e50; border-bottom: 2px solid #2c3e50; padding-bottom: 8px; }}
+        table {{ width: 100%; border-collapse: collapse; margin-top: 16px; }}
+        td   {{ padding: 8px 12px; border: 1px solid #ddd; }}
+        td:first-child {{ font-weight: bold; background: #f5f5f5; width: 40%; }}
+        .footer {{ margin-top: 24px; font-size: 12px; color: #888; }}
+      </style>
+    </head>
+    <body>
+      <h2>Fee Payment Receipt</h2>
+      {late_note}
+      <table>
+        <tr><td>Student ID</td><td>{student_id}</td></tr>
+        <tr><td>Fee Head</td><td>{fee_head}</td></tr>
+        <tr><td>Total Fee Amount</td><td>₹ {total_amount:.2f}</td></tr>
+        <tr><td>Amount Paid (this payment)</td><td>₹ {amount:.2f}</td></tr>
+        <tr><td>Total Paid So Far</td><td>₹ {paid_so_far:.2f}</td></tr>
+        <tr><td>Outstanding Balance</td><td>₹ {outstanding:.2f}</td></tr>
+        <tr><td>Due Date</td><td>{due_date}</td></tr>
+        <tr><td>Payment Date</td><td>{payment_date}</td></tr>
+        <tr><td>Payment Mode</td><td>{payment_mode}</td></tr>
+        <tr><td>Reference Number</td><td>{reference_number or '—'}</td></tr>
+      </table>
+      <div class="footer">
+        This is a system-generated receipt. No signature required.
+      </div>
+    </body>
+    </html>
+    """

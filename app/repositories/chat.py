@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, aliased
 
 from app.models.conversation import Conversation, ConversationParticipant
-from app.models.message import Message, MessageRead
+from app.models.message import Message, MessageRead, MessageReaction
 from app.utils.enums import ConversationType
 
 
@@ -19,7 +19,10 @@ def _conversation_with_relations(stmt):
 
 
 def _message_with_relations(stmt):
-    return stmt.options(selectinload(Message.sender))
+    return stmt.options(
+        selectinload(Message.sender),
+        selectinload(Message.reactions),
+    )
 
 
 class ChatRepository:
@@ -55,6 +58,19 @@ class ChatRepository:
         await self.db.flush()
         await self.db.refresh(obj)
         return obj
+
+    async def get_participant(
+        self, conversation_id: uuid.UUID, user_id: uuid.UUID
+    ) -> Optional[ConversationParticipant]:
+        result = await self.db.execute(
+            select(ConversationParticipant).where(
+                and_(
+                    ConversationParticipant.conversation_id == conversation_id,
+                    ConversationParticipant.user_id == user_id,
+                )
+            )
+        )
+        return result.scalar_one_or_none()
 
     async def list_conversations_for_user(
         self, user_id: uuid.UUID, school_id: uuid.UUID
@@ -107,6 +123,9 @@ class ChatRepository:
         )
         return result.scalar_one_or_none()
 
+    async def delete_conversation(self, conversation: Conversation) -> None:
+        await self.db.delete(conversation)
+
     # Messages
     async def create_message(self, data: dict) -> Message:
         obj = Message(**data)
@@ -151,3 +170,41 @@ class ChatRepository:
         await self.db.flush()
         await self.db.refresh(obj)
         return obj
+
+    async def get_message_by_id(
+        self, message_id: uuid.UUID, school_id: uuid.UUID
+    ) -> Optional[Message]:
+        result = await self.db.execute(
+            _message_with_relations(
+                select(Message).where(
+                    and_(
+                        Message.id == message_id,
+                        Message.school_id == school_id,
+                    )
+                )
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_message_reaction(
+        self, message_id: uuid.UUID, user_id: uuid.UUID
+    ) -> Optional[MessageReaction]:
+        result = await self.db.execute(
+            select(MessageReaction).where(
+                and_(
+                    MessageReaction.message_id == message_id,
+                    MessageReaction.user_id == user_id,
+                )
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def create_message_reaction(self, data: dict) -> MessageReaction:
+        obj = MessageReaction(**data)
+        self.db.add(obj)
+        await self.db.flush()
+        await self.db.refresh(obj)
+        return obj
+
+    async def delete_message_reaction(self, reaction: MessageReaction) -> None:
+        await self.db.delete(reaction)

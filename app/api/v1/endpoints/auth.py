@@ -21,7 +21,8 @@ from app.schemas.auth import (
     CurrentUserSchema,
 )
 from app.core.dependencies import get_current_user, CurrentUser
-from app.core.security import decode_token
+from app.core.security import decode_token, extract_bearer_token
+from app.core.exceptions import UnauthorizedException
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -57,8 +58,10 @@ async def logout(
     current_user: CurrentUser = Depends(get_current_user),
     service: AuthService = Depends(get_auth_service),
 ):
-    auth_header = request.headers.get("Authorization", "")
-    token = auth_header.replace("Bearer ", "").replace("bearer ", "").strip()
+    token = extract_bearer_token(request.headers.get("Authorization"))
+    if not token:
+        # get_current_user already guarantees auth, this is a defensive fallback.
+        raise UnauthorizedException(detail="Missing bearer token")
 
     payload = decode_token(token)
     jti = payload.get("jti")
@@ -117,6 +120,7 @@ async def get_me(
         school_id=current_user.school_id,
         parent_id=current_user.parent_id,
         permissions=current_user.permissions,
+        full_name=user.full_name if user else current_user.full_name,
         email=user.email if user else current_user.email,
         phone=user.phone if user else current_user.phone,
         is_active=user.is_active if user else current_user.is_active,

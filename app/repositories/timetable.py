@@ -12,6 +12,7 @@ def _with_relations(stmt):
     return stmt.options(
         selectinload(Timetable.standard),
         selectinload(Timetable.academic_year),
+        selectinload(Timetable.uploader),
     )
 
 
@@ -56,6 +57,10 @@ class TimetableRepository:
         await self.db.flush()
         await self.db.refresh(timetable)
         return timetable
+
+    async def delete(self, timetable: Timetable) -> None:
+        await self.db.delete(timetable)
+        await self.db.flush()
 
     async def list_sections_by_standard(
         self,

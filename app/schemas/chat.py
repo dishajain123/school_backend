@@ -53,6 +53,8 @@ class MessageResponse(BaseModel):
     school_id: uuid.UUID
     created_at: datetime
     updated_at: datetime
+    reactions: list["MessageReactionSummary"] = Field(default_factory=list)
+    my_reaction: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -87,3 +89,21 @@ class ChatUserListResponse(BaseModel):
     page: int
     page_size: int
     total_pages: int
+
+
+class MessageReactionRequest(BaseModel):
+    emoji: str = Field(..., min_length=1, max_length=32)
+
+
+class MessageReactionSummary(BaseModel):
+    emoji: str
+    count: int
+
+
+class MessageReactionUpdateResponse(BaseModel):
+    message_id: uuid.UUID
+    conversation_id: uuid.UUID
+    status: str
+    reaction: Optional[str] = None
+    reactions: list[MessageReactionSummary] = Field(default_factory=list)
+    my_reaction: Optional[str] = None

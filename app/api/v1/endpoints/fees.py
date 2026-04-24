@@ -1,5 +1,4 @@
 import uuid
-
 from datetime import date
 from typing import Optional
 
@@ -15,8 +14,11 @@ from app.core.dependencies import (
 from app.core.exceptions import ForbiddenException
 from app.db.session import get_db
 from app.schemas.fee import (
-    FeeStructureCreate,
-    FeeStructureResponse,
+    FeeStructureListResponse,
+    FeeStructureBatchCreate,
+    FeeStructureBatchResponse,
+    FeeStructureUpdate,
+    FeeStructureUpdateResponse,
     LedgerGenerateRequest,
     LedgerGenerateResponse,
     PaymentCreate,
@@ -30,14 +32,61 @@ from app.utils.enums import RoleEnum
 
 router = APIRouter(prefix="/fees", tags=["Fees"])
 
+# ---------------------------------------------------------------------------
+# Helper: check fee:read or own-scope roles
+# ---------------------------------------------------------------------------
 
-@router.post("/structures", response_model=FeeStructureResponse, status_code=201)
-async def create_fee_structure(
-    payload: FeeStructureCreate,
+def _assert_fee_read(current_user: CurrentUser) -> None:
+    can_read = "fee:read" in current_user.permissions
+    own_scope = current_user.role in (RoleEnum.STUDENT, RoleEnum.PARENT)
+    if not can_read and not own_scope:
+        raise ForbiddenException(
+            detail="Permission 'fee:read' is required to access this resource"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Write endpoints — require fee:create permission
+# ---------------------------------------------------------------------------
+
+@router.post("/structures/batch", response_model=FeeStructureBatchResponse, status_code=201)
+async def create_fee_structure_batch(
+    payload: FeeStructureBatchCreate,
     current_user: CurrentUser = Depends(require_permission("fee:create")),
     db: AsyncSession = Depends(get_db),
 ):
-    return await FeeService(db).create_structure(payload, current_user)
+    """Create or update multiple custom fee heads for a class + academic year."""
+    return await FeeService(db).create_structures_batch(payload, current_user)
+
+
+@router.patch("/structures/{structure_id}", response_model=FeeStructureUpdateResponse)
+async def update_fee_structure(
+    structure_id: uuid.UUID,
+    payload: FeeStructureUpdate,
+    current_user: CurrentUser = Depends(require_permission("fee:create")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Edit fee head/amount for one class or all classes with the same fee head."""
+    return await FeeService(db).update_structure(
+        structure_id=structure_id,
+        body=payload,
+        current_user=current_user,
+    )
+
+
+@router.get("/structures", response_model=FeeStructureListResponse)
+async def list_fee_structures(
+    standard_id: uuid.UUID = Query(...),
+    academic_year_id: Optional[uuid.UUID] = Query(None),
+    current_user: CurrentUser = Depends(require_permission("fee:read")),
+    db: AsyncSession = Depends(get_db),
+):
+    """List fee structures for a class and academic year."""
+    return await FeeService(db).list_structures(
+        standard_id=standard_id,
+        academic_year_id=academic_year_id,
+        current_user=current_user,
+    )
 
 
 @router.post("/ledger/generate", response_model=LedgerGenerateResponse)
@@ -46,6 +95,10 @@ async def generate_ledger(
     current_user: CurrentUser = Depends(require_permission("fee:create")),
     db: AsyncSession = Depends(get_db),
 ):
+    """
+    Idempotent: generate fee ledger entries for all students in a class.
+    Already-existing entries are skipped.
+    """
     return await FeeService(db).generate_ledger(payload, current_user)
 
 
@@ -55,23 +108,28 @@ async def record_payment(
     current_user: CurrentUser = Depends(require_permission("fee:create")),
     db: AsyncSession = Depends(get_db),
 ):
+    """Record a payment against a fee ledger entry and generate a receipt."""
     return await FeeService(db).record_payment(payload, current_user)
 
+
+# ---------------------------------------------------------------------------
+# Read endpoints — fee:read permission OR student/parent own-scope
+# ---------------------------------------------------------------------------
 
 @router.get("", response_model=FeeDashboardResponse)
 async def fee_dashboard(
     student_id: uuid.UUID = Query(...),
+    academic_year_id: Optional[uuid.UUID] = Query(None),
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    can_read = "fee:read" in current_user.permissions
-    own_scope_fallback = current_user.role in (RoleEnum.STUDENT, RoleEnum.PARENT)
-    if not can_read and not own_scope_fallback:
-        raise ForbiddenException(
-            detail="Permission 'fee:read' is required to access this resource"
-        )
-    return await FeeService(db).fee_dashboard(student_id, current_user)
-
+    """
+    Return all ledger entries for a student.
+    Students and parents are restricted to their own data.
+    Optionally filter by academic_year_id.
+    """
+    _assert_fee_read(current_user)
+    return await FeeService(db).fee_dashboard(student_id, current_user, academic_year_id)
 
 
 @router.get("/payments", response_model=PaymentListResponse)
@@ -80,14 +138,10 @@ async def list_payments(
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    can_read = "fee:read" in current_user.permissions
-    own_scope_fallback = current_user.role in (RoleEnum.STUDENT, RoleEnum.PARENT)
-    if not can_read and not own_scope_fallback:
-        raise ForbiddenException(
-            detail="Permission 'fee:read' is required to access this resource"
-        )
-    # NOTE: This endpoint was added to support payment history by ledger.
+    """Return all payments for a specific fee ledger entry."""
+    _assert_fee_read(current_user)
     return await FeeService(db).list_payments(fee_ledger_id, current_user)
+
 
 @router.get("/payments/{payment_id}/receipt")
 async def get_receipt(
@@ -95,15 +149,15 @@ async def get_receipt(
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    can_read = "fee:read" in current_user.permissions
-    own_scope_fallback = current_user.role in (RoleEnum.STUDENT, RoleEnum.PARENT)
-    if not can_read and not own_scope_fallback:
-        raise ForbiddenException(
-            detail="Permission 'fee:read' is required to access this resource"
-        )
+    """Return a presigned URL for the payment receipt PDF."""
+    _assert_fee_read(current_user)
     url = await FeeService(db).get_receipt_url(payment_id, current_user)
     return {"url": url}
 
+
+# ---------------------------------------------------------------------------
+# Analytics — Principal / Trustee / Superadmin only
+# ---------------------------------------------------------------------------
 
 @router.get("/analytics", response_model=FeeAnalyticsResponse)
 async def fee_analytics(
@@ -117,6 +171,7 @@ async def fee_analytics(
     ),
     db: AsyncSession = Depends(get_db),
 ):
+    """Aggregated fee analytics with optional filters."""
     return await FeeService(db).fee_analytics(
         current_user=current_user,
         academic_year_id=academic_year_id,

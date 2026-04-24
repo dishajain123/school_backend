@@ -14,9 +14,12 @@ from app.schemas.chat import (
     MessageListResponse,
     MarkReadRequest,
     FileUploadResponse,
+    MessageReactionRequest,
+    MessageReactionUpdateResponse,
 )
 from app.services.chat import ChatService
 from app.utils.enums import ConversationType, RoleEnum
+from app.ws.connection_manager import manager
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
@@ -102,3 +105,39 @@ async def upload_chat_file(
 ):
     key = await ChatService(db).upload_file(conversation_id, current_user, file)
     return FileUploadResponse(key=key)
+
+
+@router.delete("/conversations/{conversation_id}", status_code=204)
+async def delete_conversation(
+    conversation_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_permission("chat:message")),
+    db: AsyncSession = Depends(get_db),
+):
+    await ChatService(db).delete_conversation(conversation_id, current_user)
+
+
+@router.patch("/messages/{message_id}/reaction", response_model=MessageReactionUpdateResponse)
+async def react_to_message(
+    message_id: uuid.UUID,
+    payload: MessageReactionRequest,
+    current_user: CurrentUser = Depends(require_permission("chat:message")),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await ChatService(db).react_to_message(
+        message_id=message_id,
+        emoji=payload.emoji,
+        current_user=current_user,
+    )
+    await manager.broadcast(
+        {
+            "event": "reaction_updated",
+            "message_id": str(result.message_id),
+            "conversation_id": str(result.conversation_id),
+            "status": result.status,
+            "reaction": result.reaction,
+            "reactions": [entry.model_dump(mode="json") for entry in result.reactions],
+            "actor_user_id": str(current_user.id),
+        },
+        str(result.conversation_id),
+    )
+    return result

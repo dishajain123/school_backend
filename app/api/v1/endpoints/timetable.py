@@ -78,6 +78,24 @@ async def get_timetable(
     )
 
 
+@router.delete("/{standard_id}", status_code=204)
+async def delete_timetable(
+    standard_id: uuid.UUID,
+    academic_year_id: Optional[uuid.UUID] = Query(None),
+    section: Optional[str] = Query(None, description="Section filter"),
+    current_user: CurrentUser = Depends(
+        require_roles(RoleEnum.PRINCIPAL, RoleEnum.TEACHER)
+    ),
+    db: AsyncSession = Depends(get_db),
+):
+    await TimetableService(db).delete_timetable(
+        standard_id=standard_id,
+        academic_year_id=academic_year_id,
+        current_user=current_user,
+        section=section,
+    )
+
+
 @router.get(
     "/{standard_id}/sections",
     response_model=list[str],

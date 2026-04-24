@@ -32,14 +32,6 @@ class AcademicYearService:
         )
         return year
 
-    async def get_academic_year(
-        self, year_id: uuid.UUID, school_id: uuid.UUID
-    ) -> AcademicYear:
-        year = await self.repo.get_by_id(year_id, school_id)
-        if not year:
-            raise NotFoundException("Academic year")
-        return year
-
     async def list_academic_years(
         self, school_id: uuid.UUID
     ) -> tuple[list[AcademicYear], int]:

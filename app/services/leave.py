@@ -266,16 +266,17 @@ class LeaveService:
         current_user: CurrentUser,
         status: Optional[LeaveStatus],
         academic_year_id: Optional[uuid.UUID],
+        teacher_id: Optional[uuid.UUID] = None,
     ) -> LeaveListResponse:
         school_id = self._ensure_school(current_user)
-        teacher_id: Optional[uuid.UUID] = None
+        scoped_teacher_id: Optional[uuid.UUID] = teacher_id
 
         if current_user.role == RoleEnum.TEACHER:
-            teacher_id = await _get_teacher_id(self.db, current_user.id, school_id)
+            scoped_teacher_id = await _get_teacher_id(self.db, current_user.id, school_id)
 
         leaves = await self.repo.list_leaves(
             school_id=school_id,
-            teacher_id=teacher_id,
+            teacher_id=scoped_teacher_id,
             status=status.value if status else None,
             academic_year_id=academic_year_id,
         )

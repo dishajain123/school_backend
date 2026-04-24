@@ -72,6 +72,7 @@ class ResultRepository:
         standard_id: Optional[uuid.UUID] = None,
         standard_ids: Optional[list[uuid.UUID]] = None,
         student_id: Optional[uuid.UUID] = None,
+        published_only: bool = False,
     ) -> list[Exam]:
         stmt = select(Exam).where(Exam.school_id == school_id)
 
@@ -84,14 +85,49 @@ class ResultRepository:
                 return []
             stmt = stmt.where(Exam.standard_id.in_(standard_ids))
         if student_id is not None:
-            stmt = stmt.join(
-                Result,
-                and_(
-                    Result.exam_id == Exam.id,
-                    Result.student_id == student_id,
-                    Result.school_id == school_id,
-                ),
-            ).distinct()
+            join_condition = and_(
+                Result.exam_id == Exam.id,
+                Result.student_id == student_id,
+                Result.school_id == school_id,
+            )
+            if published_only:
+                join_condition = and_(join_condition, Result.is_published == True)  # noqa: E712
+            stmt = stmt.join(Result, join_condition).distinct()
+
+        stmt = stmt.order_by(Exam.start_date.desc(), Exam.created_at.desc())
+        result = await self.db.execute(_exam_with_relations(stmt))
+        return list(result.scalars().all())
+
+    async def list_exams_entered_by(
+        self,
+        *,
+        school_id: uuid.UUID,
+        entered_by: uuid.UUID,
+        academic_year_id: Optional[uuid.UUID] = None,
+        standard_id: Optional[uuid.UUID] = None,
+        student_id: Optional[uuid.UUID] = None,
+        published_only: bool = False,
+    ) -> list[Exam]:
+        join_condition = and_(
+            Result.exam_id == Exam.id,
+            Result.school_id == school_id,
+            Result.entered_by == entered_by,
+        )
+        if student_id is not None:
+            join_condition = and_(join_condition, Result.student_id == student_id)
+        if published_only:
+            join_condition = and_(join_condition, Result.is_published == True)  # noqa: E712
+
+        stmt = (
+            select(Exam)
+            .join(Result, join_condition)
+            .where(Exam.school_id == school_id)
+            .distinct()
+        )
+        if academic_year_id is not None:
+            stmt = stmt.where(Exam.academic_year_id == academic_year_id)
+        if standard_id is not None:
+            stmt = stmt.where(Exam.standard_id == standard_id)
 
         stmt = stmt.order_by(Exam.start_date.desc(), Exam.created_at.desc())
         result = await self.db.execute(_exam_with_relations(stmt))
@@ -104,6 +140,13 @@ class ResultRepository:
         await self.db.flush()
         await self.db.refresh(obj)
         return obj
+
+    async def update_result(self, result: Result, data: dict) -> Result:
+        for key, value in data.items():
+            setattr(result, key, value)
+        await self.db.flush()
+        await self.db.refresh(result)
+        return result
 
     async def get_result_existing(
         self, exam_id: uuid.UUID, student_id: uuid.UUID, subject_id: uuid.UUID
@@ -125,6 +168,7 @@ class ResultRepository:
         student_id: uuid.UUID,
         exam_id: uuid.UUID,
         published_only: bool = False,
+        entered_by: Optional[uuid.UUID] = None,
     ) -> list[Result]:
         stmt = select(Result).where(
             and_(
@@ -135,6 +179,8 @@ class ResultRepository:
         )
         if published_only:
             stmt = stmt.where(Result.is_published == True)  # noqa: E712
+        if entered_by is not None:
+            stmt = stmt.where(Result.entered_by == entered_by)
 
         result = await self.db.execute(_result_with_relations(stmt))
         return list(result.scalars().all())
@@ -159,6 +205,7 @@ class ResultRepository:
         self,
         school_id: uuid.UUID,
         exam_id: uuid.UUID,
+        entered_by: Optional[uuid.UUID] = None,
     ) -> list[Result]:
         stmt = select(Result).where(
             and_(
@@ -166,6 +213,8 @@ class ResultRepository:
                 Result.exam_id == exam_id,
             )
         )
+        if entered_by is not None:
+            stmt = stmt.where(Result.entered_by == entered_by)
         result = await self.db.execute(_result_with_relations(stmt))
         return list(result.scalars().all())
 
@@ -174,6 +223,7 @@ class ResultRepository:
         school_id: uuid.UUID,
         standard_id: uuid.UUID,
         academic_year_id: Optional[uuid.UUID] = None,
+        entered_by: Optional[uuid.UUID] = None,
     ) -> list[str]:
         section_expr = func.trim(Student.section)
         stmt = (
@@ -196,6 +246,8 @@ class ResultRepository:
         )
         if academic_year_id is not None:
             stmt = stmt.where(Exam.academic_year_id == academic_year_id)
+        if entered_by is not None:
+            stmt = stmt.where(Result.entered_by == entered_by)
         stmt = stmt.group_by(section_expr).order_by(func.lower(section_expr))
         result = await self.db.execute(stmt)
         return [row[0] for row in result.all() if row[0]]

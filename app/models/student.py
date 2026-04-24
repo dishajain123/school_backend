@@ -74,6 +74,8 @@ class Student(BaseModel):
 
     @property
     def student_name(self) -> Optional[str]:
+        if self.user and self.user.full_name and self.user.full_name.strip():
+            return self.user.full_name.strip()
         # Derive a readable label from linked user email when explicit names are unavailable.
         if self.user and self.user.email:
             local = self.user.email.split("@", 1)[0]

@@ -22,6 +22,23 @@ class AlbumCreate(BaseModel):
         return v
 
 
+class AlbumUpdate(BaseModel):
+    event_name: Optional[str] = None
+    event_date: Optional[date] = None
+    description: Optional[str] = None
+    academic_year_id: Optional[uuid.UUID] = None
+
+    @field_validator("event_name")
+    @classmethod
+    def name_not_empty(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        v = v.strip()
+        if not v:
+            raise ValueError("Event name cannot be empty")
+        return v
+
+
 class AlbumResponse(BaseModel):
     id: uuid.UUID
     event_name: str

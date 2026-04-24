@@ -150,53 +150,6 @@ class AttendanceRepository:
         rows = await self.db.execute(stmt)
         return [row._asdict() for row in rows.all()]
 
-    async def get_class_snapshot(
-        self,
-        standard_id: uuid.UUID,
-        section: Optional[str],
-        school_id: uuid.UUID,
-        record_date: date,
-        academic_year_id: uuid.UUID,
-        subject_id: Optional[uuid.UUID] = None,
-    ) -> list[dict]:
-        """Returns per-student status for a class on a given date."""
-        # All students in the class
-        students_q = select(Student).where(
-            Student.standard_id == standard_id,
-            Student.school_id == school_id,
-            Student.academic_year_id == academic_year_id,
-        )
-        if section is not None:
-            students_q = students_q.where(Student.section == section)
-        student_rows = await self.db.execute(students_q)
-        students = student_rows.scalars().all()
-
-        # Attendance records for that date
-        att_q = select(Attendance).where(
-            Attendance.standard_id == standard_id,
-            Attendance.date == record_date,
-            Attendance.academic_year_id == academic_year_id,
-        )
-        if section is not None:
-            att_q = att_q.where(Attendance.section == section)
-        if subject_id is not None:
-            att_q = att_q.where(Attendance.subject_id == subject_id)
-        att_rows = await self.db.execute(att_q)
-        att_map: dict[uuid.UUID, AttendanceStatus] = {
-            a.student_id: a.status for a in att_rows.scalars().all()
-        }
-
-        return [
-            {
-                "student_id": s.id,
-                "admission_number": s.admission_number,
-                "roll_number": s.roll_number,
-                "section": s.section or "",
-                "status": att_map.get(s.id),
-            }
-            for s in students
-        ]
-
     async def get_students_below_threshold(
         self,
         standard_id: uuid.UUID,

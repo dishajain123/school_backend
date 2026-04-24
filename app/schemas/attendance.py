@@ -76,25 +76,6 @@ class StudentAttendanceAnalytics(BaseModel):
     subjects: list[SubjectAttendanceStat]
 
 
-class ClassSnapshotRecord(BaseModel):
-    student_id: uuid.UUID
-    admission_number: str
-    roll_number: Optional[str]
-    section: str
-    status: Optional[AttendanceStatus]
-
-
-class ClassAttendanceSnapshot(BaseModel):
-    standard_id: uuid.UUID
-    date: date
-    total_students: int
-    present: int
-    absent: int
-    late: int
-    not_marked: int
-    records: list[ClassSnapshotRecord]
-
-
 class BelowThresholdStudent(BaseModel):
     student_id: uuid.UUID
     admission_number: str

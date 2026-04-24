@@ -1,7 +1,7 @@
 import uuid
 from typing import Optional
 
-from sqlalchemy import select, func, and_
+from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -27,7 +27,10 @@ class FeeRepository:
     def __init__(self, db: AsyncSession):
         self.db = db
 
+    # ------------------------------------------------------------------
     # Fee Structures
+    # ------------------------------------------------------------------
+
     async def create_structure(self, data: dict) -> FeeStructure:
         obj = FeeStructure(**data)
         self.db.add(obj)
@@ -56,6 +59,7 @@ class FeeRepository:
         standard_id: uuid.UUID,
         academic_year_id: uuid.UUID,
         fee_category,
+        custom_fee_head: str = "",
     ) -> Optional[FeeStructure]:
         result = await self.db.execute(
             select(FeeStructure).where(
@@ -64,13 +68,17 @@ class FeeRepository:
                     FeeStructure.standard_id == standard_id,
                     FeeStructure.academic_year_id == academic_year_id,
                     FeeStructure.fee_category == fee_category,
+                    FeeStructure.custom_fee_head == custom_fee_head,
                 )
             )
         )
         return result.scalar_one_or_none()
 
     async def list_structures_for_standard(
-        self, school_id: uuid.UUID, standard_id: uuid.UUID, academic_year_id: uuid.UUID
+        self,
+        school_id: uuid.UUID,
+        standard_id: uuid.UUID,
+        academic_year_id: uuid.UUID,
     ) -> list[FeeStructure]:
         result = await self.db.execute(
             _structure_with_relations(
@@ -80,12 +88,22 @@ class FeeRepository:
                         FeeStructure.standard_id == standard_id,
                         FeeStructure.academic_year_id == academic_year_id,
                     )
-                )
+                ).order_by(FeeStructure.fee_category.asc(), FeeStructure.custom_fee_head.asc())
             )
         )
         return list(result.scalars().all())
 
+    async def update_structure(self, structure: FeeStructure, data: dict) -> FeeStructure:
+        for key, value in data.items():
+            setattr(structure, key, value)
+        await self.db.flush()
+        await self.db.refresh(structure)
+        return structure
+
+    # ------------------------------------------------------------------
     # Fee Ledger
+    # ------------------------------------------------------------------
+
     async def create_ledger(self, data: dict) -> FeeLedger:
         obj = FeeLedger(**data)
         self.db.add(obj)
@@ -136,6 +154,21 @@ class FeeRepository:
         )
         return list(result.scalars().all())
 
+    async def list_ledgers_for_structure(
+        self, school_id: uuid.UUID, fee_structure_id: uuid.UUID
+    ) -> list[FeeLedger]:
+        result = await self.db.execute(
+            _ledger_with_relations(
+                select(FeeLedger).where(
+                    and_(
+                        FeeLedger.school_id == school_id,
+                        FeeLedger.fee_structure_id == fee_structure_id,
+                    )
+                )
+            )
+        )
+        return list(result.scalars().all())
+
     async def update_ledger(self, ledger: FeeLedger, data: dict) -> FeeLedger:
         for key, value in data.items():
             setattr(ledger, key, value)
@@ -143,7 +176,10 @@ class FeeRepository:
         await self.db.refresh(ledger)
         return ledger
 
+    # ------------------------------------------------------------------
     # Payments
+    # ------------------------------------------------------------------
+
     async def create_payment(self, data: dict) -> Payment:
         obj = Payment(**data)
         self.db.add(obj)
@@ -178,4 +214,3 @@ class FeeRepository:
             .order_by(Payment.created_at.desc())
         )
         return list(result.scalars().all())
-

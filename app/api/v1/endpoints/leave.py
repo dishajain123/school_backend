@@ -45,19 +45,28 @@ async def decide_leave(
 async def list_leaves(
     status: Optional[LeaveStatus] = Query(None),
     academic_year_id: Optional[uuid.UUID] = Query(None),
+    teacher_id: Optional[uuid.UUID] = Query(None),
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     # Backward-compatible access:
     # - Preferred: users with explicit leave:read.
-    # - Teacher fallback: allow own-leave listing if leave:apply exists.
+    # - Teacher fallback: allow own-leave listing only if leave:apply exists.
     can_read = "leave:read" in current_user.permissions
-    teacher_fallback = current_user.role == RoleEnum.TEACHER
+    teacher_fallback = (
+        current_user.role == RoleEnum.TEACHER
+        and "leave:apply" in current_user.permissions
+    )
     if not can_read and not teacher_fallback:
         raise ForbiddenException(
-            detail="Permission 'leave:read' is required to access this resource"
+            detail="Permission 'leave:read' is required or teacher must have 'leave:apply'"
         )
-    return await LeaveService(db).list_leaves(current_user, status, academic_year_id)
+    return await LeaveService(db).list_leaves(
+        current_user=current_user,
+        status=status,
+        academic_year_id=academic_year_id,
+        teacher_id=teacher_id,
+    )
 
 
 @router.get("/balance", response_model=list[LeaveBalanceResponse])

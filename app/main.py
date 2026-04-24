@@ -6,6 +6,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.lifespan import lifespan
 from app.middleware.cors import setup_cors
 from app.middleware.rate_limiter import setup_rate_limiter
+from app.middleware.api_usage_logging import ApiUsageLoggingMiddleware
 from app.middleware.request_id import RequestIdMiddleware
 from app.core.exceptions import (
     AppException,
@@ -24,6 +25,7 @@ def create_app() -> FastAPI:
 
     setup_rate_limiter(app)
     app.add_middleware(RequestIdMiddleware)
+    app.add_middleware(ApiUsageLoggingMiddleware)
     # Keep CORS outermost so even error responses include CORS headers.
     setup_cors(app)
 

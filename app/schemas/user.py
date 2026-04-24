@@ -6,6 +6,7 @@ from app.utils.enums import RoleEnum
 
 
 class UserCreate(BaseModel):
+    full_name: Optional[str] = None
     email: Optional[EmailStr] = None
     phone: Optional[str] = Field(None, max_length=20)
     password: str = Field(..., min_length=8)
@@ -16,6 +17,7 @@ class UserCreate(BaseModel):
 
 
 class UserUpdate(BaseModel):
+    full_name: Optional[str] = None
     email: Optional[EmailStr] = None
     phone: Optional[str] = Field(None, max_length=20)
     is_active: Optional[bool] = None
@@ -25,6 +27,7 @@ class UserUpdate(BaseModel):
 
 class UserResponse(BaseModel):
     id: uuid.UUID
+    full_name: Optional[str]
     email: Optional[str]
     phone: Optional[str]
     role: RoleEnum
@@ -53,6 +56,7 @@ class UserPhotoResponse(BaseModel):
 
 
 class UserMeUpdate(BaseModel):
+    full_name: Optional[str] = None
     phone: Optional[str] = Field(None, max_length=20)
 
     model_config = {"str_strip_whitespace": True}

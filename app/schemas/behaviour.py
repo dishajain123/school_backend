@@ -10,23 +10,26 @@ from app.utils.enums import IncidentType, IncidentSeverity
 class BehaviourCreate(BaseModel):
     student_id: uuid.UUID
     incident_type: IncidentType
-    description: str
+    description: Optional[str] = None
     severity: IncidentSeverity
     incident_date: Optional[date] = None
     academic_year_id: Optional[uuid.UUID] = None
 
     @field_validator("description")
     @classmethod
-    def description_not_empty(cls, v: str) -> str:
+    def description_not_empty(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
         v = v.strip()
         if not v:
-            raise ValueError("Description cannot be empty")
+            return None
         return v
 
 
 class BehaviourResponse(BaseModel):
     id: uuid.UUID
     student_id: uuid.UUID
+    student_name: Optional[str] = None
     teacher_id: uuid.UUID
     incident_type: IncidentType
     description: str

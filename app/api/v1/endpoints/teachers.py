@@ -20,6 +20,7 @@ from app.schemas.teacher import (
     TeacherListResponse,
     TeacherUserResponse,
 )
+from app.schemas.teacher_analytics import TeacherAnalyticsResponse
 from app.schemas.teacher_class_subject import (
     AcademicYearSummary,
     StandardSummary,
@@ -97,6 +98,25 @@ async def list_my_teacher_assignments(
     return TeacherAssignmentListResponse(
         items=[_to_assignment_response(i) for i in items],
         total=total,
+    )
+
+
+@router.get("/me/analytics", response_model=TeacherAnalyticsResponse)
+async def get_my_teacher_analytics(
+    academic_year_id: Optional[uuid.UUID] = Query(None),
+    standard_id: Optional[uuid.UUID] = Query(None),
+    section: Optional[str] = Query(None),
+    subject_id: Optional[uuid.UUID] = Query(None),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    service = TeacherService(db)
+    return await service.get_my_analytics(
+        current_user=current_user,
+        academic_year_id=academic_year_id,
+        standard_id=standard_id,
+        section=section,
+        subject_id=subject_id,
     )
 
 

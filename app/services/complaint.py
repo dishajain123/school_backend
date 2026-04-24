@@ -77,7 +77,20 @@ class ComplaintService:
             return phone
         return "Unknown"
 
-    def _build_response(self, complaint) -> ComplaintResponse:
+    @staticmethod
+    def _can_manage_status(current_user: CurrentUser) -> bool:
+        return (
+            "complaint:read" in current_user.permissions
+            and current_user.role
+            in (RoleEnum.PRINCIPAL, RoleEnum.TRUSTEE, RoleEnum.SUPERADMIN)
+        )
+
+    def _build_response(
+        self,
+        complaint,
+        *,
+        current_user: Optional[CurrentUser] = None,
+    ) -> ComplaintResponse:
         data = ComplaintResponse.model_validate(complaint)
         submitter = None
         try:
@@ -98,7 +111,12 @@ class ComplaintService:
             except Exception:
                 # Do not fail complaint APIs if object-storage URL generation fails.
                 data.attachment_url = None
-        if complaint.is_anonymous:
+        is_owner_view = (
+            current_user is not None
+            and complaint.submitted_by is not None
+            and complaint.submitted_by == current_user.id
+        )
+        if complaint.is_anonymous and not is_owner_view:
             data.submitted_by = None
             data.submitted_by_name = None
             data.submitted_by_role = None
@@ -113,12 +131,11 @@ class ComplaintService:
             raise ForbiddenException("Principal cannot raise complaints")
         school_id = self._ensure_school(current_user)
 
-        submitted_by = None if body.is_anonymous else current_user.id
-
         complaint = await self.repo.create_complaint(
             {
                 "school_id": school_id,
-                "submitted_by": submitted_by,
+                # Always persist owner so role-based own-complaint visibility works.
+                "submitted_by": current_user.id,
                 "category": body.category,
                 "description": body.description,
                 "attachment_key": body.attachment_key,
@@ -135,7 +152,10 @@ class ComplaintService:
         complaint_with_relations = await self.repo.get_complaint_by_id(
             complaint.id, school_id
         )
-        return self._build_response(complaint_with_relations or complaint)
+        return self._build_response(
+            complaint_with_relations or complaint,
+            current_user=current_user,
+        )
 
     async def list_complaints(
         self,
@@ -166,7 +186,10 @@ class ComplaintService:
             submitted_by=submitted_by,
         )
         return ComplaintListResponse(
-            items=[self._build_response(c) for c in complaints],
+            items=[
+                self._build_response(c, current_user=current_user)
+                for c in complaints
+            ],
             total=len(complaints),
         )
 
@@ -178,6 +201,10 @@ class ComplaintService:
         background_tasks: BackgroundTasks,
     ) -> ComplaintResponse:
         school_id = self._ensure_school(current_user)
+        if not self._can_manage_status(current_user):
+            raise ForbiddenException(
+                "Only principal, trustee, or superadmin can update complaint status"
+            )
         complaint = await self.repo.get_complaint_by_id(complaint_id, school_id)
         if not complaint:
             raise NotFoundException("Complaint")
@@ -211,7 +238,10 @@ class ComplaintService:
         updated_with_relations = await self.repo.get_complaint_by_id(
             updated.id, school_id
         )
-        return self._build_response(updated_with_relations or updated)
+        return self._build_response(
+            updated_with_relations or updated,
+            current_user=current_user,
+        )
 
     async def create_feedback(
         self,

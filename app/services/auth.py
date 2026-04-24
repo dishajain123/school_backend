@@ -70,6 +70,7 @@ class AuthService:
             "role": user.role.value,
             "school_id": str(user.school_id) if user.school_id else None,
             "permissions": permissions,
+            "full_name": user.full_name,
             "email": user.email,
             "phone": user.phone,
             "is_active": user.is_active,

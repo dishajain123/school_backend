@@ -5,6 +5,11 @@ from fastapi import FastAPI
 from app.db.init_db import init_db
 from app.integrations.minio_client import ensure_buckets_exist
 from app.core.logging import get_logger
+from app.core.api_usage_tracker import (
+    DEPRECATED_APIS,
+    UNUSED_CANDIDATE_APIS,
+    api_usage_tracker,
+)
 from app.db.session import AsyncSessionLocal
 from app.repositories.otp_store import OtpStoreRepository
 from app.repositories.jti_blocklist import JtiBlocklistRepository
@@ -54,6 +59,11 @@ async def _cleanup_loop(stop_event: asyncio.Event) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting up SMS backend...")
+    logger.info(
+        "API usage tracking enabled: deprecated=%s unused_candidates=%s",
+        len(DEPRECATED_APIS),
+        len(UNUSED_CANDIDATE_APIS),
+    )
     await init_db()
     logger.info("Database initialized successfully")
     try:
@@ -69,4 +79,5 @@ async def lifespan(app: FastAPI):
         await cleanup_task
     except Exception:
         pass
+    api_usage_tracker.log_runtime_summary()
     logger.info("Shutting down SMS backend...")

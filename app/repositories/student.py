@@ -71,8 +71,13 @@ class StudentRepository:
             count_query = count_query.where(Student.standard_id == standard_id)
 
         if section is not None:
-            query = query.where(Student.section == section)
-            count_query = count_query.where(Student.section == section)
+            normalized_section = section.strip().upper()
+            query = query.where(
+                func.upper(func.trim(Student.section)) == normalized_section
+            )
+            count_query = count_query.where(
+                func.upper(func.trim(Student.section)) == normalized_section
+            )
 
         if academic_year_id is not None:
             query = query.where(Student.academic_year_id == academic_year_id)
@@ -106,7 +111,10 @@ class StudentRepository:
             Student.school_id == school_id,
         )
         if section:
-            query = query.where(Student.section == section)
+            normalized_section = section.strip().upper()
+            query = query.where(
+                func.upper(func.trim(Student.section)) == normalized_section
+            )
         result = await self.db.execute(query.order_by(Student.roll_number.asc()))
         return list(result.scalars().all())
 

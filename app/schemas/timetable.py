@@ -15,6 +15,7 @@ class TimetableUploadResponse(BaseModel):
     effective_from: Optional[date] = None
     effective_to: Optional[date] = None
     uploaded_by: Optional[uuid.UUID] = None
+    uploaded_by_name: Optional[str] = None
     school_id: uuid.UUID
     created_at: datetime
     updated_at: datetime
@@ -32,6 +33,7 @@ class TimetableResponse(BaseModel):
     effective_from: Optional[date] = None
     effective_to: Optional[date] = None
     uploaded_by: Optional[uuid.UUID] = None
+    uploaded_by_name: Optional[str] = None
     school_id: uuid.UUID
     created_at: datetime
     updated_at: datetime
