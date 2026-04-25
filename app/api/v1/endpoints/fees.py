@@ -26,6 +26,7 @@ from app.schemas.fee import (
     FeeDashboardResponse,
     PaymentListResponse,
     FeeAnalyticsResponse,
+    DefaulterListResponse,
 )
 from app.services.fee import FeeService
 from app.utils.enums import RoleEnum
@@ -45,6 +46,14 @@ def _assert_fee_read(current_user: CurrentUser) -> None:
         )
 
 
+def _assert_analytics_access(current_user: CurrentUser) -> None:
+    allowed = (RoleEnum.PRINCIPAL, RoleEnum.TRUSTEE, RoleEnum.SUPERADMIN)
+    if current_user.role not in allowed:
+        raise ForbiddenException(
+            detail="Only Principal, Trustee or Superadmin can access fee analytics"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Write endpoints — require fee:create permission
 # ---------------------------------------------------------------------------
@@ -55,7 +64,10 @@ async def create_fee_structure_batch(
     current_user: CurrentUser = Depends(require_permission("fee:create")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Create or update multiple custom fee heads for a class + academic year."""
+    """
+    Create or update multiple custom fee heads for a class + academic year.
+    Supports optional installment_plan in the payload to configure installment-based billing.
+    """
     return await FeeService(db).create_structures_batch(payload, current_user)
 
 
@@ -66,7 +78,7 @@ async def update_fee_structure(
     current_user: CurrentUser = Depends(require_permission("fee:create")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Edit fee head/amount for one class or all classes with the same fee head."""
+    """Edit fee head/amount/installment_plan for one class or all classes with the same fee head."""
     return await FeeService(db).update_structure(
         structure_id=structure_id,
         body=payload,
@@ -81,7 +93,7 @@ async def list_fee_structures(
     current_user: CurrentUser = Depends(require_permission("fee:read")),
     db: AsyncSession = Depends(get_db),
 ):
-    """List fee structures for a class and academic year."""
+    """List fee structures for a class and academic year (includes installment_plan)."""
     return await FeeService(db).list_structures(
         standard_id=standard_id,
         academic_year_id=academic_year_id,
@@ -97,7 +109,11 @@ async def generate_ledger(
 ):
     """
     Idempotent: generate fee ledger entries for all students in a class.
-    Already-existing entries are skipped.
+
+    - If a FeeStructure has installment_plan: ONE ledger row per student per installment.
+    - If no installment_plan: ONE ledger row per student per structure.
+    - Already-existing entries (student + structure + installment_name) are skipped.
+    - Overdue status is set automatically for past-due installments.
     """
     return await FeeService(db).generate_ledger(payload, current_user)
 
@@ -108,7 +124,15 @@ async def record_payment(
     current_user: CurrentUser = Depends(require_permission("fee:create")),
     db: AsyncSession = Depends(get_db),
 ):
-    """Record a payment against a fee ledger entry and generate a receipt."""
+    """
+    Record a payment against a fee ledger entry.
+
+    - Validates that payment does not exceed outstanding balance (overpayment prevention).
+    - Auto-computes ledger status: PAID / PARTIAL / OVERDUE.
+    - Updates last_payment_date on the ledger.
+    - Generates a PDF receipt and stores it in MinIO.
+    - Supports transaction_ref for external payment gateway reference.
+    """
     return await FeeService(db).record_payment(payload, current_user)
 
 
@@ -124,9 +148,11 @@ async def fee_dashboard(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Return all ledger entries for a student.
-    Students and parents are restricted to their own data.
-    Optionally filter by academic_year_id.
+    Return all ledger entries for a student, grouped by installment.
+
+    - Students and parents are restricted to their own data.
+    - Response includes: total_billed, total_paid, total_outstanding, has_overdue.
+    - Lazily marks overdue installments on first fetch for accuracy.
     """
     _assert_fee_read(current_user)
     return await FeeService(db).fee_dashboard(student_id, current_user, academic_year_id)
@@ -138,7 +164,7 @@ async def list_payments(
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Return all payments for a specific fee ledger entry."""
+    """Return all payments for a specific fee ledger entry (installment)."""
     _assert_fee_read(current_user)
     return await FeeService(db).list_payments(fee_ledger_id, current_user)
 
@@ -153,6 +179,57 @@ async def get_receipt(
     _assert_fee_read(current_user)
     url = await FeeService(db).get_receipt_url(payment_id, current_user)
     return {"url": url}
+
+
+# ---------------------------------------------------------------------------
+# Defaulters — Principal / Trustee / Superadmin only
+# ---------------------------------------------------------------------------
+
+@router.get("/defaulters", response_model=DefaulterListResponse)
+async def get_defaulters(
+    academic_year_id: Optional[uuid.UUID] = Query(None),
+    standard_id: Optional[uuid.UUID] = Query(None),
+    section: Optional[str] = Query(None),
+    current_user: CurrentUser = Depends(
+        require_roles(RoleEnum.PRINCIPAL, RoleEnum.TRUSTEE, RoleEnum.SUPERADMIN)
+    ),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    List all defaulters (students with at least one OVERDUE installment).
+
+    - Automatically refreshes overdue statuses before querying.
+    - Returns: student info, count of overdue ledgers, total overdue amount, oldest due date.
+    - Filterable by class and section.
+    """
+    return await FeeService(db).get_defaulters(
+        current_user=current_user,
+        academic_year_id=academic_year_id,
+        standard_id=standard_id,
+        section=section,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Overdue refresh — Principal / Trustee / Superadmin only
+# ---------------------------------------------------------------------------
+
+@router.post("/ledger/refresh-overdue")
+async def refresh_overdue(
+    academic_year_id: Optional[uuid.UUID] = Query(None),
+    current_user: CurrentUser = Depends(
+        require_roles(RoleEnum.PRINCIPAL, RoleEnum.TRUSTEE, RoleEnum.SUPERADMIN)
+    ),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Bulk-refresh overdue statuses for all unpaid/partial ledgers past their due date.
+    Safe to call repeatedly (idempotent). Returns count of updated rows.
+    """
+    return await FeeService(db).refresh_overdue_statuses(
+        current_user=current_user,
+        academic_year_id=academic_year_id,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +248,18 @@ async def fee_analytics(
     ),
     db: AsyncSession = Depends(get_db),
 ):
-    """Aggregated fee analytics with optional filters."""
+    """
+    Aggregated fee analytics with optional filters.
+
+    Returns:
+    - Summary: total collected, pending, defaulters count, collection %
+    - by_category: fee head-wise breakdown
+    - by_status: PAID/PARTIAL/PENDING/OVERDUE breakdown
+    - by_payment_mode: cash/UPI/card breakdown
+    - by_student: per-student collection with defaulter flag
+    - by_class: class-wise collection with defaulters count
+    - by_installment: installment-wise collection (when installment plan is used)
+    """
     return await FeeService(db).fee_analytics(
         current_user=current_user,
         academic_year_id=academic_year_id,

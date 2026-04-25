@@ -391,6 +391,25 @@ class StudentService:
         if not student:
             raise NotFoundException("Student")
 
+        from app.repositories.promotion import PromotionRepository
+        promo_repo = PromotionRepository(self.db)
+
+        # Prevent accidental repeated promotions in the same academic year.
+        # A student should be promoted at most once per academic year,
+        # but can be promoted again in a different academic year.
+        if (
+            data.promotion_status == PromotionStatus.PROMOTED
+            and student.academic_year_id is not None
+        ):
+            latest_history = await promo_repo.get_latest_history(
+                student.id, student.academic_year_id
+            )
+            if (
+                latest_history is not None
+                and latest_history.promotion_status == PromotionStatus.PROMOTED
+            ):
+                return student
+
         update_payload: dict = {
             "is_promoted": data.promotion_status == PromotionStatus.PROMOTED
         }
@@ -441,8 +460,6 @@ class StudentService:
         )
 
         # Record/update yearly promotion history for both statuses.
-        from app.repositories.promotion import PromotionRepository
-        promo_repo = PromotionRepository(self.db)
         if student.standard_id and student.academic_year_id:
             latest = await promo_repo.get_latest_history(
                 student.id, student.academic_year_id

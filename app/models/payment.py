@@ -35,12 +35,14 @@ class Payment(BaseModel):
         index=True,
     )
     amount: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
-    payment_date: Mapped[date] = mapped_column(Date, nullable=False)
+    payment_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     payment_mode: Mapped[PaymentMode] = mapped_column(
         SAEnum(PaymentMode, name="payment_mode_enum"),
         nullable=False,
     )
     reference_number: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    # transaction_ref is an alias / extended field for external transaction IDs
+    transaction_ref: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     receipt_key: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     recorded_by: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),

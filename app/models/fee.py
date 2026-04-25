@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import uuid
 from datetime import date
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Any
 
-from sqlalchemy import String, Date, Numeric, ForeignKey, UniqueConstraint
+from sqlalchemy import String, Date, Numeric, ForeignKey, UniqueConstraint, Text
 from sqlalchemy import Enum as SAEnum
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import BaseModel
@@ -65,6 +65,14 @@ class FeeStructure(BaseModel):
         nullable=False,
         index=True,
     )
+    # Installment plan stored as JSON array:
+    # [{"name": "Term 1", "due_date": "2026-06-10", "amount": 20000}, ...]
+    # If null/empty, the entire `amount` is treated as a single installment.
+    installment_plan: Mapped[Optional[Any]] = mapped_column(
+        JSONB,
+        nullable=True,
+        default=None,
+    )
 
     standard: Mapped["Standard"] = relationship(
         "Standard", foreign_keys=[standard_id], lazy="select"
@@ -81,12 +89,18 @@ class FeeStructure(BaseModel):
 
 
 class FeeLedger(BaseModel):
+    """
+    One row = ONE installment for ONE student.
+    If FeeStructure has no installment_plan → one row per student per structure.
+    If FeeStructure has installment_plan    → one row per student per installment.
+    """
     __tablename__ = "fee_ledger"
     __table_args__ = (
         UniqueConstraint(
             "student_id",
             "fee_structure_id",
-            name="uq_fee_ledger_student_structure",
+            "installment_name",
+            name="uq_fee_ledger_student_structure_installment",
         ),
     )
 
@@ -102,6 +116,17 @@ class FeeLedger(BaseModel):
         nullable=False,
         index=True,
     )
+    # Name of the installment (e.g. "Term 1", "Term 2").
+    # Empty string "" for non-installment (single-payment) structures.
+    installment_name: Mapped[str] = mapped_column(
+        String(120),
+        nullable=False,
+        default="",
+        server_default="",
+        index=True,
+    )
+    # Per-installment due date (copied from installment_plan or structure.due_date)
+    due_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True, index=True)
     total_amount: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     paid_amount: Mapped[float] = mapped_column(
         Numeric(10, 2), nullable=False, default=0, server_default="0"
@@ -111,7 +136,9 @@ class FeeLedger(BaseModel):
         nullable=False,
         default=FeeStatus.PENDING,
         server_default=FeeStatus.PENDING.value,
+        index=True,
     )
+    last_payment_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     school_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("schools.id", ondelete="CASCADE"),

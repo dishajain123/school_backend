@@ -42,6 +42,7 @@ class FeeStatus(str, Enum):
     PENDING = "PENDING"
     PARTIAL = "PARTIAL"
     PAID = "PAID"
+    OVERDUE = "OVERDUE"
 
 
 class PaymentMode(str, Enum):
@@ -50,6 +51,7 @@ class PaymentMode(str, Enum):
     ONLINE = "ONLINE"
     UPI = "UPI"
     BANK_TRANSFER = "BANK_TRANSFER"
+    CARD = "CARD"
 
 
 class ExamType(str, Enum):

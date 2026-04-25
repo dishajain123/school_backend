@@ -1,10 +1,36 @@
 import uuid
 from datetime import date, datetime
-from typing import Optional
+from typing import Optional, Any
 
 from pydantic import BaseModel, Field, field_validator
 
 from app.utils.enums import FeeCategory, FeeStatus, PaymentMode
+
+
+# ---------------------------------------------------------------------------
+# Installment Plan
+# ---------------------------------------------------------------------------
+
+class InstallmentPlanItem(BaseModel):
+    """One item in FeeStructure.installment_plan JSON array."""
+    name: str = Field(..., min_length=1, max_length=120)
+    due_date: date
+    amount: float
+
+    @field_validator("amount")
+    @classmethod
+    def amount_positive(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("Installment amount must be positive")
+        return v
+
+    @field_validator("name")
+    @classmethod
+    def name_clean(cls, v: str) -> str:
+        v = " ".join(v.strip().split())
+        if not v:
+            raise ValueError("Installment name is required")
+        return v
 
 
 # ---------------------------------------------------------------------------
@@ -19,6 +45,7 @@ class FeeStructureCreate(BaseModel):
     amount: float
     due_date: date
     description: Optional[str] = None
+    installment_plan: Optional[list[InstallmentPlanItem]] = None
 
     @field_validator("amount")
     @classmethod
@@ -70,6 +97,7 @@ class FeeStructureBatchCreate(BaseModel):
     due_date: date
     description: Optional[str] = None
     fee_heads: list[FeeStructureHeadCreate] = Field(default_factory=list)
+    installment_plan: Optional[list[InstallmentPlanItem]] = None
 
     @field_validator("fee_heads")
     @classmethod
@@ -94,6 +122,7 @@ class FeeStructureResponse(BaseModel):
     due_date: date
     description: Optional[str] = None
     school_id: uuid.UUID
+    installment_plan: Optional[list[Any]] = None
     created_at: datetime
     updated_at: datetime
 
@@ -123,6 +152,7 @@ class FeeStructureUpdate(BaseModel):
     due_date: Optional[date] = None
     description: Optional[str] = None
     apply_to_all_classes: bool = False
+    installment_plan: Optional[list[InstallmentPlanItem]] = None
 
     @field_validator("custom_fee_head")
     @classmethod
@@ -159,14 +189,16 @@ class FeeLedgerResponse(BaseModel):
     id: uuid.UUID
     student_id: uuid.UUID
     fee_structure_id: uuid.UUID
+    installment_name: str = ""
     fee_category: Optional[FeeCategory] = None
     custom_fee_head: Optional[str] = None
     due_date: Optional[date] = None
     fee_description: Optional[str] = None
     total_amount: float
     paid_amount: float
-    outstanding_amount: float = 0.0  # computed by service, not stored in DB
+    outstanding_amount: float = 0.0
     status: FeeStatus
+    last_payment_date: Optional[date] = None
     school_id: uuid.UUID
     created_at: datetime
     updated_at: datetime
@@ -184,6 +216,7 @@ class CustomFeeHeadInput(BaseModel):
     amount: float
     due_date: Optional[date] = None
     description: Optional[str] = None
+    installment_plan: Optional[list[InstallmentPlanItem]] = None
 
     @field_validator("name")
     @classmethod
@@ -227,6 +260,7 @@ class PaymentCreate(BaseModel):
     payment_date: Optional[date] = None
     payment_mode: PaymentMode
     reference_number: Optional[str] = None
+    transaction_ref: Optional[str] = None
 
     @field_validator("amount")
     @classmethod
@@ -244,6 +278,7 @@ class PaymentResponse(BaseModel):
     payment_date: date
     payment_mode: PaymentMode
     reference_number: Optional[str] = None
+    transaction_ref: Optional[str] = None
     receipt_key: Optional[str] = None
     recorded_by: Optional[uuid.UUID] = None
     late_fee_applied: bool
@@ -267,6 +302,32 @@ class PaymentListResponse(BaseModel):
 class FeeDashboardResponse(BaseModel):
     items: list[FeeLedgerResponse]
     total: int
+    total_billed: float = 0.0
+    total_paid: float = 0.0
+    total_outstanding: float = 0.0
+    has_overdue: bool = False
+
+
+# ---------------------------------------------------------------------------
+# Defaulters
+# ---------------------------------------------------------------------------
+
+class DefaulterEntry(BaseModel):
+    student_id: uuid.UUID
+    admission_number: str
+    student_name: Optional[str] = None
+    standard_id: Optional[uuid.UUID] = None
+    section: Optional[str] = None
+    overdue_ledgers: int
+    total_overdue_amount: float
+    oldest_due_date: Optional[date] = None
+
+
+class DefaulterListResponse(BaseModel):
+    academic_year_id: uuid.UUID
+    report_date: date
+    total_defaulters: int
+    defaulters: list[DefaulterEntry]
 
 
 # ---------------------------------------------------------------------------
@@ -284,6 +345,7 @@ class FeeAnalyticsSummary(BaseModel):
     partial_ledgers: int
     pending_ledgers: int
     overdue_ledgers: int
+    defaulters_count: int
     payments_count: int
     late_payments_count: int
 
@@ -323,7 +385,33 @@ class FeeStudentAnalyticsItem(BaseModel):
     partial_ledgers: int
     pending_ledgers: int
     overdue_ledgers: int
+    is_defaulter: bool = False
     latest_payment_date: Optional[date] = None
+
+
+class FeeClassAnalyticsItem(BaseModel):
+    standard_id: uuid.UUID
+    standard_name: str
+    section: Optional[str] = None
+    total_students: int
+    total_billed: float
+    total_paid: float
+    total_outstanding: float
+    collection_percentage: float
+    defaulters_count: int
+
+
+class FeeInstallmentAnalyticsItem(BaseModel):
+    installment_name: str
+    total_ledgers: int
+    paid_ledgers: int
+    partial_ledgers: int
+    pending_ledgers: int
+    overdue_ledgers: int
+    total_billed: float
+    total_paid: float
+    total_outstanding: float
+    collection_percentage: float
 
 
 class FeeAnalyticsResponse(BaseModel):
@@ -335,3 +423,5 @@ class FeeAnalyticsResponse(BaseModel):
     by_status: list[FeeStatusAnalyticsItem]
     by_payment_mode: list[PaymentModeAnalyticsItem]
     by_student: list[FeeStudentAnalyticsItem]
+    by_class: list[FeeClassAnalyticsItem]
+    by_installment: list[FeeInstallmentAnalyticsItem]
