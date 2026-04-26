@@ -20,7 +20,7 @@ from app.core.exceptions import (
     ValidationException,
 )
 from app.core.dependencies import CurrentUser
-from app.utils.enums import RoleEnum
+from app.utils.enums import RoleEnum, UserStatus
 
 
 class TeacherClassSubjectService:
@@ -41,6 +41,16 @@ class TeacherClassSubjectService:
             return None
         value = section.strip().upper()
         return value if value else None
+
+    @staticmethod
+    def _ensure_teacher_is_approved(teacher) -> None:
+        user = getattr(teacher, "user", None)
+        if not user:
+            raise ValidationException(detail="Teacher must be linked to a user account")
+        if user.status != UserStatus.ACTIVE or not user.is_active:
+            raise ValidationException(
+                detail="Teacher assignment is allowed only for approved active teachers"
+            )
 
     async def _load_sections_registry(self, school_id: uuid.UUID) -> dict:
         setting = await self.settings_repo.get_by_key(
@@ -113,6 +123,7 @@ class TeacherClassSubjectService:
         teacher = await self.teacher_repo.get_by_id(payload.teacher_id, school_id)
         if not teacher:
             raise NotFoundException(detail="Teacher not found in this school")
+        self._ensure_teacher_is_approved(teacher)
 
         # Validate standard belongs to school
         standard = await self.std_repo.get_by_id(payload.standard_id, school_id)
@@ -180,6 +191,7 @@ class TeacherClassSubjectService:
         teacher = await self.teacher_repo.get_by_id(obj.teacher_id, school_id)
         if not teacher:
             raise NotFoundException(detail="Assignment not found in this school")
+        self._ensure_teacher_is_approved(teacher)
 
         await self.repo.delete(obj)
         await self.db.commit()
@@ -201,6 +213,7 @@ class TeacherClassSubjectService:
         teacher = await self.teacher_repo.get_by_id(obj.teacher_id, school_id)
         if not teacher:
             raise NotFoundException(detail="Assignment not found in this school")
+        self._ensure_teacher_is_approved(teacher)
 
         standard = await self.std_repo.get_by_id(payload.standard_id, school_id)
         if not standard:

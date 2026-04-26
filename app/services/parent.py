@@ -42,6 +42,26 @@ class ParentService:
             raise NotFoundException(detail="Parent profile not found for this user")
         return parent.id
 
+    @staticmethod
+    def _ensure_user_is_active(user: Optional[User], label: str) -> None:
+        if not user:
+            raise ValidationException(f"{label} user account not found")
+        if user.status != UserStatus.ACTIVE or not user.is_active:
+            raise ValidationException(
+                f"{label} mapping is allowed only for approved active users"
+            )
+
+    async def _ensure_students_are_active(self, students: list[Student]) -> None:
+        user_ids = [s.user_id for s in students if s.user_id is not None]
+        if len(user_ids) != len(students):
+            raise ValidationException("All students must be linked to user accounts")
+
+        users_result = await self.db.execute(select(User).where(User.id.in_(user_ids)))
+        users = {u.id: u for u in users_result.scalars().all()}
+        for student in students:
+            user = users.get(student.user_id)
+            self._ensure_user_is_active(user, "Student")
+
     async def create_parent(
         self,
         payload: ParentCreate,
@@ -212,6 +232,10 @@ class ParentService:
             raise ValidationException("school_id is required")
 
         parent_id = await self._resolve_parent_id(current_user)
+        parent_profile = await self.parent_repo.get_by_id(parent_id, school_id)
+        if not parent_profile:
+            raise NotFoundException(detail="Parent profile not found")
+        self._ensure_user_is_active(parent_profile.user, "Parent")
 
         if not student_id and not admission_number:
             raise ValidationException("Provide student_id or admission_number")
@@ -226,6 +250,7 @@ class ParentService:
         student = (await self.db.execute(student_query)).scalar_one_or_none()
         if not student:
             raise NotFoundException(detail="Student not found")
+        await self._ensure_students_are_active([student])
 
         if student.parent_id == parent_id:
             # Idempotent behavior: return current links when child is already
@@ -297,6 +322,7 @@ class ParentService:
         parent = await self.parent_repo.get_by_id(parent_id, school_id)
         if not parent:
             raise NotFoundException(detail="Parent not found")
+        self._ensure_user_is_active(parent.user, "Parent")
 
         unique_ids = list(dict.fromkeys(student_ids))
         if not unique_ids:
@@ -317,6 +343,7 @@ class ParentService:
             raise ValidationException(
                 f"Some students were not found in this school: {', '.join(str(sid) for sid in missing_ids)}"
             )
+        await self._ensure_students_are_active(students)
 
         for student in students:
             student.parent_id = parent.id

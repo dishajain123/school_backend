@@ -1,3 +1,4 @@
+# app/utils/enums.py
 from enum import Enum
 
 
@@ -68,6 +69,14 @@ class PromotionStatus(str, Enum):
     HELD_BACK = "HELD_BACK"
 
 
+# Phase 7: decision made during the promotion workflow
+class PromotionDecision(str, Enum):
+    PROMOTE = "PROMOTE"       # advance to next class in new year
+    REPEAT = "REPEAT"         # repeat same class in new year
+    GRADUATE = "GRADUATE"     # completed final class — no further mapping
+    SKIP = "SKIP"             # exclude from this promotion run (handle manually)
+
+
 class DocumentType(str, Enum):
     ID_CARD = "ID_CARD"
     BONAFIDE = "BONAFIDE"
@@ -82,85 +91,24 @@ class DocumentStatus(str, Enum):
     FAILED = "FAILED"
 
 
-class ComplaintCategory(str, Enum):
-    ACADEMIC = "ACADEMIC"
-    INFRASTRUCTURE = "INFRASTRUCTURE"
-    STAFF = "STAFF"
-    OTHER = "OTHER"
+# ── Phase 6: Admission Type ───────────────────────────────────────────────────
+class AdmissionType(str, Enum):
+    NEW_ADMISSION = "NEW_ADMISSION"   # standard start-of-year admission
+    MID_YEAR = "MID_YEAR"             # joining after year has started
+    TRANSFER_IN = "TRANSFER_IN"       # transferred from another school
+    READMISSION = "READMISSION"       # previously LEFT/TRANSFERRED, re-joining
 
 
-class ComplaintStatus(str, Enum):
-    OPEN = "OPEN"
-    IN_PROGRESS = "IN_PROGRESS"
-    RESOLVED = "RESOLVED"
-    CLOSED = "CLOSED"
-
-
-class IncidentType(str, Enum):
-    POSITIVE = "POSITIVE"
-    NEGATIVE = "NEGATIVE"
-    NEUTRAL = "NEUTRAL"
-
-
-class IncidentSeverity(str, Enum):
-    LOW = "LOW"
-    MEDIUM = "MEDIUM"
-    HIGH = "HIGH"
-
-
-class MessageType(str, Enum):
-    TEXT = "TEXT"
-    FILE = "FILE"
-    IMAGE = "IMAGE"
-
-
-class NotificationType(str, Enum):
-    ATTENDANCE = "ATTENDANCE"
-    ASSIGNMENT = "ASSIGNMENT"
-    SUBMISSION = "SUBMISSION"
-    HOMEWORK = "HOMEWORK"
-    DIARY = "DIARY"
-    EXAM = "EXAM"
-    FEE = "FEE"
-    RESULT = "RESULT"
-    ANNOUNCEMENT = "ANNOUNCEMENT"
-    LEAVE = "LEAVE"
-    COMPLAINT = "COMPLAINT"
-    BEHAVIOUR = "BEHAVIOUR"
-    CHAT = "CHAT"
-    SYSTEM = "SYSTEM"
-
-
-class NotificationPriority(str, Enum):
-    LOW = "LOW"
-    MEDIUM = "MEDIUM"
-    HIGH = "HIGH"
-
-
-class SubscriptionPlan(str, Enum):
-    BASIC = "BASIC"
-    STANDARD = "STANDARD"
-    PREMIUM = "PREMIUM"
-
-
-class RelationType(str, Enum):
-    MOTHER = "MOTHER"
-    FATHER = "FATHER"
-    GUARDIAN = "GUARDIAN"
-
-
-class AnnouncementType(str, Enum):
-    EXAM = "EXAM"
-    EVENT = "EVENT"
-    HOLIDAY = "HOLIDAY"
-    GENERAL = "GENERAL"
-
-
-class FeedbackType(str, Enum):
-    GENERAL = "GENERAL"
-    ACADEMIC = "ACADEMIC"
-    INFRASTRUCTURE = "INFRASTRUCTURE"
-    STAFF = "STAFF"
+# ── Phase 6 & 7: Enrollment (StudentYearMapping) lifecycle ───────────────────
+class EnrollmentStatus(str, Enum):
+    ACTIVE = "ACTIVE"           # currently enrolled in this year
+    HOLD = "HOLD"               # temporarily on hold
+    COMPLETED = "COMPLETED"     # year finished, promotion decision pending
+    LEFT = "LEFT"               # left school mid-year
+    TRANSFERRED = "TRANSFERRED" # transferred to another school mid-year
+    # Phase 7 terminal states — set when new year mapping is created
+    PROMOTED = "PROMOTED"       # promoted to next class (old-year mapping closed)
+    REPEATED = "REPEATED"       # repeating same class (old-year mapping closed)
 
 
 class ConversationType(str, Enum):
@@ -184,14 +132,12 @@ class RegistrationSource(str, Enum):
     ADMIN_CREATED = "ADMIN_CREATED"
 
 
-# Current approvals API decision values
 class ApprovalAction(str, Enum):
     APPROVE = "APPROVE"
     REJECT = "REJECT"
     HOLD = "HOLD"
 
 
-# Legacy approval actions table values
 class ApprovalDecision(str, Enum):
     APPROVED = "APPROVED"
     REJECTED = "REJECTED"
@@ -210,6 +156,11 @@ class AuditAction(str, Enum):
     DUPLICATE_DETECTED = "DUPLICATE_DETECTED"
     STUDENT_ENROLLED = "STUDENT_ENROLLED"
     STUDENT_EXITED = "STUDENT_EXITED"
+    STUDENT_PROMOTED = "STUDENT_PROMOTED"
+    STUDENT_REPEATED = "STUDENT_REPEATED"
+    STUDENT_GRADUATED = "STUDENT_GRADUATED"
+    STUDENT_REENROLLED = "STUDENT_REENROLLED"
+    TEACHER_ASSIGNMENT_COPIED = "TEACHER_ASSIGNMENT_COPIED"
 
 
 class IdentifierType(str, Enum):
@@ -218,9 +169,9 @@ class IdentifierType(str, Enum):
     PARENT_CODE = "PARENT_CODE"
 
 
-class EnrollmentStatus(str, Enum):
-    ACTIVE = "ACTIVE"
-    HOLD = "HOLD"
-    COMPLETED = "COMPLETED"
-    LEFT = "LEFT"
-    TRANSFERRED = "TRANSFERRED"
+class RelationType(str, Enum):
+    FATHER = "FATHER"
+    MOTHER = "MOTHER"
+    GUARDIAN = "GUARDIAN"
+    SIBLING = "SIBLING"
+    OTHER = "OTHER"

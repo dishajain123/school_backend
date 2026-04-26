@@ -1,18 +1,22 @@
 # app/models/student_year_mapping.py
 """
-THE source of truth for where a student is enrolled in a given academic year.
+THE source of truth for a student's academic placement in a given year.
 
-One row per (student, academic_year).
-Replaces the flat fields on Student for historical tracking.
-Student.standard_id / academic_year_id / section / roll_number are kept
-as a denormalized cache of the ACTIVE mapping for query convenience.
+One row per (student, academic_year) — enforced by unique constraint.
+The Student table keeps denormalized flat fields (standard_id, section,
+roll_number, academic_year_id) as a cache of the ACTIVE mapping only.
 
-Status lifecycle:
-  ACTIVE → COMPLETED (at year end, eligible for promotion)
-  ACTIVE → LEFT      (mid-year departure)
-  ACTIVE → TRANSFERRED (moved to another school)
-  ACTIVE → HOLD      (temporary hold)
-  HOLD   → ACTIVE    (hold lifted)
+Phase 6 Status lifecycle:
+  ACTIVE      → COMPLETED      (year ended, promotion decision pending)
+  ACTIVE      → LEFT           (mid-year departure by choice)
+  ACTIVE      → TRANSFERRED    (mid-year transfer to another school)
+  ACTIVE      → HOLD           (temporary suspension / processing hold)
+  HOLD        → ACTIVE         (hold lifted, re-activated)
+
+Phase 7 Terminal states (set when new-year mapping is created):
+  COMPLETED   → PROMOTED       (admin ran promotion; student moved to next class)
+  COMPLETED   → REPEATED       (admin decided student repeats same class)
+  COMPLETED   → GRADUATED      (no next class; student has finished schooling)
 """
 import uuid
 from datetime import date, datetime
@@ -21,7 +25,7 @@ from sqlalchemy import String, ForeignKey, Date, DateTime, UniqueConstraint, Int
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import BaseModel
-from app.utils.enums import EnrollmentStatus
+from app.utils.enums import EnrollmentStatus, AdmissionType
 
 
 class StudentYearMapping(BaseModel):
@@ -63,7 +67,7 @@ class StudentYearMapping(BaseModel):
         nullable=True,
         index=True,
     )
-    # Denormalized for query speed (section name can change)
+    # Denormalized section name for query speed
     section_name: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
     roll_number: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
 
@@ -71,30 +75,41 @@ class StudentYearMapping(BaseModel):
         String(20), nullable=False, default=EnrollmentStatus.ACTIVE, index=True
     )
 
-    # Enrollment window for this mapping
+    # Phase 6: how the student joined this year
+    admission_type: Mapped[Optional[AdmissionType]] = mapped_column(
+        String(30), nullable=True, default=AdmissionType.NEW_ADMISSION
+    )
+
+    # Enrollment window
     joined_on: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     left_on: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
-
-    # Exit details (for LEFT or TRANSFERRED)
     exit_reason: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
 
-    # Who created/last-modified this mapping
+    # Phase 7: tracks who created / last modified this mapping
     created_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=True), nullable=True
     )
     last_modified_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+        UUID(as_uuid=True), nullable=True
     )
 
-    # Relationships
-    student: Mapped["Student"] = relationship("Student", foreign_keys=[student_id])
-    academic_year: Mapped["AcademicYear"] = relationship(
-        "AcademicYear", foreign_keys=[academic_year_id]
+    # Phase 7: when a mapping is PROMOTED/REPEATED, link to next year's mapping
+    next_year_mapping_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("student_year_mappings.id", ondelete="SET NULL"),
+        nullable=True,
     )
-    standard: Mapped["Standard"] = relationship(
-        "Standard", foreign_keys=[standard_id]
+
+    # ── Relationships ─────────────────────────────────────────────────────────
+    student: Mapped[Optional["Student"]] = relationship(
+        "Student", foreign_keys=[student_id], lazy="select"
+    )
+    standard: Mapped[Optional["Standard"]] = relationship(
+        "Standard", foreign_keys=[standard_id], lazy="select"
     )
     section: Mapped[Optional["Section"]] = relationship(
-        "Section", foreign_keys=[section_id]
+        "Section", foreign_keys=[section_id], lazy="select"
     )
-    school: Mapped["School"] = relationship("School", foreign_keys=[school_id])
+    academic_year: Mapped[Optional["AcademicYear"]] = relationship(
+        "AcademicYear", foreign_keys=[academic_year_id], lazy="select"
+    )

@@ -3,6 +3,7 @@ from app.models import academic_structure_copy  # noqa: F401
 from app.models import announcement  # noqa: F401
 from app.models import assignment  # noqa: F401
 from app.models import attendance  # noqa: F401
+from app.models import audit_log  # noqa: F401
 from app.models import complaint  # noqa: F401
 from app.models import conversation  # noqa: F401
 from app.models import document  # noqa: F401
@@ -20,6 +21,7 @@ from app.models import message  # noqa: F401
 from app.models import notification  # noqa: F401
 from app.models import otp_store  # noqa: F401
 from app.models import parent  # noqa: F401
+from app.models import parent_student_link  # noqa: F401
 from app.models import payment  # noqa: F401
 from app.models import permission  # noqa: F401
 from app.models import result  # noqa: F401
@@ -32,6 +34,7 @@ from app.models import student  # noqa: F401
 from app.models import student_academic_history  # noqa: F401
 from app.models import student_behaviour_log  # noqa: F401
 from app.models import student_diary  # noqa: F401
+from app.models import student_year_mapping  # noqa: F401
 from app.models import submission  # noqa: F401
 from app.models import teacher  # noqa: F401
 from app.models import teacher_class_subject  # noqa: F401

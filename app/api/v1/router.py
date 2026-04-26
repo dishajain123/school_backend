@@ -10,6 +10,7 @@ from app.api.v1.endpoints.diary import router as diary_router
 from app.api.v1.endpoints.chat import router as chat_router
 from app.api.v1.endpoints.complaints import router as complaints_router
 from app.api.v1.endpoints.documents import router as documents_router
+from app.api.v1.endpoints.enrollments import router as enrollments_router
 from app.api.v1.endpoints.exam_schedule import router as exam_schedule_router
 from app.api.v1.endpoints.fees import router as fees_router
 from app.api.v1.endpoints.files import router as files_router
@@ -45,6 +46,7 @@ api_router.include_router(chat_router)
 api_router.include_router(complaints_router)
 api_router.include_router(diary_router)
 api_router.include_router(documents_router)
+api_router.include_router(enrollments_router)
 api_router.include_router(exam_schedule_router)
 api_router.include_router(fees_router)
 api_router.include_router(files_router)

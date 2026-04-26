@@ -1,3 +1,4 @@
+# app/services/approval.py
 import math
 import uuid
 from datetime import datetime, timezone
@@ -51,7 +52,15 @@ class ApprovalService:
         if status is not None:
             filters.append(User.status == status)
         else:
-            filters.append(User.status.in_([UserStatus.PENDING_APPROVAL, UserStatus.REJECTED]))
+            # Default view includes PENDING_APPROVAL, ON_HOLD, and REJECTED
+            # so that held users remain visible and distinguishable from pure pending
+            filters.append(
+                User.status.in_([
+                    UserStatus.PENDING_APPROVAL,
+                    UserStatus.ON_HOLD,
+                    UserStatus.REJECTED,
+                ])
+            )
 
         if role is not None:
             filters.append(User.role == role)
@@ -77,7 +86,9 @@ class ApprovalService:
 
         total = (await self.db.execute(count_base)).scalar_one()
         rows = await self.db.execute(
-            base.order_by(User.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
+            base.order_by(User.created_at.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
         )
         items = list(rows.scalars().all())
         total_pages = math.ceil(total / page_size) if total else 1
@@ -136,7 +147,8 @@ class ApprovalService:
             user.approved_by_id = current_user.id
             user.approved_at = now
         elif data.action == ApprovalAction.HOLD:
-            user.status = UserStatus.PENDING_APPROVAL
+            # FIXED: set ON_HOLD (not PENDING_APPROVAL) so held users are distinguishable
+            user.status = UserStatus.ON_HOLD
             user.is_active = False
             user.hold_reason = data.note or "On hold pending additional verification"
             user.rejection_reason = None
@@ -178,10 +190,12 @@ class ApprovalService:
         count_stmt = select(func.count(UserApprovalAudit.id))
 
         if current_user.role != RoleEnum.SUPERADMIN:
-            # Scope audits by joining user school.
-            stmt = stmt.join(User, User.id == UserApprovalAudit.user_id)
-            count_stmt = count_stmt.join(User, User.id == UserApprovalAudit.user_id)
-            filters.append(User.school_id == current_user.school_id)
+            stmt = stmt.join(User, User.id == UserApprovalAudit.user_id).where(
+                User.school_id == current_user.school_id
+            )
+            count_stmt = count_stmt.join(User, User.id == UserApprovalAudit.user_id).where(
+                User.school_id == current_user.school_id
+            )
 
         if filters:
             stmt = stmt.where(and_(*filters))
