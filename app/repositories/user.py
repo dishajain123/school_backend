@@ -4,6 +4,7 @@ from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.user import User
 from app.utils.enums import RoleEnum
+from app.utils.enums import UserStatus
 
 
 class UserRepository:
@@ -103,6 +104,7 @@ class UserRepository:
 
     async def deactivate(self, user: User) -> User:
         user.is_active = False
+        user.status = UserStatus.INACTIVE
         await self.db.flush()
         await self.db.refresh(user)
         return user

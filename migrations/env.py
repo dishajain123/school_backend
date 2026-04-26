@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.db.base import Base
 from app.core.config import settings
 from app.models import academic_year  # noqa: F401
+from app.models import academic_structure_copy  # noqa: F401
 from app.models import announcement  # noqa: F401
 from app.models import assignment  # noqa: F401
 from app.models import attendance  # noqa: F401
@@ -40,6 +41,7 @@ from app.models import role  # noqa: F401
 from app.models import role_permission  # noqa: F401
 from app.models import school  # noqa: F401
 from app.models import school_settings  # noqa: F401
+from app.models import section  # noqa: F401
 from app.models import student  # noqa: F401
 from app.models import student_academic_history  # noqa: F401
 from app.models import student_behaviour_log  # noqa: F401
@@ -101,33 +103,3 @@ if context.is_offline_mode():
     run_migrations_offline()
 else:
     asyncio.run(run_migrations_online())
-```
-
-### migrations/script.py.mako
-```
-"""${message}
-
-Revision ID: ${up_revision}
-Revises: ${down_revision | comma,n}
-Create Date: ${create_date}
-
-"""
-from typing import Sequence, Union
-
-from alembic import op
-import sqlalchemy as sa
-${imports if imports else ""}
-
-# revision identifiers, used by Alembic.
-revision: str = ${repr(up_revision)}
-down_revision: Union[str, None] = ${repr(down_revision)}
-branch_labels: Union[str, Sequence[str], None] = ${repr(branch_labels)}
-depends_on: Union[str, Sequence[str], None] = ${repr(depends_on)}
-
-
-def upgrade() -> None:
-    ${upgrades if upgrades else "pass"}
-
-
-def downgrade() -> None:
-    ${downgrades if downgrades else "pass"}

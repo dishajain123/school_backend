@@ -3,6 +3,7 @@ from app.api.v1.endpoints.academic_years import router as academic_years_router
 from app.api.v1.endpoints.attendance import router as attendance_router
 from app.api.v1.endpoints.auth import router as auth_router
 from app.api.v1.endpoints.announcements import router as announcements_router
+from app.api.v1.endpoints.approvals import router as approvals_router
 from app.api.v1.endpoints.assignments import router as assignments_router
 from app.api.v1.endpoints.behaviour import router as behaviour_router
 from app.api.v1.endpoints.diary import router as diary_router
@@ -20,6 +21,8 @@ from app.api.v1.endpoints.notifications import router as notifications_router
 from app.api.v1.endpoints.parents import router as parents_router
 from app.api.v1.endpoints.principal_reports import router as principal_reports_router
 from app.api.v1.endpoints.results import router as results_router
+from app.api.v1.endpoints.registrations import router as registrations_router
+from app.api.v1.endpoints.role_profiles import router as role_profiles_router
 from app.api.v1.endpoints.schools import router as schools_router
 from app.api.v1.endpoints.settings import router as settings_router
 from app.api.v1.endpoints.submissions import router as submissions_router
@@ -35,6 +38,7 @@ api_router.include_router(academic_years_router)
 api_router.include_router(attendance_router)
 api_router.include_router(auth_router)
 api_router.include_router(announcements_router)
+api_router.include_router(approvals_router)
 api_router.include_router(assignments_router)
 api_router.include_router(behaviour_router)
 api_router.include_router(chat_router)
@@ -52,6 +56,8 @@ api_router.include_router(notifications_router)
 api_router.include_router(parents_router)
 api_router.include_router(principal_reports_router)
 api_router.include_router(results_router)
+api_router.include_router(registrations_router)
+api_router.include_router(role_profiles_router)
 api_router.include_router(schools_router)
 api_router.include_router(settings_router)
 api_router.include_router(submissions_router)

@@ -53,17 +53,17 @@ class Subject(BaseModel):
         nullable=False,
         index=True,
     )
-    standard_id: Mapped[uuid.UUID] = mapped_column(
+    standard_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("standards.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     code: Mapped[str] = mapped_column(String(20), nullable=False)
 
     school: Mapped["School"] = relationship("School", foreign_keys=[school_id], lazy="select")
-    standard: Mapped["Standard"] = relationship(
+    standard: Mapped[Optional["Standard"]] = relationship(
         "Standard", foreign_keys=[standard_id], lazy="select", back_populates="subjects"
     )
 

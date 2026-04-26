@@ -1,4 +1,5 @@
 from app.models import academic_year  # noqa: F401
+from app.models import academic_structure_copy  # noqa: F401
 from app.models import announcement  # noqa: F401
 from app.models import assignment  # noqa: F401
 from app.models import attendance  # noqa: F401
@@ -26,6 +27,7 @@ from app.models import role  # noqa: F401
 from app.models import role_permission  # noqa: F401
 from app.models import school  # noqa: F401
 from app.models import school_settings  # noqa: F401
+from app.models import section  # noqa: F401
 from app.models import student  # noqa: F401
 from app.models import student_academic_history  # noqa: F401
 from app.models import student_behaviour_log  # noqa: F401

@@ -123,5 +123,6 @@ async def get_me(
         full_name=user.full_name if user else current_user.full_name,
         email=user.email if user else current_user.email,
         phone=user.phone if user else current_user.phone,
+        status=user.status if user else current_user.status,
         is_active=user.is_active if user else current_user.is_active,
     )

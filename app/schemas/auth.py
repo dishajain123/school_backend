@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 from pydantic import BaseModel, EmailStr, Field
-from app.utils.enums import RoleEnum
+from app.utils.enums import RoleEnum, UserStatus
 
 
 class LoginRequest(BaseModel):
@@ -74,4 +74,5 @@ class CurrentUserSchema(BaseModel):
     full_name: Optional[str]
     email: Optional[str]
     phone: Optional[str]
+    status: UserStatus
     is_active: bool

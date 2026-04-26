@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # ── Standard ──────────────────────────────────────────────────────────────────
@@ -42,7 +42,7 @@ class StandardListResponse(BaseModel):
 # ── Subject ───────────────────────────────────────────────────────────────────
 
 class SubjectCreate(BaseModel):
-    standard_id: uuid.UUID
+    standard_id: Optional[uuid.UUID] = None
     name: str = Field(..., max_length=100)
     code: str = Field(..., max_length=20)
 
@@ -50,6 +50,7 @@ class SubjectCreate(BaseModel):
 
 
 class SubjectUpdate(BaseModel):
+    standard_id: Optional[uuid.UUID] = None
     name: Optional[str] = Field(None, max_length=100)
     code: Optional[str] = Field(None, max_length=20)
 
@@ -59,7 +60,7 @@ class SubjectUpdate(BaseModel):
 class SubjectResponse(BaseModel):
     id: uuid.UUID
     school_id: uuid.UUID
-    standard_id: uuid.UUID
+    standard_id: Optional[uuid.UUID]
     name: str
     code: str
     created_at: datetime
@@ -71,6 +72,65 @@ class SubjectResponse(BaseModel):
 class SubjectListResponse(BaseModel):
     items: list[SubjectResponse]
     total: int
+
+
+# ── Section ───────────────────────────────────────────────────────────────────
+
+class SectionCreate(BaseModel):
+    standard_id: uuid.UUID
+    academic_year_id: uuid.UUID
+    name: str = Field(..., min_length=1, max_length=10)
+    capacity: Optional[int] = None
+
+    model_config = {"str_strip_whitespace": True}
+
+    @field_validator("name")
+    @classmethod
+    def uppercase_name(cls, v: str) -> str:
+        return v.strip().upper()
+
+
+class SectionUpdate(BaseModel):
+    is_active: Optional[bool] = None
+    capacity: Optional[int] = None
+
+
+class SectionResponse(BaseModel):
+    id: uuid.UUID
+    school_id: uuid.UUID
+    standard_id: uuid.UUID
+    academic_year_id: uuid.UUID
+    name: str
+    is_active: bool
+    capacity: Optional[int]
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class SectionListResponse(BaseModel):
+    items: list[SectionResponse]
+    total: int
+
+
+class StandardTreeNode(BaseModel):
+    id: uuid.UUID
+    name: str
+    level: int
+    sections: list[SectionResponse]
+    subjects: list[SubjectResponse]
+    section_count: int
+    subject_count: int
+
+
+class AcademicStructureTreeResponse(BaseModel):
+    """Full tree: year -> standards -> sections + subjects per standard"""
+
+    academic_year_id: uuid.UUID
+    academic_year_name: str
+    is_active: bool
+    standards: list[StandardTreeNode]
 
 
 # ── GradeMaster ───────────────────────────────────────────────────────────────

@@ -45,3 +45,46 @@ class AcademicYearResponse(BaseModel):
 class AcademicYearListResponse(BaseModel):
     items: list[AcademicYearResponse]
     total: int
+
+
+class AcademicStructureValidation(BaseModel):
+    """Result of completeness check before activation."""
+
+    is_valid: bool
+    total_standards: int
+    standards_with_subjects: int
+    standards_without_subjects: list[str]
+    total_sections: int
+    standards_without_sections: list[str]
+    warnings: list[str]
+    errors: list[str]
+
+
+class AcademicStructureCopyRequest(BaseModel):
+    source_year_id: uuid.UUID
+    target_year_id: uuid.UUID
+    copy_standards: bool = True
+    copy_subjects: bool = True
+    copy_sections: bool = True
+    copy_grade_master: bool = False
+
+
+class AcademicStructureCopyResponse(BaseModel):
+    source_year_name: str
+    target_year_name: str
+    standards_copied: int
+    subjects_copied: int
+    sections_copied: int
+    skipped_duplicates: int
+    warnings: list[str]
+
+
+class BulkStandardCreate(BaseModel):
+    academic_year_id: uuid.UUID
+    standards: list[dict]
+
+
+class BulkStandardResponse(BaseModel):
+    created: int
+    skipped: int
+    items: list[dict]

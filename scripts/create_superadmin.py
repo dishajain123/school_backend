@@ -15,7 +15,7 @@ from typing import Optional
 from app.db.session import AsyncSessionLocal
 from app.repositories.user import UserRepository
 from app.core.security import hash_password
-from app.utils.enums import RoleEnum
+from app.utils.enums import RegistrationSource, RoleEnum, UserStatus
 
 
 async def create_superadmin(email: str, phone: Optional[str], password: str) -> None:
@@ -23,7 +23,19 @@ async def create_superadmin(email: str, phone: Optional[str], password: str) -> 
         repo = UserRepository(db)
         existing = await repo.get_by_email_or_phone(email, phone)
         if existing:
-            raise ValueError("User with this email/phone already exists")
+            # Repair/upgrade existing account into a valid Phase-1 superadmin login.
+            existing.email = email.lower().strip()
+            existing.phone = phone
+            existing.hashed_password = hash_password(password)
+            existing.role = RoleEnum.SUPERADMIN
+            existing.school_id = None
+            existing.is_active = True
+            existing.status = UserStatus.ACTIVE
+            existing.registration_source = RegistrationSource.ADMIN_CREATED
+            await db.commit()
+            await db.refresh(existing)
+            print(f"Superadmin updated: {existing.id}")
+            return
 
         user = await repo.create(
             {
@@ -32,6 +44,8 @@ async def create_superadmin(email: str, phone: Optional[str], password: str) -> 
                 "hashed_password": hash_password(password),
                 "role": RoleEnum.SUPERADMIN,
                 "school_id": None,
+                "status": UserStatus.ACTIVE,
+                "registration_source": RegistrationSource.ADMIN_CREATED,
                 "is_active": True,
             }
         )

@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 from pydantic import BaseModel, EmailStr, Field
-from app.utils.enums import RoleEnum
+from app.utils.enums import RegistrationSource, RoleEnum, UserStatus
 
 
 class UserCreate(BaseModel):
@@ -32,6 +32,8 @@ class UserResponse(BaseModel):
     phone: Optional[str]
     role: RoleEnum
     school_id: Optional[uuid.UUID]
+    status: UserStatus
+    registration_source: RegistrationSource
     is_active: bool
     profile_photo_key: Optional[str]
     profile_photo_url: Optional[str] = None

@@ -21,7 +21,7 @@ from app.core.security import (
 from app.core.exceptions import UnauthorizedException, NotFoundException, ValidationException
 from app.core.config import settings
 from app.models.user import User
-from app.utils.enums import RoleEnum
+from app.utils.enums import RoleEnum, UserStatus
 from app.utils.helpers import generate_otp
 from app.utils.constants import OTP_EXPIRE_MINUTES, RESET_TOKEN_TYPE
 
@@ -73,6 +73,7 @@ class AuthService:
             "full_name": user.full_name,
             "email": user.email,
             "phone": user.phone,
+            "status": user.status.value,
             "is_active": user.is_active,
         }
 
@@ -90,6 +91,18 @@ class AuthService:
 
         if not user:
             raise UnauthorizedException(detail="Invalid credentials")
+
+        if user.status != UserStatus.ACTIVE:
+            status_messages = {
+                UserStatus.PENDING_APPROVAL: "Your account is pending approval by the administrator.",
+                UserStatus.REJECTED: "Your account has been rejected. Please contact the school.",
+                UserStatus.ON_HOLD: "Your account is currently on hold. Please contact the school.",
+                UserStatus.HOLD: "Your account is currently on hold. Please contact the school.",
+                UserStatus.INACTIVE: "Your account has been deactivated.",
+                UserStatus.DISABLED: "Your account has been deactivated.",
+            }
+            msg = status_messages.get(user.status, "Account is not active.")
+            raise UnauthorizedException(detail=msg)
 
         if not user.is_active:
             raise UnauthorizedException(detail="Account is deactivated")
@@ -124,7 +137,7 @@ class AuthService:
         user_id = uuid.UUID(payload["sub"])
         user = await self.user_repo.get_by_id(user_id)
 
-        if not user or not user.is_active:
+        if not user or not user.is_active or user.status != UserStatus.ACTIVE:
             raise UnauthorizedException(detail="User not found or deactivated")
 
         token_payload = await self._build_token_payload(user)
@@ -159,7 +172,7 @@ class AuthService:
         if not user:
             return {"message": "If an account exists, an OTP has been sent", "hint": None}
 
-        if not user.is_active:
+        if not user.is_active or user.status != UserStatus.ACTIVE:
             raise UnauthorizedException(detail="Account is deactivated")
 
         await self.otp_repo.invalidate_all_for_user(user.id)
@@ -216,7 +229,7 @@ class AuthService:
         user_id = uuid.UUID(payload["sub"])
         user = await self.user_repo.get_by_id(user_id)
 
-        if not user or not user.is_active:
+        if not user or not user.is_active or user.status != UserStatus.ACTIVE:
             raise UnauthorizedException(detail="User not found or deactivated")
 
         new_hashed = hash_password(new_password)

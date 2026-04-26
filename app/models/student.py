@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import uuid
 import re
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
-from sqlalchemy import String, Boolean, ForeignKey, Date, UniqueConstraint
+from sqlalchemy import String, Boolean, ForeignKey, Date, DateTime, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import BaseModel
@@ -50,6 +50,12 @@ class Student(BaseModel):
     section: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
     roll_number: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     admission_number: Mapped[str] = mapped_column(String(50), nullable=False)
+    identifier_issued_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    is_identifier_custom: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
     date_of_birth: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     admission_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     is_promoted: Mapped[bool] = mapped_column(

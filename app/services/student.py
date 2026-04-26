@@ -7,6 +7,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.masters import Standard
+from app.models.section import Section
 from app.repositories.student import StudentRepository
 from app.repositories.settings import SettingsRepository
 from app.schemas.student import StudentCreate, StudentUpdate, StudentPromotionUpdate
@@ -319,8 +320,22 @@ class StudentService:
             standard_id=standard_id,
             academic_year_id=academic_year_id,
         )
+        section_filters = [
+            Section.school_id == school_id,
+            Section.is_active.is_(True),
+        ]
+        if standard_id is not None:
+            section_filters.append(Section.standard_id == standard_id)
+        if academic_year_id is not None:
+            section_filters.append(Section.academic_year_id == academic_year_id)
+        section_rows = (
+            await self.db.execute(
+                select(Section.name).where(*section_filters)
+            )
+        ).scalars().all()
         registry = await self._load_sections_registry(school_id)
         sections = {s.strip().upper() for s in db_sections if s and s.strip()}
+        sections.update({s.strip().upper() for s in section_rows if s and str(s).strip()})
         sections.update(
             self._collect_registry_sections(
                 registry=registry,
@@ -352,6 +367,8 @@ class StudentService:
             raise NotFoundException("Standard")
 
         effective_year_id = academic_year_id or standard.academic_year_id
+        if effective_year_id is None:
+            effective_year_id = (await get_active_year(school_id, self.db)).id
         if (
             standard.academic_year_id is not None
             and effective_year_id is not None
@@ -368,6 +385,26 @@ class StudentService:
             section=normalized,
             updated_by=current_user.id,
         )
+        existing_section = (
+            await self.db.execute(
+                select(Section).where(
+                    Section.school_id == school_id,
+                    Section.standard_id == standard_id,
+                    Section.academic_year_id == effective_year_id,
+                    Section.name == normalized,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing_section is None:
+            self.db.add(
+                Section(
+                    school_id=school_id,
+                    standard_id=standard_id,
+                    academic_year_id=effective_year_id,
+                    name=normalized,
+                    is_active=True,
+                )
+            )
         await self.db.commit()
 
         sections = await self.list_sections(

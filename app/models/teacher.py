@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
-from sqlalchemy import String, ForeignKey, Date
+from sqlalchemy import String, ForeignKey, Date, DateTime, Boolean
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, synonym
 from app.db.base import BaseModel
 
 
@@ -31,11 +31,19 @@ class Teacher(BaseModel):
         nullable=True,
         index=True,
     )
-    employee_code: Mapped[str] = mapped_column(
+    employee_id: Mapped[str] = mapped_column(
+        "employee_code",
         String(50),
         nullable=False,
         unique=True,
         index=True,
+    )
+    employee_code = synonym("employee_id")
+    identifier_issued_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    is_identifier_custom: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
     )
     join_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     specialization: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)

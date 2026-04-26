@@ -166,3 +166,61 @@ class FeedbackType(str, Enum):
 class ConversationType(str, Enum):
     ONE_TO_ONE = "ONE_TO_ONE"
     GROUP = "GROUP"
+
+
+class UserStatus(str, Enum):
+    PENDING_APPROVAL = "PENDING_APPROVAL"
+    ACTIVE = "ACTIVE"
+    REJECTED = "REJECTED"
+    INACTIVE = "INACTIVE"
+    ON_HOLD = "ON_HOLD"
+    # Backward-compat aliases used in older code paths
+    HOLD = "HOLD"
+    DISABLED = "DISABLED"
+
+
+class RegistrationSource(str, Enum):
+    SELF_REGISTERED = "SELF_REGISTERED"
+    ADMIN_CREATED = "ADMIN_CREATED"
+
+
+# Current approvals API decision values
+class ApprovalAction(str, Enum):
+    APPROVE = "APPROVE"
+    REJECT = "REJECT"
+    HOLD = "HOLD"
+
+
+# Legacy approval actions table values
+class ApprovalDecision(str, Enum):
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    ON_HOLD = "ON_HOLD"
+
+
+class AuditAction(str, Enum):
+    USER_REGISTERED = "USER_REGISTERED"
+    USER_APPROVED = "USER_APPROVED"
+    USER_REJECTED = "USER_REJECTED"
+    USER_HELD = "USER_HELD"
+    USER_ACTIVATED = "USER_ACTIVATED"
+    USER_DEACTIVATED = "USER_DEACTIVATED"
+    ADMIN_LOGIN = "ADMIN_LOGIN"
+    ADMIN_CREATED_USER = "ADMIN_CREATED_USER"
+    DUPLICATE_DETECTED = "DUPLICATE_DETECTED"
+    STUDENT_ENROLLED = "STUDENT_ENROLLED"
+    STUDENT_EXITED = "STUDENT_EXITED"
+
+
+class IdentifierType(str, Enum):
+    ADMISSION_NUMBER = "ADMISSION_NUMBER"
+    EMPLOYEE_ID = "EMPLOYEE_ID"
+    PARENT_CODE = "PARENT_CODE"
+
+
+class EnrollmentStatus(str, Enum):
+    ACTIVE = "ACTIVE"
+    HOLD = "HOLD"
+    COMPLETED = "COMPLETED"
+    LEFT = "LEFT"
+    TRANSFERRED = "TRANSFERRED"

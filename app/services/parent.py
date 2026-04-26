@@ -16,7 +16,7 @@ from app.core.exceptions import (
     ConflictException,
 )
 from app.core.dependencies import CurrentUser
-from app.utils.enums import RoleEnum
+from app.utils.enums import RegistrationSource, RoleEnum, UserStatus
 
 
 class ParentService:
@@ -102,7 +102,9 @@ class ParentService:
                 "hashed_password": hash_password(payload.user.password),
                 "role": RoleEnum.PARENT,
                 "school_id": school_id,
-                "is_active": True,
+                "status": UserStatus.PENDING_APPROVAL,
+                "registration_source": RegistrationSource.ADMIN_CREATED,
+                "is_active": False,
             }
         )
 

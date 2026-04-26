@@ -124,8 +124,8 @@ class TeacherClassSubjectService:
         if not subject:
             raise NotFoundException(detail="Subject not found in this school")
 
-        # Validate subject belongs to the given standard
-        if subject.standard_id != payload.standard_id:
+        # Subject can be global (standard_id is NULL) or class-specific.
+        if subject.standard_id is not None and subject.standard_id != payload.standard_id:
             raise ValidationException(
                 detail="Subject does not belong to the specified standard"
             )
@@ -210,7 +210,7 @@ class TeacherClassSubjectService:
         if not subject:
             raise NotFoundException(detail="Subject not found in this school")
 
-        if subject.standard_id != payload.standard_id:
+        if subject.standard_id is not None and subject.standard_id != payload.standard_id:
             raise ValidationException(
                 detail="Subject does not belong to the specified standard"
             )

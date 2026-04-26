@@ -16,7 +16,7 @@ from app.core.exceptions import (
 )
 from app.core.dependencies import CurrentUser
 from app.integrations.minio_client import upload_file, generate_presigned_url
-from app.utils.enums import RoleEnum
+from app.utils.enums import RegistrationSource, RoleEnum, UserStatus
 from app.utils.constants import (
     ALLOWED_IMAGE_TYPES,
     MAX_FILE_SIZE_BYTES,
@@ -42,6 +42,8 @@ class UserService:
             "phone": user.phone,
             "role": user.role,
             "school_id": user.school_id,
+            "status": user.status,
+            "registration_source": user.registration_source,
             "is_active": user.is_active,
             "profile_photo_key": user.profile_photo_key,
             "profile_photo_url": None,
@@ -83,6 +85,8 @@ class UserService:
             "hashed_password": hash_password(data.password),
             "role": data.role,
             "school_id": school_id,
+            "status": UserStatus.ACTIVE if data.is_active else UserStatus.INACTIVE,
+            "registration_source": RegistrationSource.ADMIN_CREATED,
             "is_active": data.is_active,
         })
         return user

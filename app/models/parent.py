@@ -25,6 +25,9 @@ class Parent(BaseModel):
         nullable=False,
         index=True,
     )
+    parent_code: Mapped[Optional[str]] = mapped_column(
+        String(50), nullable=True, unique=False, index=True
+    )
     occupation: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     relation: Mapped[RelationType] = mapped_column(
         SAEnum(RelationType, name="relationtype", create_type=False),

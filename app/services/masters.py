@@ -2,19 +2,31 @@ import uuid
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.repositories.masters import StandardRepository, SubjectRepository, GradeMasterRepository
-from app.schemas.masters import (
-    StandardCreate, StandardUpdate,
-    SubjectCreate, SubjectUpdate,
-    GradeMasterCreate, GradeMasterUpdate,
+from app.repositories.academic_year import AcademicYearRepository
+from app.repositories.masters import (
+    GradeMasterRepository,
+    SectionRepository,
+    StandardRepository,
+    SubjectRepository,
 )
-from app.models.masters import Standard, Subject, GradeMaster
+from app.schemas.masters import (
+    GradeMasterCreate,
+    GradeMasterUpdate,
+    SectionCreate,
+    SectionUpdate,
+    StandardCreate,
+    StandardUpdate,
+    SubjectCreate,
+    SubjectUpdate,
+)
+from app.models.masters import GradeMaster, Standard, Subject
+from app.models.section import Section
 from app.core.exceptions import (
     NotFoundException,
     ValidationException,
     ConflictException,
 )
-from app.core.dependencies import CurrentUser
+from app.services.academic_year import get_active_year
 
 
 class MastersService:
@@ -23,6 +35,8 @@ class MastersService:
         self.std_repo = StandardRepository(db)
         self.sub_repo = SubjectRepository(db)
         self.grade_repo = GradeMasterRepository(db)
+        self.section_repo = SectionRepository(db)
+        self.year_repo = AcademicYearRepository(db)
 
     # ── Standards ─────────────────────────────────────────────────────────────
 
@@ -31,6 +45,16 @@ class MastersService:
         payload: StandardCreate,
         school_id: uuid.UUID,
     ) -> Standard:
+        # Academic structure must be anchored to a concrete year.
+        if payload.academic_year_id is None:
+            payload = payload.model_copy(
+                update={"academic_year_id": (await get_active_year(school_id, self.db)).id}
+            )
+
+        year = await self.year_repo.get_by_id(payload.academic_year_id, school_id)
+        if not year:
+            raise NotFoundException(detail="Academic year not found in this school")
+
         existing = await self.std_repo.get_by_level_and_year(
             school_id, payload.level, payload.academic_year_id
         )
@@ -98,10 +122,11 @@ class MastersService:
         payload: SubjectCreate,
         school_id: uuid.UUID,
     ) -> Subject:
-        # Verify standard belongs to this school
-        standard = await self.std_repo.get_by_id(payload.standard_id, school_id)
-        if not standard:
-            raise NotFoundException(detail="Standard not found")
+        # Optional class mapping: subject master can be global when standard_id is omitted.
+        if payload.standard_id is not None:
+            standard = await self.std_repo.get_by_id(payload.standard_id, school_id)
+            if not standard:
+                raise NotFoundException(detail="Standard not found")
 
         existing = await self.sub_repo.get_by_code(school_id, payload.code)
         if existing:
@@ -138,6 +163,11 @@ class MastersService:
 
         update_data = payload.model_dump(exclude_unset=True)
 
+        if "standard_id" in update_data and update_data["standard_id"] is not None:
+            standard = await self.std_repo.get_by_id(update_data["standard_id"], school_id)
+            if not standard:
+                raise NotFoundException(detail="Standard not found")
+
         new_code = update_data.get("code")
         if new_code:
             update_data["code"] = new_code.upper().strip()
@@ -158,6 +188,85 @@ class MastersService:
         if not obj:
             raise NotFoundException(detail="Subject not found")
         await self.sub_repo.delete(obj)
+        await self.db.commit()
+
+    # ── Sections ─────────────────────────────────────────────────────────────
+
+    async def create_section(
+        self,
+        payload: SectionCreate,
+        school_id: uuid.UUID,
+    ) -> Section:
+        standard = await self.std_repo.get_by_id(payload.standard_id, school_id)
+        if not standard:
+            raise NotFoundException(detail="Standard not found")
+
+        year = await self.year_repo.get_by_id(payload.academic_year_id, school_id)
+        if not year:
+            raise NotFoundException(detail="Academic year not found")
+
+        if standard.academic_year_id and standard.academic_year_id != payload.academic_year_id:
+            raise ValidationException("Section year must match class academic year")
+
+        section_name = payload.name.strip().upper()
+        existing = await self.section_repo.get_by_key(
+            school_id=school_id,
+            standard_id=payload.standard_id,
+            academic_year_id=payload.academic_year_id,
+            name=section_name,
+        )
+        if existing:
+            raise ConflictException(
+                detail=f"Section '{section_name}' already exists for this class and academic year"
+            )
+
+        obj = await self.section_repo.create(
+            {
+                "school_id": school_id,
+                "standard_id": payload.standard_id,
+                "academic_year_id": payload.academic_year_id,
+                "name": section_name,
+                "capacity": payload.capacity,
+                "is_active": True,
+            }
+        )
+        await self.db.commit()
+        await self.db.refresh(obj)
+        return obj
+
+    async def list_sections(
+        self,
+        school_id: uuid.UUID,
+        standard_id: Optional[uuid.UUID],
+        academic_year_id: Optional[uuid.UUID],
+        include_inactive: bool = False,
+    ) -> tuple[list[Section], int]:
+        return await self.section_repo.list_by_scope(
+            school_id=school_id,
+            standard_id=standard_id,
+            academic_year_id=academic_year_id,
+            include_inactive=include_inactive,
+        )
+
+    async def update_section(
+        self,
+        section_id: uuid.UUID,
+        payload: SectionUpdate,
+        school_id: uuid.UUID,
+    ) -> Section:
+        obj = await self.section_repo.get_by_id(section_id, school_id)
+        if not obj:
+            raise NotFoundException(detail="Section not found")
+        updated = await self.section_repo.update(obj, payload.model_dump(exclude_unset=True))
+        await self.db.commit()
+        await self.db.refresh(updated)
+        return updated
+
+    async def delete_section(self, section_id: uuid.UUID, school_id: uuid.UUID) -> None:
+        obj = await self.section_repo.get_by_id(section_id, school_id)
+        if not obj:
+            raise NotFoundException(detail="Section not found")
+        await self.section_repo.delete(obj)
         await self.db.commit()
 
     # ── Grade Master ──────────────────────────────────────────────────────────

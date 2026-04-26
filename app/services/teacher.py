@@ -32,7 +32,7 @@ from app.core.exceptions import (
     ForbiddenException,
 )
 from app.core.dependencies import CurrentUser
-from app.utils.enums import RoleEnum
+from app.utils.enums import RegistrationSource, RoleEnum, UserStatus
 from app.utils.enums import AttendanceStatus
 from app.utils.date_utils import today_in_app_timezone
 
@@ -72,7 +72,9 @@ class TeacherService:
                 "hashed_password": hash_password(payload.user.password),
                 "role": RoleEnum.TEACHER,
                 "school_id": school_id,
-                "is_active": True,
+                "status": UserStatus.PENDING_APPROVAL,
+                "registration_source": RegistrationSource.ADMIN_CREATED,
+                "is_active": False,
             }
         )
 

@@ -364,6 +364,326 @@ async def init_db() -> None:
                 )
             )
 
+            # ── Phase 1 Identity/Approval: user status + registration payload ─
+            await conn.execute(
+                text(
+                    """
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM pg_type WHERE typname = 'userstatus'
+                        ) THEN
+                            CREATE TYPE userstatus AS ENUM (
+                                'PENDING_APPROVAL',
+                                'ACTIVE',
+                                'REJECTED',
+                                'INACTIVE',
+                                'ON_HOLD',
+                                'HOLD',
+                                'DISABLED'
+                            );
+                        END IF;
+                    END $$;
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM pg_type WHERE typname = 'registrationsource'
+                        ) THEN
+                            CREATE TYPE registrationsource AS ENUM (
+                                'SELF_REGISTERED',
+                                'ADMIN_CREATED'
+                            );
+                        END IF;
+                    END $$;
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1
+                            FROM pg_enum
+                            WHERE enumlabel = 'ON_HOLD'
+                              AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'userstatus')
+                        ) THEN
+                            ALTER TYPE userstatus ADD VALUE 'ON_HOLD';
+                        END IF;
+                    END $$;
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1
+                            FROM pg_enum
+                            WHERE enumlabel = 'HOLD'
+                              AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'userstatus')
+                        ) THEN
+                            ALTER TYPE userstatus ADD VALUE 'HOLD';
+                        END IF;
+                    END $$;
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1
+                            FROM pg_enum
+                            WHERE enumlabel = 'DISABLED'
+                              AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'userstatus')
+                        ) THEN
+                            ALTER TYPE userstatus ADD VALUE 'DISABLED';
+                        END IF;
+                    END $$;
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1
+                            FROM pg_enum
+                            WHERE enumlabel = 'SELF_REGISTERED'
+                              AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'registrationsource')
+                        ) THEN
+                            ALTER TYPE registrationsource ADD VALUE 'SELF_REGISTERED';
+                        END IF;
+                    END $$;
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1
+                            FROM pg_enum
+                            WHERE enumlabel = 'ADMIN_CREATED'
+                              AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'registrationsource')
+                        ) THEN
+                            ALTER TYPE registrationsource ADD VALUE 'ADMIN_CREATED';
+                        END IF;
+                    END $$;
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    ALTER TABLE IF EXISTS users
+                    ADD COLUMN IF NOT EXISTS status userstatus NULL
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    ALTER TABLE IF EXISTS users
+                    ADD COLUMN IF NOT EXISTS registration_source registrationsource NULL
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    ALTER TABLE IF EXISTS users
+                    ADD COLUMN IF NOT EXISTS rejection_reason VARCHAR(500) NULL
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    ALTER TABLE IF EXISTS users
+                    ADD COLUMN IF NOT EXISTS hold_reason VARCHAR(500) NULL
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    ALTER TABLE IF EXISTS users
+                    ADD COLUMN IF NOT EXISTS submitted_data JSONB NULL
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    ALTER TABLE IF EXISTS users
+                    ADD COLUMN IF NOT EXISTS approved_by_id UUID NULL
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    ALTER TABLE IF EXISTS users
+                    ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ NULL
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1
+                            FROM pg_enum
+                            WHERE enumlabel = 'INACTIVE'
+                              AND enumtypid = (
+                                SELECT oid FROM pg_type WHERE typname = 'userstatus'
+                              )
+                        ) THEN
+                            ALTER TYPE userstatus ADD VALUE 'INACTIVE';
+                        END IF;
+                    END $$;
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    UPDATE users
+                    SET status = CASE
+                        WHEN is_active IS TRUE THEN 'ACTIVE'::userstatus
+                        ELSE 'INACTIVE'::userstatus
+                    END
+                    WHERE status IS NULL
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    UPDATE users
+                    SET registration_source = 'SELF_REGISTERED'::registrationsource
+                    WHERE registration_source IS NULL
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    ALTER TABLE IF EXISTS users
+                    ALTER COLUMN status SET DEFAULT 'PENDING_APPROVAL'::userstatus
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    ALTER TABLE IF EXISTS users
+                    ALTER COLUMN registration_source SET DEFAULT 'SELF_REGISTERED'::registrationsource
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    ALTER TABLE IF EXISTS users
+                    ALTER COLUMN status SET NOT NULL
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    ALTER TABLE IF EXISTS users
+                    ALTER COLUMN registration_source SET NOT NULL
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    CREATE INDEX IF NOT EXISTS ix_users_status
+                    ON users (status)
+                    """
+                )
+            )
+
+            # ── Parent identifier uniqueness within school when present ───────
+            await conn.execute(
+                text(
+                    """
+                    ALTER TABLE IF EXISTS parents
+                    ADD COLUMN IF NOT EXISTS parent_code VARCHAR(50) NULL
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    CREATE UNIQUE INDEX IF NOT EXISTS uq_parent_code_school
+                    ON parents (school_id, parent_code)
+                    WHERE parent_code IS NOT NULL
+                    """
+                )
+            )
+
+            # ── Approval audit log indexes ────────────────────────────────────
+            await conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_user_approval_audits_user_acted_at ON user_approval_audits (user_id, acted_at DESC);"
+                )
+            )
+            await conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_user_approval_audits_actor_acted_at ON user_approval_audits (acted_by_id, acted_at DESC);"
+                )
+            )
+
+            # ── Phase 3 Academic Structure hardening ────────────────────────
+            await conn.execute(
+                text(
+                    """
+                    ALTER TABLE IF EXISTS subjects
+                    ALTER COLUMN standard_id DROP NOT NULL
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    CREATE UNIQUE INDEX IF NOT EXISTS uq_academic_year_one_active_per_school
+                    ON academic_years (school_id)
+                    WHERE is_active IS TRUE
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    CREATE UNIQUE INDEX IF NOT EXISTS uq_section_school_std_year_name_idx
+                    ON sections (school_id, standard_id, academic_year_id, name)
+                    """
+                )
+            )
+
         logger.info("Database tables created/verified successfully")
     except Exception as e:
         logger.error(f"Failed to initialize database: {e}")

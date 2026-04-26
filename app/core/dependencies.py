@@ -10,7 +10,8 @@ from app.core.security import decode_token
 from app.core.exceptions import UnauthorizedException, ForbiddenException
 from app.models.jti_blocklist import JtiBlocklist
 from app.models.parent import Parent
-from app.utils.enums import RoleEnum
+from app.models.user import User
+from app.utils.enums import RoleEnum, UserStatus
 
 security = HTTPBearer()
 
@@ -24,6 +25,7 @@ class CurrentUser(BaseModel):
     full_name: Optional[str] = None
     email: Optional[str] = None
     phone: Optional[str] = None
+    status: UserStatus = UserStatus.ACTIVE
     is_active: bool = True
 
     model_config = {"from_attributes": True}
@@ -56,6 +58,15 @@ async def get_current_user(
     resolved_parent_id: Optional[uuid.UUID] = (
         uuid.UUID(parent_id_raw) if parent_id_raw else None
     )
+
+    user_row = await db.execute(
+        select(User.status, User.is_active).where(User.id == uuid.UUID(payload["sub"]))
+    )
+    user_state = user_row.one_or_none()
+    if not user_state:
+        raise UnauthorizedException(detail="User not found")
+    if user_state.status != UserStatus.ACTIVE or not user_state.is_active:
+        raise ForbiddenException(detail="Account is not active")
     # Backward compatibility: some tokens may miss parent_id for parent role.
     # Resolve it once here so all parent-scoped services work consistently.
     if resolved_parent_id is None and payload.get("role") == RoleEnum.PARENT.value:
@@ -73,7 +84,8 @@ async def get_current_user(
         full_name=payload.get("full_name"),
         email=payload.get("email"),
         phone=payload.get("phone"),
-        is_active=payload.get("is_active", True),
+        status=user_state.status,
+        is_active=user_state.is_active,
     )
 
 

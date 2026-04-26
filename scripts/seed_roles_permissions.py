@@ -57,6 +57,8 @@ ALL_PERMISSIONS: list[tuple[str, str]] = [
     ("behaviour_log:create",      "Log student behaviour incidents"),
     ("behaviour_log:read",        "View student behaviour logs"),
     ("school:manage",             "Create and manage schools (superadmin only)"),
+    ("approval:review",           "Review pending registrations and validation findings"),
+    ("approval:decide",           "Approve, reject, or hold registrations"),
 ]
 
 ROLE_DEFINITIONS: dict[str, str] = {
@@ -93,6 +95,7 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "announcement:create",
         "chat:message",
         "document:generate",
+        "approval:review",
     ],
 
     RoleEnum.TEACHER.value: [
