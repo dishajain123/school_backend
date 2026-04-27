@@ -91,6 +91,75 @@ class DocumentStatus(str, Enum):
     FAILED = "FAILED"
 
 
+class AnnouncementType(str, Enum):
+    GENERAL = "GENERAL"
+    EXAM = "EXAM"
+    HOLIDAY = "HOLIDAY"
+    EVENT = "EVENT"
+
+
+class ComplaintCategory(str, Enum):
+    ACADEMIC = "ACADEMIC"
+    INFRASTRUCTURE = "INFRASTRUCTURE"
+    STAFF = "STAFF"
+    ADMIN = "ADMIN"
+    OTHER = "OTHER"
+
+
+class ComplaintStatus(str, Enum):
+    OPEN = "OPEN"
+    IN_PROGRESS = "IN_PROGRESS"
+    RESOLVED = "RESOLVED"
+    CLOSED = "CLOSED"
+
+
+class FeedbackType(str, Enum):
+    POSITIVE = "POSITIVE"
+    NEGATIVE = "NEGATIVE"
+    NEUTRAL = "NEUTRAL"
+
+
+class MessageType(str, Enum):
+    TEXT = "TEXT"
+    IMAGE = "IMAGE"
+    FILE = "FILE"
+    SYSTEM = "SYSTEM"
+
+
+class NotificationType(str, Enum):
+    ASSIGNMENT = "ASSIGNMENT"
+    RESULT = "RESULT"
+    ATTENDANCE = "ATTENDANCE"
+    FEE = "FEE"
+    SYSTEM = "SYSTEM"
+    LEAVE = "LEAVE"
+    ANNOUNCEMENT = "ANNOUNCEMENT"
+
+
+class NotificationPriority(str, Enum):
+    HIGH = "HIGH"
+    MEDIUM = "MEDIUM"
+    LOW = "LOW"
+
+
+class SubscriptionPlan(str, Enum):
+    BASIC = "BASIC"
+    PREMIUM = "PREMIUM"
+    ENTERPRISE = "ENTERPRISE"
+
+
+class IncidentType(str, Enum):
+    POSITIVE = "POSITIVE"
+    NEGATIVE = "NEGATIVE"
+    NEUTRAL = "NEUTRAL"
+
+
+class IncidentSeverity(str, Enum):
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+
+
 # ── Phase 6: Admission Type ───────────────────────────────────────────────────
 class AdmissionType(str, Enum):
     NEW_ADMISSION = "NEW_ADMISSION"   # standard start-of-year admission
