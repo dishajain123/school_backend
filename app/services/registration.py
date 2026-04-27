@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import ConflictException, ValidationException
 from app.core.security import hash_password
 from app.models.user import User
+from app.models.registration_request import RegistrationRequest
 from app.repositories.user import UserRepository
 from app.schemas.registration import RegistrationCreateRequest
 from app.utils.enums import RegistrationSource, RoleEnum, UserStatus
@@ -66,6 +67,26 @@ class RegistrationService:
                 "submitted_data": payload.submitted_data,
             }
         )
+        await self.db.flush()
+        
+        # Create immutable RegistrationRequest snapshot
+        registration_request = RegistrationRequest(
+            user_id=user.id,
+            school_id=payload.school_id,
+            role_requested=payload.role,
+            registration_source=source,
+            full_name=user.full_name or "",
+            email=normalized_email,
+            phone=normalized_phone,
+            submitted_data=payload.submitted_data,
+            has_duplicates=False,
+            duplicate_details=None,
+            data_complete=True,
+            missing_fields=None,
+            current_status=UserStatus.PENDING_APPROVAL,
+        )
+        self.db.add(registration_request)
+        
         await self.db.commit()
         await self.db.refresh(user)
         return user

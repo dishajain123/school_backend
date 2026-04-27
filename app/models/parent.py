@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Optional
-from sqlalchemy import String, ForeignKey, Enum as SAEnum
+from sqlalchemy import String, ForeignKey, Enum as SAEnum, Boolean, DateTime
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import BaseModel
@@ -27,6 +28,12 @@ class Parent(BaseModel):
     )
     parent_code: Mapped[Optional[str]] = mapped_column(
         String(50), nullable=True, unique=False, index=True
+    )
+    identifier_issued_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    is_identifier_custom: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
     )
     occupation: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     relation: Mapped[RelationType] = mapped_column(

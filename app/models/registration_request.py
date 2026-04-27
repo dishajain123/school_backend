@@ -4,10 +4,10 @@ import uuid
 import enum
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import String, ForeignKey, DateTime, Text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import String, ForeignKey, DateTime, Text, Boolean
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from app.models.base import BaseModel
+from app.db.base import BaseModel
 from app.utils.enums import UserStatus, RegistrationSource, RoleEnum
 
 

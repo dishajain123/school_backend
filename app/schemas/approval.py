@@ -88,3 +88,38 @@ class ApprovalAuditResponse(BaseModel):
     page: int
     page_size: int
     total_pages: int
+
+
+# ── INTEGRATED APPROVAL + ROLE PROFILE CREATION ──────────────────────────────
+# For convenience: approve user and immediately create role profile in one step
+
+class ApprovalWithProfileRequest(BaseModel):
+    """Approve user and optionally create role profile in one operation"""
+    action: ApprovalAction
+    note: Optional[str] = Field(None, max_length=500)
+    override_validation: bool = False
+    
+    # Optional role profile data (only used if action == APPROVE)
+    create_student_profile: Optional[dict[str, Any]] = None  # StudentProfileCreate data
+    create_teacher_profile: Optional[dict[str, Any]] = None  # TeacherProfileCreate data
+    create_parent_profile: Optional[dict[str, Any]] = None   # ParentProfileCreate data
+
+    model_config = {"str_strip_whitespace": True}
+
+
+class ApprovalWithProfileResponse(BaseModel):
+    """Response includes both approval and optional profile creation results"""
+    user_id: uuid.UUID
+    action: ApprovalAction
+    status: UserStatus
+    is_active: bool
+    note: Optional[str]
+    acted_by_id: uuid.UUID
+    acted_at: datetime
+    
+    # Optional profile data
+    student_profile: Optional[dict[str, Any]] = None
+    teacher_profile: Optional[dict[str, Any]] = None
+    parent_profile: Optional[dict[str, Any]] = None
+    profile_error: Optional[str] = None  # If profile creation failed but approval succeeded
+
