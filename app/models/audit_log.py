@@ -6,7 +6,7 @@ from typing import Optional, Any
 from sqlalchemy import String, ForeignKey, DateTime, Text
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from app.db.base import BaseModel
+from app.models.base import BaseModel
 from app.utils.enums import AuditAction
 
 

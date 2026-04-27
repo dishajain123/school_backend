@@ -4,7 +4,7 @@ import uuid
 from datetime import date, datetime
 from typing import Optional
 from pydantic import BaseModel, Field
-from app.utils.enums import IdentifierType, RelationType
+from app.utils.enums import IdentifierType
 
 
 class StudentProfileCreate(BaseModel):
@@ -32,7 +32,7 @@ class ParentProfileCreate(BaseModel):
     user_id: uuid.UUID
     custom_parent_code: Optional[str] = None
     occupation: Optional[str] = Field(None, max_length=100)
-    relation: RelationType = RelationType.GUARDIAN
+    relation: str = Field(default="GUARDIAN", max_length=20)
 
     model_config = {"str_strip_whitespace": True}
 
@@ -105,10 +105,6 @@ class IdentifierPreviewResponse(BaseModel):
     current_counter: int
     format_template: str
     is_locked: bool
-
-
-class IdentifierPreviewRequest(BaseModel):
-    identifier_type: IdentifierType
 
 
 class RoleProfileListResponse(BaseModel):

@@ -21,7 +21,7 @@ from app.models.student import Student
 from app.models.teacher import Teacher
 from app.models.parent import Parent
 from app.models.user import User
-from app.utils.enums import IdentifierType, UserStatus, RoleEnum
+from app.utils.enums import IdentifierType, UserStatus, RoleEnum, AuditAction
 from app.core.exceptions import (
     ValidationException, ForbiddenException, ConflictException, NotFoundException
 )
@@ -334,9 +334,9 @@ class IdentifierService:
         Only ADMIN and SUPER_ADMIN can use custom identifiers.
         """
         # Permission
-        if actor is None or actor.role not in [RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN]:
+        if actor is None or actor.role not in [RoleEnum.ADMIN, RoleEnum.SUPERADMIN]:
             raise ForbiddenException(
-                "Custom identifier override requires Principal or Super Admin role."
+                "Custom identifier override requires Admin or Super Admin role."
             )
 
         # Format validation

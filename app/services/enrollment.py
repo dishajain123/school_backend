@@ -21,7 +21,7 @@ from app.schemas.student_year_mapping import (
     StudentExitRequest, RollNumberAssignRequest,
     StudentYearMappingResponse, ClassRosterResponse,
 )
-from app.utils.enums import EnrollmentStatus, AuditAction, RoleEnum, UserStatus
+from app.utils.enums import EnrollmentStatus, AuditAction, RoleEnum
 from app.core.exceptions import (
     ConflictException, ValidationException,
     NotFoundException, ForbiddenException
@@ -51,7 +51,6 @@ class EnrollmentService:
 
         # 1. Load and validate student
         student = await self._load_student(data.student_id, school_id)
-        await self._ensure_student_is_approved(student, school_id)
 
         # 2. Duplicate check: one mapping per student per year
         existing = await self.repo.get_by_student_year(data.student_id, data.academic_year_id)
@@ -116,61 +115,6 @@ class EnrollmentService:
 
         await self.db.commit()
         await self.db.refresh(mapping)
-        return mapping
-
-    # ────────────────────────────────────────────────────────────
-    # UPDATE MAPPING
-    # ────────────────────────────────────────────────────────────
-    async def update_mapping(
-        self,
-        mapping_id: uuid.UUID,
-        data: StudentYearMappingUpdate,
-        actor: CurrentUser,
-    ) -> StudentYearMapping:
-        mapping = await self.repo.get_by_id(mapping_id)
-        if not mapping or mapping.school_id != actor.school_id:
-            raise NotFoundException("Enrollment mapping not found.")
-
-        # Support class/section/roll updates. Use dedicated endpoint for exits.
-        if data.standard_id:
-            await self._load_standard(
-                data.standard_id, mapping.academic_year_id, actor.school_id
-            )
-            mapping.standard_id = data.standard_id
-
-        if data.section_id:
-            section = await self._load_section(
-                data.section_id,
-                data.standard_id or mapping.standard_id,
-                mapping.academic_year_id,
-            )
-            mapping.section_id = data.section_id
-            mapping.section_name = section.name
-
-        if data.roll_number is not None:
-            mapping.roll_number = data.roll_number
-        if data.joined_on is not None:
-            mapping.joined_on = data.joined_on
-
-        mapping.last_modified_by_id = actor.id
-        await self.db.flush()
-
-        student = await self.db.get(Student, mapping.student_id)
-        if student and student.academic_year_id == mapping.academic_year_id:
-            await self._sync_student_flat_fields(student, mapping)
-
-        await self.db.commit()
-        await self.db.refresh(mapping)
-        return mapping
-
-    async def get_mapping(
-        self,
-        mapping_id: uuid.UUID,
-        actor: CurrentUser,
-    ) -> StudentYearMapping:
-        mapping = await self.repo.get_by_id(mapping_id)
-        if not mapping or mapping.school_id != actor.school_id:
-            raise NotFoundException("Enrollment mapping not found.")
         return mapping
 
     # ────────────────────────────────────────────────────────────
@@ -385,26 +329,6 @@ class EnrollmentService:
         if not section:
             raise NotFoundException("Section not found or inactive for this class.")
         return section
-
-    async def _ensure_student_is_approved(
-        self, student: Student, school_id: uuid.UUID
-    ) -> None:
-        if not student.user_id:
-            raise ValidationException("Student must be linked to a user before mapping.")
-
-        result = await self.db.execute(
-            select(User).where(
-                User.id == student.user_id,
-                User.school_id == school_id,
-            )
-        )
-        user = result.scalar_one_or_none()
-        if not user:
-            raise ValidationException("Linked student user account not found.")
-        if user.status != UserStatus.ACTIVE or not user.is_active:
-            raise ForbiddenException(
-                "Student mapping is allowed only for approved active users."
-            )
 
     async def _sync_student_flat_fields(
         self, student: Student, mapping: StudentYearMapping
