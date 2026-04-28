@@ -4,7 +4,6 @@ import uuid
 from datetime import date, datetime
 from typing import Optional
 from pydantic import BaseModel, Field
-from app.utils.enums import IdentifierType
 
 
 class StudentProfileCreate(BaseModel):
@@ -76,35 +75,6 @@ class ParentProfileResponse(BaseModel):
     profile_status: str = "ACTIVE"
 
     model_config = {"from_attributes": True}
-
-
-class IdentifierConfigCreate(BaseModel):
-    identifier_type: IdentifierType
-    format_template: str = Field(..., max_length=100)
-    sequence_padding: int = Field(4, ge=3, le=6)
-    reset_yearly: bool = True
-    prefix: Optional[str] = Field(None, max_length=20)
-
-
-class IdentifierConfigResponse(BaseModel):
-    identifier_type: str
-    format_template: str
-    sequence_padding: int
-    reset_yearly: bool
-    is_locked: bool
-    prefix: Optional[str]
-    preview_next: Optional[str] = None  # populated by service
-    warning: Optional[str] = None       # e.g. "Format is locked"
-
-    model_config = {"from_attributes": True}
-
-
-class IdentifierPreviewResponse(BaseModel):
-    identifier_type: str
-    next_identifier: str
-    current_counter: int
-    format_template: str
-    is_locked: bool
 
 
 class RoleProfileListResponse(BaseModel):

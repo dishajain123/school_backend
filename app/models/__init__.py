@@ -1,6 +1,7 @@
 from app.models import academic_year  # noqa: F401
 from app.models import academic_structure_copy  # noqa: F401
 from app.models import announcement  # noqa: F401
+from app.models import approval_action  # noqa: F401
 from app.models import assignment  # noqa: F401
 from app.models import attendance  # noqa: F401
 from app.models import audit_log  # noqa: F401
@@ -24,6 +25,7 @@ from app.models import parent  # noqa: F401
 from app.models import parent_student_link  # noqa: F401
 from app.models import payment  # noqa: F401
 from app.models import permission  # noqa: F401
+from app.models import registration_request  # noqa: F401
 from app.models import result  # noqa: F401
 from app.models import role  # noqa: F401
 from app.models import role_permission  # noqa: F401

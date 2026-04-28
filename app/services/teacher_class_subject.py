@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.repositories.teacher_class_subject import TeacherClassSubjectRepository
 from app.repositories.teacher import TeacherRepository
 from app.repositories.masters import StandardRepository, SubjectRepository
+from app.repositories.masters import SectionRepository
 from app.repositories.academic_year import AcademicYearRepository
 from app.repositories.settings import SettingsRepository
 from app.schemas.teacher_class_subject import (
@@ -34,6 +35,7 @@ class TeacherClassSubjectService:
         self.sub_repo = SubjectRepository(db)
         self.year_repo = AcademicYearRepository(db)
         self.settings_repo = SettingsRepository(db)
+        self.section_repo = SectionRepository(db)
 
     @staticmethod
     def _normalize_optional_section(section: Optional[str]) -> Optional[str]:
@@ -146,6 +148,18 @@ class TeacherClassSubjectService:
         if not year:
             raise NotFoundException(detail="Academic year not found in this school")
 
+        # Enforce section must exist for selected class + year and be active.
+        section_obj = await self.section_repo.get_by_key(
+            school_id=school_id,
+            standard_id=payload.standard_id,
+            academic_year_id=payload.academic_year_id,
+            name=normalized_section,
+        )
+        if not section_obj or not section_obj.is_active:
+            raise ValidationException(
+                detail="Section not found or inactive for the selected class and academic year"
+            )
+
         # Guard: duplicate assignment
         duplicate = await self.repo.get_duplicate(
             teacher_id=payload.teacher_id,
@@ -232,6 +246,17 @@ class TeacherClassSubjectService:
         if not year:
             raise NotFoundException(detail="Academic year not found in this school")
 
+        section_obj = await self.section_repo.get_by_key(
+            school_id=school_id,
+            standard_id=payload.standard_id,
+            academic_year_id=payload.academic_year_id,
+            name=normalized_section,
+        )
+        if not section_obj or not section_obj.is_active:
+            raise ValidationException(
+                detail="Section not found or inactive for the selected class and academic year"
+            )
+
         duplicate = await self.repo.get_duplicate_excluding(
             assignment_id=assignment_id,
             teacher_id=obj.teacher_id,
@@ -296,6 +321,17 @@ class TeacherClassSubjectService:
             raise NotFoundException(detail="Standard not found in this school")
 
         return await self.repo.list_by_class(standard_id, section, academic_year_id)
+
+    async def list_by_standard(
+        self,
+        standard_id: uuid.UUID,
+        school_id: uuid.UUID,
+        academic_year_id: Optional[uuid.UUID],
+    ) -> tuple[list[TeacherClassSubject], int]:
+        standard = await self.std_repo.get_by_id(standard_id, school_id)
+        if not standard:
+            raise NotFoundException(detail="Standard not found in this school")
+        return await self.repo.list_by_standard(standard_id, academic_year_id)
 
     async def list_mine(
         self,

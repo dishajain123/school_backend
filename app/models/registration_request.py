@@ -1,10 +1,10 @@
 # app/models/registration_request.py
 
 import uuid
-import enum
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import String, ForeignKey, DateTime, Text
+from sqlalchemy import String, ForeignKey, DateTime, Boolean
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.base import BaseModel

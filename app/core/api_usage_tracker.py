@@ -52,46 +52,16 @@ DEPRECATED_APIS: tuple[TrackedApi, ...] = (
         "Use presigned URLs returned by domain APIs (documents/gallery/receipts).",
     ),
     _make_tracked(
-        "GET",
-        "/api/v1/users",
-        "Use /users/me for self-data and admin panel APIs for managed user operations.",
-    ),
-    _make_tracked(
-        "GET",
-        "/api/v1/users/{}",
-        "Use /users/me for self-data and admin panel APIs for managed user operations.",
-    ),
-    _make_tracked(
-        "PATCH",
-        "/api/v1/users/{}",
-        "Use /users/me for self-data and admin panel APIs for managed user operations.",
-    ),
-    _make_tracked(
-        "PATCH",
-        "/api/v1/users/{}/deactivate",
-        "Use admin panel APIs for user lifecycle management.",
-    ),
-    _make_tracked(
         "POST",
         "/api/v1/academic-years/{}/rollover",
         "Use the scheduled promotion workflow service instead.",
-    ),
-    _make_tracked(
-        "POST",
-        "/api/v1/users",
-        "Use admin panel APIs for user creation.",
     ),
 )
 
 
 UNUSED_CANDIDATE_APIS: tuple[TrackedApi, ...] = (
     _make_tracked("GET", "/api/v1/files/{}/{}", "Used only for direct file links; confirm external consumers before deletion."),
-    _make_tracked("GET", "/api/v1/users", "Admin-only API; verify if external admin tooling uses it."),
-    _make_tracked("GET", "/api/v1/users/{}", "Admin-only API; verify if external admin tooling uses it."),
-    _make_tracked("PATCH", "/api/v1/users/{}", "Admin-only API; verify external usage."),
-    _make_tracked("PATCH", "/api/v1/users/{}/deactivate", "Admin-only API; verify external usage."),
     _make_tracked("POST", "/api/v1/academic-years/{}/rollover", "Likely infrequent yearly job; keep until observed window passes."),
-    _make_tracked("POST", "/api/v1/users", "Admin-only API; verify external usage."),
 )
 
 

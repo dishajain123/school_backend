@@ -1,4 +1,5 @@
 import math
+import re
 import uuid
 from datetime import datetime
 from typing import Any, Optional
@@ -8,17 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import CurrentUser
 from app.core.exceptions import ForbiddenException, NotFoundException, ValidationException
-from app.models.identifier_counter import IdentifierCounter
-from app.models.identifier_format_config import IdentifierFormatConfig
 from app.models.parent import Parent
-from app.models.school import School
 from app.models.student import Student
 from app.models.teacher import Teacher
 from app.models.user import User
 from app.schemas.role_profile import (
-    IdentifierConfigCreate,
-    IdentifierConfigResponse,
-    IdentifierPreviewResponse,
     ParentProfileCreate,
     ParentProfileResponse,
     RoleProfileListResponse,
@@ -28,13 +23,26 @@ from app.schemas.role_profile import (
     TeacherProfileResponse,
 )
 from app.services.identifier import IdentifierService
-from app.utils.enums import IdentifierType, RoleEnum, UserStatus
+from app.utils.enums import RoleEnum, UserStatus
 
 
 class RoleProfileService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.identifier_service = IdentifierService(db)
+
+    @staticmethod
+    def _display_name(user: User) -> str:
+        if user.full_name and user.full_name.strip():
+            return user.full_name.strip()
+        if user.email and "@" in user.email:
+            local = user.email.split("@", 1)[0]
+            cleaned = re.sub(r"[\._\-]+", " ", local).strip()
+            if cleaned:
+                return " ".join(part.capitalize() for part in cleaned.split())
+        if user.phone and user.phone.strip():
+            return user.phone.strip()
+        return "Unknown"
 
     async def create_student_profile(
         self,
@@ -177,6 +185,8 @@ class RoleProfileService:
         page: int,
         page_size: int,
         search: Optional[str],
+        standard_id: Optional[uuid.UUID] = None,
+        section: Optional[str] = None,
     ) -> RoleProfileListResponse:
         if school_id is None:
             raise ValidationException("school_id is required for listing role profiles")
@@ -186,7 +196,14 @@ class RoleProfileService:
             raise ValidationException("role must be one of STUDENT, TEACHER, PARENT")
 
         if role_norm == "STUDENT":
-            items, total = await self._list_student_profiles(school_id, page, page_size, search)
+            items, total = await self._list_student_profiles(
+                school_id=school_id,
+                page=page,
+                page_size=page_size,
+                search=search,
+                standard_id=standard_id,
+                section=section,
+            )
         elif role_norm == "TEACHER":
             items, total = await self._list_teacher_profiles(school_id, page, page_size, search)
         else:
@@ -219,7 +236,7 @@ class RoleProfileService:
             return {
                 "role": "STUDENT",
                 "user_id": str(u.id),
-                "full_name": u.full_name,
+                "full_name": self._display_name(u),
                 "email": u.email,
                 "phone": u.phone,
                 "admission_number": s.admission_number,
@@ -244,7 +261,7 @@ class RoleProfileService:
             return {
                 "role": "TEACHER",
                 "user_id": str(u.id),
-                "full_name": u.full_name,
+                "full_name": self._display_name(u),
                 "email": u.email,
                 "phone": u.phone,
                 "employee_id": t.employee_code,
@@ -267,10 +284,10 @@ class RoleProfileService:
             return {
                 "role": "PARENT",
                 "user_id": str(u.id),
-                "full_name": u.full_name,
+                "full_name": self._display_name(u),
                 "email": u.email,
                 "phone": u.phone,
-                "parent_code": p.parent_code,
+                "parent_code": p.parent_code or f"PAR-{str(u.id)[:8].upper()}",
                 "identifier_issued_at": p.identifier_issued_at,
                 "occupation": p.occupation,
                 "relation": p.relation.value if hasattr(p.relation, "value") else str(p.relation),
@@ -278,120 +295,6 @@ class RoleProfileService:
 
         raise NotFoundException("Role profile")
 
-    async def set_identifier_config(
-        self,
-        data: IdentifierConfigCreate,
-        current_user: CurrentUser,
-        school_id: Optional[uuid.UUID] = None,
-    ) -> IdentifierConfigResponse:
-        resolved_school_id = await self.resolve_school_scope(current_user, school_id)
-        identifier_type = data.identifier_type
-
-        if "{SEQ}" not in data.format_template:
-            raise ValidationException("format_template must contain {SEQ}")
-
-        result = await self.db.execute(
-            select(IdentifierFormatConfig).where(
-                IdentifierFormatConfig.school_id == resolved_school_id,
-                IdentifierFormatConfig.identifier_type == identifier_type.value,
-            )
-        )
-        config = result.scalar_one_or_none()
-        if config is None:
-            config = IdentifierFormatConfig(
-                school_id=resolved_school_id,
-                identifier_type=identifier_type.value,
-            )
-            self.db.add(config)
-
-        if config.is_locked:
-            raise ValidationException("Identifier format is locked after first identifier issuance")
-
-        config.format_template = data.format_template.strip().upper()
-        config.sequence_padding = data.sequence_padding
-        config.reset_yearly = data.reset_yearly
-        config.prefix = data.prefix
-        config.configured_by_id = current_user.id
-
-        await self.db.commit()
-        await self.db.refresh(config)
-
-        preview = await self.preview_next_identifier(resolved_school_id, identifier_type.value)
-        return IdentifierConfigResponse(
-            identifier_type=config.identifier_type,
-            format_template=config.format_template,
-            sequence_padding=config.sequence_padding,
-            reset_yearly=config.reset_yearly,
-            is_locked=config.is_locked,
-            prefix=config.prefix,
-            preview_next=preview.next_identifier,
-            warning="Format is locked" if config.is_locked else None,
-        )
-
-    async def get_identifier_configs(
-        self,
-        school_id: Optional[uuid.UUID],
-    ) -> list[IdentifierConfigResponse]:
-        if school_id is None:
-            raise ValidationException("school_id is required for identifier configs")
-
-        out: list[IdentifierConfigResponse] = []
-        for identifier_type in IdentifierType:
-            config = await self.identifier_service._get_or_create_config(school_id, identifier_type)
-            preview = await self.preview_next_identifier(school_id, identifier_type.value)
-            out.append(
-                IdentifierConfigResponse(
-                    identifier_type=config.identifier_type,
-                    format_template=config.format_template,
-                    sequence_padding=config.sequence_padding,
-                    reset_yearly=config.reset_yearly,
-                    is_locked=config.is_locked,
-                    prefix=config.prefix,
-                    preview_next=preview.next_identifier,
-                    warning="Format is locked" if config.is_locked else None,
-                )
-            )
-
-        await self.db.commit()
-        return out
-
-    async def preview_next_identifier(
-        self,
-        school_id: Optional[uuid.UUID],
-        identifier_type: str,
-    ) -> IdentifierPreviewResponse:
-        if school_id is None:
-            raise ValidationException("school_id is required for identifier preview")
-
-        try:
-            identifier_enum = IdentifierType(identifier_type)
-        except ValueError as exc:
-            raise ValidationException("Invalid identifier_type") from exc
-
-        config = await self.identifier_service._get_or_create_config(school_id, identifier_enum)
-        year = datetime.now().year
-        year_tag = str(year) if config.reset_yearly else "ALL"
-
-        counter_result = await self.db.execute(
-            select(IdentifierCounter).where(
-                IdentifierCounter.school_id == school_id,
-                IdentifierCounter.identifier_type == identifier_enum.value,
-                IdentifierCounter.year_tag == year_tag,
-            )
-        )
-        counter = counter_result.scalar_one_or_none()
-        current_counter = counter.last_number if counter else 0
-        next_counter = current_counter + 1
-
-        next_identifier = self.identifier_service._format_identifier(config, next_counter, year)
-
-        return IdentifierPreviewResponse(
-            identifier_type=identifier_enum.value,
-            next_identifier=next_identifier,
-            current_counter=current_counter,
-            format_template=config.format_template,
-            is_locked=config.is_locked,
-        )
 
     async def _get_target_user(
         self,
@@ -430,36 +333,6 @@ class RoleProfileService:
             if result.scalar_one_or_none() is not None:
                 raise ValidationException("Role profile already exists for this user")
 
-    async def resolve_school_scope(
-        self,
-        current_user: CurrentUser,
-        school_id: Optional[uuid.UUID],
-    ) -> uuid.UUID:
-        if current_user.role == RoleEnum.SUPERADMIN:
-            if school_id is not None:
-                return school_id
-            if current_user.school_id is not None:
-                return current_user.school_id
-            schools = (
-                await self.db.execute(
-                    select(School.id).order_by(School.created_at.asc()).limit(2)
-                )
-            ).scalars().all()
-            if not schools:
-                raise ValidationException("No schools found. Create a school first.")
-            if len(schools) > 1:
-                raise ValidationException(
-                    "school_id is required for superadmin when multiple schools exist"
-                )
-            return schools[0]
-
-        if current_user.school_id is None:
-            raise ValidationException("Current user has no school scope")
-
-        if school_id is not None and school_id != current_user.school_id:
-            raise ForbiddenException("Cannot operate on another school")
-
-        return current_user.school_id
 
     async def _list_student_profiles(
         self,
@@ -467,8 +340,14 @@ class RoleProfileService:
         page: int,
         page_size: int,
         search: Optional[str],
+        standard_id: Optional[uuid.UUID] = None,
+        section: Optional[str] = None,
     ) -> tuple[list[dict[str, Any]], int]:
         filters = [Student.school_id == school_id]
+        if standard_id is not None:
+            filters.append(Student.standard_id == standard_id)
+        if section and section.strip():
+            filters.append(func.upper(func.coalesce(Student.section, "")) == section.strip().upper())
         if search:
             q = f"%{search.strip().lower()}%"
             filters.append(
@@ -500,7 +379,7 @@ class RoleProfileService:
             {
                 "role": "STUDENT",
                 "user_id": str(user.id),
-                "full_name": user.full_name,
+                "full_name": self._display_name(user),
                 "email": user.email,
                 "phone": user.phone,
                 "identifier": student.admission_number,
@@ -554,7 +433,7 @@ class RoleProfileService:
             {
                 "role": "TEACHER",
                 "user_id": str(user.id),
-                "full_name": user.full_name,
+                "full_name": self._display_name(user),
                 "email": user.email,
                 "phone": user.phone,
                 "identifier": teacher.employee_code,
@@ -608,10 +487,10 @@ class RoleProfileService:
             {
                 "role": "PARENT",
                 "user_id": str(user.id),
-                "full_name": user.full_name,
+                "full_name": self._display_name(user),
                 "email": user.email,
                 "phone": user.phone,
-                "identifier": parent.parent_code,
+                "identifier": parent.parent_code or f"PAR-{str(user.id)[:8].upper()}",
                 "parent_code": parent.parent_code,
                 "occupation": parent.occupation,
                 "relation": parent.relation.value if hasattr(parent.relation, "value") else str(parent.relation),

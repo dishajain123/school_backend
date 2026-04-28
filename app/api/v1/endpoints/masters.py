@@ -2,10 +2,12 @@ import uuid
 from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from app.db.session import get_db
 from app.core.dependencies import CurrentUser, get_current_user, require_permission
 from app.core.exceptions import ForbiddenException, ValidationException
+from app.models.school import School
 from app.services.masters import MastersService
 from app.schemas.masters import (
     StandardCreate, StandardUpdate, StandardResponse, StandardListResponse,
@@ -25,19 +27,21 @@ def _require_school(current_user: CurrentUser) -> uuid.UUID:
     return current_user.school_id
 
 
-def _resolve_school_scope(
+async def _resolve_school_scope(
     current_user: CurrentUser,
     school_id: Optional[uuid.UUID],
+    db: AsyncSession,
 ) -> uuid.UUID:
-    if current_user.role == RoleEnum.SUPERADMIN:
-        if school_id is None:
-            raise ValidationException("school_id is required for superadmin")
-        return school_id
-    if current_user.school_id is None:
-        raise ValidationException("school_id is required")
-    if school_id is not None and school_id != current_user.school_id:
-        raise ForbiddenException("Cannot operate on another school")
-    return current_user.school_id
+    # Single-school mode: always resolve to current user's school when available.
+    if current_user.school_id is not None:
+        return current_user.school_id
+    # Fallback for superadmin/system users without school context:
+    # use the first active school in the system.
+    row = await db.execute(select(School.id).where(School.is_active.is_(True)).order_by(School.created_at.asc()))
+    school_id_row = row.scalar_one_or_none()
+    if school_id_row is None:
+        raise ValidationException("No active school configured")
+    return school_id_row
 
 
 def _require_admin_for_structure(current_user: CurrentUser) -> None:
@@ -67,7 +71,7 @@ async def create_standard(
     db: AsyncSession = Depends(get_db),
 ):
     _require_admin_for_structure(current_user)
-    school_id = _resolve_school_scope(current_user, school_id)
+    school_id = await _resolve_school_scope(current_user, school_id, db)
     service = MastersService(db)
     return await service.create_standard(payload, school_id)
 
@@ -79,7 +83,7 @@ async def list_standards(
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    school_id = _resolve_school_scope(current_user, school_id)
+    school_id = await _resolve_school_scope(current_user, school_id, db)
     service = MastersService(db)
     items, total = await service.list_standards(school_id, academic_year_id)
     return StandardListResponse(items=items, total=total)
@@ -94,7 +98,7 @@ async def update_standard(
     db: AsyncSession = Depends(get_db),
 ):
     _require_admin_for_structure(current_user)
-    school_id = _resolve_school_scope(current_user, school_id)
+    school_id = await _resolve_school_scope(current_user, school_id, db)
     service = MastersService(db)
     return await service.update_standard(standard_id, payload, school_id)
 
@@ -107,7 +111,7 @@ async def delete_standard(
     db: AsyncSession = Depends(get_db),
 ):
     _require_admin_for_structure(current_user)
-    school_id = _resolve_school_scope(current_user, school_id)
+    school_id = await _resolve_school_scope(current_user, school_id, db)
     service = MastersService(db)
     await service.delete_standard(standard_id, school_id)
 
@@ -122,7 +126,7 @@ async def create_subject(
     db: AsyncSession = Depends(get_db),
 ):
     _require_staff_admin_for_subjects(current_user)
-    school_id = _resolve_school_scope(current_user, school_id)
+    school_id = await _resolve_school_scope(current_user, school_id, db)
     service = MastersService(db)
     return await service.create_subject(payload, school_id)
 
@@ -134,7 +138,7 @@ async def list_subjects(
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    school_id = _resolve_school_scope(current_user, school_id)
+    school_id = await _resolve_school_scope(current_user, school_id, db)
     service = MastersService(db)
     items, total = await service.list_subjects(school_id, standard_id)
     return SubjectListResponse(items=items, total=total)
@@ -149,7 +153,7 @@ async def update_subject(
     db: AsyncSession = Depends(get_db),
 ):
     _require_staff_admin_for_subjects(current_user)
-    school_id = _resolve_school_scope(current_user, school_id)
+    school_id = await _resolve_school_scope(current_user, school_id, db)
     service = MastersService(db)
     return await service.update_subject(subject_id, payload, school_id)
 
@@ -162,7 +166,7 @@ async def delete_subject(
     db: AsyncSession = Depends(get_db),
 ):
     _require_staff_admin_for_subjects(current_user)
-    school_id = _resolve_school_scope(current_user, school_id)
+    school_id = await _resolve_school_scope(current_user, school_id, db)
     service = MastersService(db)
     await service.delete_subject(subject_id, school_id)
 
@@ -177,7 +181,7 @@ async def create_section(
     db: AsyncSession = Depends(get_db),
 ):
     _require_admin_for_structure(current_user)
-    school_id = _resolve_school_scope(current_user, school_id)
+    school_id = await _resolve_school_scope(current_user, school_id, db)
     service = MastersService(db)
     return await service.create_section(payload, school_id)
 
@@ -191,7 +195,7 @@ async def list_sections(
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    school_id = _resolve_school_scope(current_user, school_id)
+    school_id = await _resolve_school_scope(current_user, school_id, db)
     service = MastersService(db)
     items, total = await service.list_sections(
         school_id=school_id,
@@ -211,7 +215,7 @@ async def update_section(
     db: AsyncSession = Depends(get_db),
 ):
     _require_admin_for_structure(current_user)
-    school_id = _resolve_school_scope(current_user, school_id)
+    school_id = await _resolve_school_scope(current_user, school_id, db)
     service = MastersService(db)
     return await service.update_section(section_id, payload, school_id)
 
@@ -224,7 +228,7 @@ async def delete_section(
     db: AsyncSession = Depends(get_db),
 ):
     _require_admin_for_structure(current_user)
-    school_id = _resolve_school_scope(current_user, school_id)
+    school_id = await _resolve_school_scope(current_user, school_id, db)
     service = MastersService(db)
     await service.delete_section(section_id, school_id)
 
@@ -238,7 +242,7 @@ async def create_grade(
     current_user: CurrentUser = Depends(require_permission("user:manage")),
     db: AsyncSession = Depends(get_db),
 ):
-    school_id = _resolve_school_scope(current_user, school_id)
+    school_id = await _resolve_school_scope(current_user, school_id, db)
     service = MastersService(db)
     return await service.create_grade(payload, school_id)
 
@@ -249,7 +253,7 @@ async def list_grades(
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    school_id = _resolve_school_scope(current_user, school_id)
+    school_id = await _resolve_school_scope(current_user, school_id, db)
     service = MastersService(db)
     items, total = await service.list_grades(school_id)
     return GradeMasterListResponse(items=items, total=total)
@@ -262,7 +266,7 @@ async def lookup_grade(
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    school_id = _resolve_school_scope(current_user, school_id)
+    school_id = await _resolve_school_scope(current_user, school_id, db)
     service = MastersService(db)
     grade = await service.lookup_grade_by_percent(school_id, percent)
     return GradeLookupResponse(
@@ -280,7 +284,7 @@ async def update_grade(
     current_user: CurrentUser = Depends(require_permission("user:manage")),
     db: AsyncSession = Depends(get_db),
 ):
-    school_id = _resolve_school_scope(current_user, school_id)
+    school_id = await _resolve_school_scope(current_user, school_id, db)
     service = MastersService(db)
     return await service.update_grade(grade_id, payload, school_id)
 
@@ -292,6 +296,6 @@ async def delete_grade(
     current_user: CurrentUser = Depends(require_permission("user:manage")),
     db: AsyncSession = Depends(get_db),
 ):
-    school_id = _resolve_school_scope(current_user, school_id)
+    school_id = await _resolve_school_scope(current_user, school_id, db)
     service = MastersService(db)
     await service.delete_grade(grade_id, school_id)

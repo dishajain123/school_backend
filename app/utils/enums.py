@@ -1,32 +1,91 @@
-# app/utils/enums.py
 from enum import Enum
 
 
 class RoleEnum(str, Enum):
     SUPERADMIN = "SUPERADMIN"
-    TRUSTEE = "TRUSTEE"
     PRINCIPAL = "PRINCIPAL"
     TEACHER = "TEACHER"
     STUDENT = "STUDENT"
     PARENT = "PARENT"
+    TRUSTEE = "TRUSTEE"
+    STAFF_ADMIN = "STAFF_ADMIN"
 
 
-class AttendanceStatus(str, Enum):
-    PRESENT = "PRESENT"
-    ABSENT = "ABSENT"
-    LATE = "LATE"
+class UserStatus(str, Enum):
+    PENDING_APPROVAL = "PENDING_APPROVAL"
+    ACTIVE = "ACTIVE"
+    REJECTED = "REJECTED"
+    INACTIVE = "INACTIVE"
+    ON_HOLD = "ON_HOLD"
+    # Backward-compat aliases used in older code paths
+    HOLD = "HOLD"
+    DISABLED = "DISABLED"
 
 
-class LeaveType(str, Enum):
-    CASUAL = "CASUAL"
-    SICK = "SICK"
-    EARNED = "EARNED"
+class RegistrationSource(str, Enum):
+    SELF_REGISTERED = "SELF_REGISTERED"
+    ADMIN_CREATED = "ADMIN_CREATED"
 
 
-class LeaveStatus(str, Enum):
-    PENDING = "PENDING"
+class ApprovalAction(str, Enum):
+    APPROVE = "APPROVE"
+    REJECT = "REJECT"
+    HOLD = "HOLD"
+
+
+class ApprovalDecision(str, Enum):
     APPROVED = "APPROVED"
     REJECTED = "REJECTED"
+    ON_HOLD = "ON_HOLD"
+
+
+class AuditAction(str, Enum):
+    USER_REGISTERED = "USER_REGISTERED"
+    USER_APPROVED = "USER_APPROVED"
+    USER_REJECTED = "USER_REJECTED"
+    USER_HELD = "USER_HELD"
+    USER_ACTIVATED = "USER_ACTIVATED"
+    USER_DEACTIVATED = "USER_DEACTIVATED"
+    ADMIN_LOGIN = "ADMIN_LOGIN"
+    ADMIN_CREATED_USER = "ADMIN_CREATED_USER"
+    DUPLICATE_DETECTED = "DUPLICATE_DETECTED"
+    STUDENT_ENROLLED = "STUDENT_ENROLLED"
+    STUDENT_EXITED = "STUDENT_EXITED"
+    STUDENT_PROMOTED = "STUDENT_PROMOTED"
+    STUDENT_REPEATED = "STUDENT_REPEATED"
+    STUDENT_GRADUATED = "STUDENT_GRADUATED"
+    STUDENT_REENROLLED = "STUDENT_REENROLLED"
+    STUDENT_SECTION_TRANSFERRED = "STUDENT_SECTION_TRANSFERRED"   # Phase 14/15: in-year transfer
+    STUDENT_CLASS_TRANSFERRED = "STUDENT_CLASS_TRANSFERRED"       # Phase 14/15: in-year class change
+    TEACHER_ASSIGNMENT_CREATED = "TEACHER_ASSIGNMENT_CREATED"     # Phase 14/15
+    TEACHER_ASSIGNMENT_UPDATED = "TEACHER_ASSIGNMENT_UPDATED"     # Phase 14/15
+    TEACHER_ASSIGNMENT_DELETED = "TEACHER_ASSIGNMENT_DELETED"     # Phase 14/15
+    TEACHER_ASSIGNMENT_COPIED = "TEACHER_ASSIGNMENT_COPIED"
+
+
+class IdentifierType(str, Enum):
+    ADMISSION_NUMBER = "ADMISSION_NUMBER"
+    EMPLOYEE_ID = "EMPLOYEE_ID"
+    PARENT_CODE = "PARENT_CODE"
+
+
+class RelationType(str, Enum):
+    FATHER = "FATHER"
+    MOTHER = "MOTHER"
+    GUARDIAN = "GUARDIAN"
+    SIBLING = "SIBLING"
+    OTHER = "OTHER"
+
+
+class PaymentMode(str, Enum):
+    CASH = "CASH"
+    CHEQUE = "CHEQUE"
+    ONLINE = "ONLINE"
+    DD = "DD"
+    NEFT = "NEFT"
+    RTGS = "RTGS"
+    UPI = "UPI"
+    OTHER = "OTHER"
 
 
 class FeeCategory(str, Enum):
@@ -39,56 +98,54 @@ class FeeCategory(str, Enum):
     MISCELLANEOUS = "MISCELLANEOUS"
 
 
-class FeeStatus(str, Enum):
-    PENDING = "PENDING"
-    PARTIAL = "PARTIAL"
-    PAID = "PAID"
-    OVERDUE = "OVERDUE"
-
-
-class PaymentMode(str, Enum):
-    CASH = "CASH"
-    CHEQUE = "CHEQUE"
-    ONLINE = "ONLINE"
-    UPI = "UPI"
-    BANK_TRANSFER = "BANK_TRANSFER"
-    CARD = "CARD"
-
-
 class ExamType(str, Enum):
-    UNIT = "UNIT"
-    MIDTERM = "MIDTERM"
+    UNIT_TEST = "UNIT_TEST"
+    MID_TERM = "MID_TERM"
     FINAL = "FINAL"
+    MOCK = "MOCK"
     QUARTERLY = "QUARTERLY"
     HALF_YEARLY = "HALF_YEARLY"
     ANNUAL = "ANNUAL"
 
 
-class PromotionStatus(str, Enum):
-    PROMOTED = "PROMOTED"
-    HELD_BACK = "HELD_BACK"
+class AttendanceStatus(str, Enum):
+    PRESENT = "PRESENT"
+    ABSENT = "ABSENT"
+    LATE = "LATE"
+    EXCUSED = "EXCUSED"
+    HALF_DAY = "HALF_DAY"
 
 
-# Phase 7: decision made during the promotion workflow
-class PromotionDecision(str, Enum):
-    PROMOTE = "PROMOTE"       # advance to next class in new year
-    REPEAT = "REPEAT"         # repeat same class in new year
-    GRADUATE = "GRADUATE"     # completed final class — no further mapping
-    SKIP = "SKIP"             # exclude from this promotion run (handle manually)
+class LeaveStatus(str, Enum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    CANCELLED = "CANCELLED"
+
+
+class LeaveType(str, Enum):
+    SICK = "SICK"
+    CASUAL = "CASUAL"
+    EARNED = "EARNED"
+    UNPAID = "UNPAID"
+    MATERNITY = "MATERNITY"
+    PATERNITY = "PATERNITY"
+    OTHER = "OTHER"
 
 
 class DocumentType(str, Enum):
-    ID_CARD = "ID_CARD"
-    BONAFIDE = "BONAFIDE"
-    LEAVING_CERT = "LEAVING_CERT"
-    REPORT_CARD = "REPORT_CARD"
+    ID_PROOF = "ID_PROOF"
+    ADDRESS_PROOF = "ADDRESS_PROOF"
+    ACADEMIC_CERTIFICATE = "ACADEMIC_CERTIFICATE"
+    TRANSFER_CERTIFICATE = "TRANSFER_CERTIFICATE"
+    MEDICAL = "MEDICAL"
+    OTHER = "OTHER"
 
 
 class DocumentStatus(str, Enum):
     PENDING = "PENDING"
-    PROCESSING = "PROCESSING"
-    READY = "READY"
-    FAILED = "FAILED"
+    VERIFIED = "VERIFIED"
+    REJECTED = "REJECTED"
 
 
 class AnnouncementType(str, Enum):
@@ -162,85 +219,37 @@ class IncidentSeverity(str, Enum):
 
 # ── Phase 6: Admission Type ───────────────────────────────────────────────────
 class AdmissionType(str, Enum):
-    NEW_ADMISSION = "NEW_ADMISSION"   # standard start-of-year admission
-    MID_YEAR = "MID_YEAR"             # joining after year has started
-    TRANSFER_IN = "TRANSFER_IN"       # transferred from another school
-    READMISSION = "READMISSION"       # previously LEFT/TRANSFERRED, re-joining
+    NEW_ADMISSION = "NEW_ADMISSION"
+    MID_YEAR = "MID_YEAR"
+    TRANSFER_IN = "TRANSFER_IN"
+    READMISSION = "READMISSION"
 
 
 # ── Phase 6 & 7: Enrollment (StudentYearMapping) lifecycle ───────────────────
 class EnrollmentStatus(str, Enum):
-    ACTIVE = "ACTIVE"           # currently enrolled in this year
-    HOLD = "HOLD"               # temporarily on hold
-    COMPLETED = "COMPLETED"     # year finished, promotion decision pending
-    LEFT = "LEFT"               # left school mid-year
-    TRANSFERRED = "TRANSFERRED" # transferred to another school mid-year
-    # Phase 7 terminal states — set when new year mapping is created
-    PROMOTED = "PROMOTED"       # promoted to next class (old-year mapping closed)
-    REPEATED = "REPEATED"       # repeating same class (old-year mapping closed)
+    ACTIVE = "ACTIVE"
+    HOLD = "HOLD"
+    COMPLETED = "COMPLETED"
+    LEFT = "LEFT"
+    TRANSFERRED = "TRANSFERRED"
+    PROMOTED = "PROMOTED"
+    REPEATED = "REPEATED"
+    GRADUATED = "GRADUATED"
+
+
+class PromotionDecision(str, Enum):
+    PROMOTE = "PROMOTE"
+    REPEAT = "REPEAT"
+    GRADUATE = "GRADUATE"
+    SKIP = "SKIP"
+
+
+class PromotionStatus(str, Enum):
+    PROMOTED = "PROMOTED"
+    NOT_PROMOTED = "NOT_PROMOTED"
+    PENDING = "PENDING"
 
 
 class ConversationType(str, Enum):
     ONE_TO_ONE = "ONE_TO_ONE"
     GROUP = "GROUP"
-
-
-class UserStatus(str, Enum):
-    PENDING_APPROVAL = "PENDING_APPROVAL"
-    ACTIVE = "ACTIVE"
-    REJECTED = "REJECTED"
-    INACTIVE = "INACTIVE"
-    ON_HOLD = "ON_HOLD"
-    # Backward-compat aliases used in older code paths
-    HOLD = "HOLD"
-    DISABLED = "DISABLED"
-
-
-class RegistrationSource(str, Enum):
-    SELF_REGISTERED = "SELF_REGISTERED"
-    ADMIN_CREATED = "ADMIN_CREATED"
-
-
-class ApprovalAction(str, Enum):
-    APPROVE = "APPROVE"
-    REJECT = "REJECT"
-    HOLD = "HOLD"
-
-
-class ApprovalDecision(str, Enum):
-    APPROVED = "APPROVED"
-    REJECTED = "REJECTED"
-    ON_HOLD = "ON_HOLD"
-
-
-class AuditAction(str, Enum):
-    USER_REGISTERED = "USER_REGISTERED"
-    USER_APPROVED = "USER_APPROVED"
-    USER_REJECTED = "USER_REJECTED"
-    USER_HELD = "USER_HELD"
-    USER_ACTIVATED = "USER_ACTIVATED"
-    USER_DEACTIVATED = "USER_DEACTIVATED"
-    ADMIN_LOGIN = "ADMIN_LOGIN"
-    ADMIN_CREATED_USER = "ADMIN_CREATED_USER"
-    DUPLICATE_DETECTED = "DUPLICATE_DETECTED"
-    STUDENT_ENROLLED = "STUDENT_ENROLLED"
-    STUDENT_EXITED = "STUDENT_EXITED"
-    STUDENT_PROMOTED = "STUDENT_PROMOTED"
-    STUDENT_REPEATED = "STUDENT_REPEATED"
-    STUDENT_GRADUATED = "STUDENT_GRADUATED"
-    STUDENT_REENROLLED = "STUDENT_REENROLLED"
-    TEACHER_ASSIGNMENT_COPIED = "TEACHER_ASSIGNMENT_COPIED"
-
-
-class IdentifierType(str, Enum):
-    ADMISSION_NUMBER = "ADMISSION_NUMBER"
-    EMPLOYEE_ID = "EMPLOYEE_ID"
-    PARENT_CODE = "PARENT_CODE"
-
-
-class RelationType(str, Enum):
-    FATHER = "FATHER"
-    MOTHER = "MOTHER"
-    GUARDIAN = "GUARDIAN"
-    SIBLING = "SIBLING"
-    OTHER = "OTHER"

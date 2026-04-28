@@ -5,11 +5,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.teacher_class_subject import TeacherClassSubject
+from app.models.teacher import Teacher
 
 
 def _with_relations(stmt):
     return stmt.options(
-        selectinload(TeacherClassSubject.teacher),
+        selectinload(TeacherClassSubject.teacher).selectinload(Teacher.user),
         selectinload(TeacherClassSubject.standard),
         selectinload(TeacherClassSubject.subject),
         selectinload(TeacherClassSubject.academic_year),
@@ -124,6 +125,27 @@ class TeacherClassSubjectRepository:
             )
         )
 
+        if academic_year_id is not None:
+            stmt = stmt.where(TeacherClassSubject.academic_year_id == academic_year_id)
+            count_q = count_q.where(TeacherClassSubject.academic_year_id == academic_year_id)
+
+        total = (await self.db.execute(count_q)).scalar_one()
+        rows = await self.db.execute(
+            _with_relations(stmt.order_by(TeacherClassSubject.created_at.desc()))
+        )
+        return list(rows.scalars().all()), total
+
+    async def list_by_standard(
+        self,
+        standard_id: uuid.UUID,
+        academic_year_id: Optional[uuid.UUID] = None,
+    ) -> tuple[list[TeacherClassSubject], int]:
+        stmt = select(TeacherClassSubject).where(
+            TeacherClassSubject.standard_id == standard_id
+        )
+        count_q = select(func.count(TeacherClassSubject.id)).where(
+            TeacherClassSubject.standard_id == standard_id
+        )
         if academic_year_id is not None:
             stmt = stmt.where(TeacherClassSubject.academic_year_id == academic_year_id)
             count_q = count_q.where(TeacherClassSubject.academic_year_id == academic_year_id)

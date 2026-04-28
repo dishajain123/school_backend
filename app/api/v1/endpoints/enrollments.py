@@ -1,6 +1,7 @@
 # app/api/v1/endpoints/enrollments.py
 """
 Phase 6 & 7 — Enrollment API.
+Phase 14/15 — Section/Class Transfer added.
 All routes require school context from the JWT.
 
 Permission map:
@@ -22,6 +23,7 @@ from app.schemas.enrollment import (
     EnrollmentMappingUpdate,
     EnrollmentExitRequest,
     EnrollmentCompleteRequest,
+    SectionTransferRequest,
     EnrollmentMappingResponse,
     ClassRosterResponse,
     StudentAcademicHistoryResponse,
@@ -81,10 +83,40 @@ async def update_enrollment_mapping(
     """
     Phase 6: Update section, roll number, or admission type for an active mapping.
     Only ACTIVE and HOLD mappings can be updated.
+    For a formal section/class transfer with an audit trail, use POST /mappings/{id}/transfer.
     """
     if not current_user.school_id:
         raise ForbiddenException("School context required")
     return await service.update_mapping(mapping_id, data, current_user)
+
+
+# ── Section / Class Transfer (Phase 14/15) ────────────────────────────────────
+
+@router.post("/mappings/{mapping_id}/transfer", response_model=EnrollmentMappingResponse)
+async def transfer_student(
+    mapping_id: uuid.UUID,
+    data: SectionTransferRequest,
+    current_user: CurrentUser = Depends(require_permission("enrollment:update")),
+    service: EnrollmentService = Depends(get_service),
+):
+    """
+    Phase 14/15: Formally transfer a student to a different section or class
+    within the SAME academic year. Creates a structured audit log entry
+    (STUDENT_SECTION_TRANSFERRED or STUDENT_CLASS_TRANSFERRED) distinguishing
+    this from a generic data correction.
+
+    - Same standard + different section → STUDENT_SECTION_TRANSFERRED
+    - Different standard (class)         → STUDENT_CLASS_TRANSFERRED
+
+    The existing StudentYearMapping is updated in-place; no historical record
+    is lost. Student flat fields (standard_id, section) are synced immediately.
+
+    Only ACTIVE and HOLD mappings can be transferred.
+    Permission: enrollment:update (Admissions Staff, Admin, Principal).
+    """
+    if not current_user.school_id:
+        raise ForbiddenException("School context required")
+    return await service.transfer_student(mapping_id, data, current_user)
 
 
 # ── Exit Student ──────────────────────────────────────────────────────────────
@@ -158,8 +190,9 @@ async def get_student_history(
     service: EnrollmentService = Depends(get_service),
 ):
     """
-    Phase 7: Get all academic year mappings for a student — the complete history.
+    Phase 7 / 14: Get all academic year mappings for a student — the complete history.
     History is immutable; no year's record is overwritten by enrollment in a new year.
+    Includes all transfer events, exits, completions, and promotions.
     """
     if not current_user.school_id:
         raise ForbiddenException("School context required")

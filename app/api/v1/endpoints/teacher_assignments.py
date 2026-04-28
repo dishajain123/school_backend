@@ -2,10 +2,12 @@ import uuid
 from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from app.db.session import get_db
 from app.core.dependencies import CurrentUser, get_current_user
 from app.core.exceptions import ValidationException, ForbiddenException
+from app.models.school import School
 from app.services.teacher_class_subject import TeacherClassSubjectService
 from app.schemas.teacher_class_subject import (
     TeacherAssignmentCreate,
@@ -22,10 +24,16 @@ from app.utils.enums import RoleEnum
 router = APIRouter(prefix="/teacher-assignments", tags=["Teacher Assignments"])
 
 
-def _require_school(current_user: CurrentUser) -> uuid.UUID:
-    if not current_user.school_id:
-        raise ValidationException("school_id is required")
-    return current_user.school_id
+async def _resolve_school_scope(current_user: CurrentUser, db: AsyncSession) -> uuid.UUID:
+    if current_user.school_id is not None:
+        return current_user.school_id
+    row = await db.execute(
+        select(School.id).where(School.is_active.is_(True)).order_by(School.created_at.asc())
+    )
+    sid = row.scalar_one_or_none()
+    if sid is None:
+        raise ValidationException("No active school configured")
+    return sid
 
 
 def _can_manage_assignments(current_user: CurrentUser) -> bool:
@@ -42,6 +50,7 @@ def _to_response(obj) -> TeacherAssignmentResponse:
             id=obj.teacher.id,
             employee_code=obj.teacher.employee_code,
             user_id=obj.teacher.user_id,
+            full_name=getattr(getattr(obj.teacher, "user", None), "full_name", None),
         ),
         standard=StandardSummary(
             id=obj.standard.id,
@@ -72,7 +81,7 @@ async def create_assignment(
         raise ForbiddenException(
             detail="Only principal/superadmin or users with 'teacher_assignment:manage' can assign teachers"
         )
-    school_id = _require_school(current_user)
+    school_id = await _resolve_school_scope(current_user, db)
     service = TeacherClassSubjectService(db)
     obj = await service.create_assignment(payload, school_id)
     return _to_response(obj)
@@ -84,7 +93,7 @@ async def list_my_assignments(
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    school_id = _require_school(current_user)
+    school_id = await _resolve_school_scope(current_user, db)
     service = TeacherClassSubjectService(db)
     items, total = await service.list_mine(
         current_user=current_user,
@@ -107,7 +116,7 @@ async def delete_assignment(
         raise ForbiddenException(
             detail="Only principal/superadmin or users with 'teacher_assignment:manage' can remove assignments"
         )
-    school_id = _require_school(current_user)
+    school_id = await _resolve_school_scope(current_user, db)
     service = TeacherClassSubjectService(db)
     await service.delete_assignment(assignment_id, school_id)
 
@@ -123,7 +132,7 @@ async def update_assignment(
         raise ForbiddenException(
             detail="Only principal/superadmin or users with 'teacher_assignment:manage' can update assignments"
         )
-    school_id = _require_school(current_user)
+    school_id = await _resolve_school_scope(current_user, db)
     service = TeacherClassSubjectService(db)
     obj = await service.update_assignment(assignment_id, payload, school_id)
     return _to_response(obj)
@@ -138,7 +147,7 @@ async def list_assignments(
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    school_id = _require_school(current_user)
+    school_id = await _resolve_school_scope(current_user, db)
     service = TeacherClassSubjectService(db)
 
     if teacher_id is not None:
@@ -155,9 +164,15 @@ async def list_assignments(
             school_id=school_id,
             academic_year_id=academic_year_id,
         )
+    elif standard_id is not None:
+        items, total = await service.list_by_standard(
+            standard_id=standard_id,
+            school_id=school_id,
+            academic_year_id=academic_year_id,
+        )
     else:
         raise ValidationException(
-            "Provide either 'teacher_id' or both 'standard_id' and 'section' as query parameters"
+            "Provide either 'teacher_id', or 'standard_id' (optional 'section') as query parameters"
         )
 
     return TeacherAssignmentListResponse(

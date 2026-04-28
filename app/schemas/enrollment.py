@@ -1,6 +1,7 @@
 # app/schemas/enrollment.py
 """
 Schemas for Phase 6 (Student Lifecycle) and Phase 7 (Re-enrollment) enrollment operations.
+Phase 14/15: Added SectionTransferRequest for in-year section/class transfers.
 """
 import uuid
 from datetime import date, datetime
@@ -33,6 +34,26 @@ class EnrollmentMappingUpdate(BaseModel):
     roll_number: Optional[str] = Field(None, max_length=20)
     joined_on: Optional[date] = None
     admission_type: Optional[AdmissionType] = None
+
+    model_config = {"str_strip_whitespace": True}
+
+
+# ── Section / Class Transfer (Phase 14/15) ────────────────────────────────────
+
+class SectionTransferRequest(BaseModel):
+    """
+    Phase 14/15: Transfer a student to a different section (or class) within
+    the SAME academic year. The existing StudentYearMapping is updated in-place.
+    A structured audit log entry is created distinguishing this from a generic update.
+
+    - section_only=True : only section changes, standard stays the same.
+    - section_only=False: both standard and section change (class transfer).
+    """
+    new_standard_id: uuid.UUID
+    new_section_id: Optional[uuid.UUID] = None
+    new_roll_number: Optional[str] = Field(None, max_length=20)
+    transfer_reason: str = Field(..., min_length=3, max_length=500)
+    effective_date: Optional[date] = None   # defaults to today
 
     model_config = {"str_strip_whitespace": True}
 
@@ -116,7 +137,7 @@ class ClassRosterResponse(BaseModel):
 
 
 class StudentAcademicHistoryResponse(BaseModel):
-    """Phase 7: ordered list of all year mappings for one student."""
+    """Phase 7 / 14: ordered list of all year mappings for one student."""
     student_id: uuid.UUID
     admission_number: Optional[str]
     student_name: Optional[str]

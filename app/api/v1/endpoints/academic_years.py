@@ -2,8 +2,10 @@ import uuid
 from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from app.db.session import get_db
+from app.models.school import School
 from app.services.academic_year import AcademicYearService
 from app.schemas.academic_year import (
     AcademicYearCreate,
@@ -22,22 +24,21 @@ def get_service(db: AsyncSession = Depends(get_db)) -> AcademicYearService:
     return AcademicYearService(db)
 
 
-def _resolve_school_scope(
+async def _resolve_school_scope(
     current_user: CurrentUser,
     school_id: Optional[uuid.UUID],
+    db: AsyncSession,
 ) -> uuid.UUID:
-    if current_user.role == RoleEnum.SUPERADMIN:
-        if school_id is not None:
-            return school_id
-        if current_user.school_id is not None:
-            return current_user.school_id
-        raise ForbiddenException("Superadmin must provide school_id for academic year operation")
-
-    if not current_user.school_id:
-        raise ForbiddenException("School context required")
-    if school_id is not None and school_id != current_user.school_id:
-        raise ForbiddenException("Cannot operate on another school")
-    return current_user.school_id
+    if current_user.school_id is not None:
+        return current_user.school_id
+    # Single-school mode fallback.
+    row = await db.execute(
+        select(School.id).where(School.is_active.is_(True)).order_by(School.created_at.asc())
+    )
+    sid = row.scalar_one_or_none()
+    if sid is None:
+        raise ForbiddenException("No active school configured")
+    return sid
 
 
 @router.post("", response_model=AcademicYearResponse, status_code=201)
@@ -47,9 +48,9 @@ async def create_academic_year(
     current_user: CurrentUser = Depends(require_permission("academic_year:manage")),
     service: AcademicYearService = Depends(get_service),
 ):
-    if current_user.role != RoleEnum.SUPERADMIN:
-        raise ForbiddenException("Only Super Admin can create academic years")
-    resolved_school_id = _resolve_school_scope(current_user, school_id)
+    if current_user.role not in (RoleEnum.SUPERADMIN, RoleEnum.PRINCIPAL):
+        raise ForbiddenException("Only Admin/Principal or Super Admin can create academic years")
+    resolved_school_id = await _resolve_school_scope(current_user, school_id, service.db)
     return await service.create_academic_year(data, resolved_school_id)
 
 
@@ -59,7 +60,7 @@ async def list_academic_years(
     current_user: CurrentUser = Depends(get_current_user),
     service: AcademicYearService = Depends(get_service),
 ):
-    resolved_school_id = _resolve_school_scope(current_user, school_id)
+    resolved_school_id = await _resolve_school_scope(current_user, school_id, service.db)
     years, total = await service.list_academic_years(resolved_school_id)
     return AcademicYearListResponse(items=years, total=total)
 
@@ -72,7 +73,7 @@ async def update_academic_year(
     current_user: CurrentUser = Depends(require_permission("academic_year:manage")),
     service: AcademicYearService = Depends(get_service),
 ):
-    resolved_school_id = _resolve_school_scope(current_user, school_id)
+    resolved_school_id = await _resolve_school_scope(current_user, school_id, service.db)
     return await service.update_academic_year(year_id, resolved_school_id, data)
 
 
@@ -83,9 +84,9 @@ async def activate_academic_year(
     current_user: CurrentUser = Depends(require_permission("academic_year:manage")),
     service: AcademicYearService = Depends(get_service),
 ):
-    if current_user.role != RoleEnum.SUPERADMIN:
-        raise ForbiddenException("Only Super Admin can activate academic years")
-    resolved_school_id = _resolve_school_scope(current_user, school_id)
+    if current_user.role not in (RoleEnum.SUPERADMIN, RoleEnum.PRINCIPAL):
+        raise ForbiddenException("Only Admin/Principal or Super Admin can activate academic years")
+    resolved_school_id = await _resolve_school_scope(current_user, school_id, service.db)
     return await service.activate_academic_year(year_id, resolved_school_id)
 
 
