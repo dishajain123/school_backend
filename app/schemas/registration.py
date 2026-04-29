@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Optional
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, model_validator
 
 from app.utils.enums import RegistrationSource, RoleEnum, UserStatus
 
@@ -17,6 +17,21 @@ class RegistrationCreateRequest(BaseModel):
     submitted_data: Optional[dict[str, Any]] = None
 
     model_config = {"str_strip_whitespace": True}
+
+    @model_validator(mode="after")
+    def validate_parent_registration(self):
+        if self.role == RoleEnum.PARENT:
+            data = self.submitted_data or {}
+            admission = (
+                data.get("student_admission_number")
+                or data.get("admission_number")
+                or data.get("child_admission_number")
+            )
+            if not isinstance(admission, str) or not admission.strip():
+                raise ValueError(
+                    "For parent registration, submitted_data.student_admission_number is required"
+                )
+        return self
 
 
 class RegistrationResponse(BaseModel):

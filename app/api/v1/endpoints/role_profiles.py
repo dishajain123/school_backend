@@ -7,11 +7,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.db.session import get_db
-from app.core.dependencies import CurrentUser, require_permission, get_current_user
+from app.core.dependencies import (
+    CurrentUser,
+    require_any_permission,
+    require_permission,
+    get_current_user,
+)
 from app.core.exceptions import ForbiddenException
 from app.models.school import School
 from app.services.role_profile import RoleProfileService
 from app.schemas.role_profile import (
+    IdentifierConfigResponse,
+    IdentifierConfigUpsertRequest,
     StudentProfileCreate, TeacherProfileCreate, ParentProfileCreate,
     StudentProfileResponse, TeacherProfileResponse, ParentProfileResponse,
     RoleProfileListResponse,
@@ -113,6 +120,39 @@ async def list_role_profiles(
         standard_id=standard_id,
         section=section,
     )
+
+
+@router.get(
+    "/identifier-configs",
+    response_model=list[IdentifierConfigResponse],
+)
+async def list_identifier_configs(
+    current_user: CurrentUser = Depends(
+        require_any_permission("settings:manage", "user:manage")
+    ),
+    service: RoleProfileService = Depends(get_service),
+):
+    school_id = await _resolve_school_scope(current_user, service.db)
+    if school_id is None:
+        raise ForbiddenException("School context required")
+    return await service.list_identifier_configs(school_id)
+
+
+@router.post(
+    "/identifier-configs",
+    response_model=IdentifierConfigResponse,
+)
+async def save_identifier_config(
+    data: IdentifierConfigUpsertRequest,
+    current_user: CurrentUser = Depends(
+        require_any_permission("settings:manage", "user:manage")
+    ),
+    service: RoleProfileService = Depends(get_service),
+):
+    school_id = await _resolve_school_scope(current_user, service.db)
+    if school_id is None:
+        raise ForbiddenException("School context required")
+    return await service.upsert_identifier_config(school_id, data, current_user)
 
 
 @router.get("/{user_id}")

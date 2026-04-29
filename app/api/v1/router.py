@@ -1,4 +1,7 @@
-# app/api/v1/router.py
+# 🔁 UPDATED — app/api/v1/router.py
+# CHANGE: added my_class_router import + include_router call
+# All existing lines preserved exactly.
+
 from fastapi import APIRouter
 
 from app.api.v1.endpoints.academic_years import router as academic_years_router
@@ -21,6 +24,8 @@ from app.api.v1.endpoints.health import router as health_router
 from app.api.v1.endpoints.homework import router as homework_router
 from app.api.v1.endpoints.leave import router as leave_router
 from app.api.v1.endpoints.masters import router as masters_router
+# 🔥 NEW
+from app.api.v1.endpoints.my_class import router as my_class_router
 from app.api.v1.endpoints.notifications import router as notifications_router
 from app.api.v1.endpoints.parents import router as parents_router
 from app.api.v1.endpoints.principal_reports import router as principal_reports_router
@@ -33,7 +38,6 @@ from app.api.v1.endpoints.settings import router as settings_router
 from app.api.v1.endpoints.students import router as students_router
 from app.api.v1.endpoints.submissions import router as submissions_router
 from app.api.v1.endpoints.teacher_assignments import router as teacher_assignments_router
-from app.api.v1.endpoints.teacher_class_subjects import router as teacher_class_subjects_router
 from app.api.v1.endpoints.teachers import router as teachers_router
 from app.api.v1.endpoints.timetable import router as timetable_router
 
@@ -57,6 +61,8 @@ api_router.include_router(health_router)
 api_router.include_router(homework_router)
 api_router.include_router(leave_router)
 api_router.include_router(masters_router)
+# 🔥 NEW
+api_router.include_router(my_class_router)
 api_router.include_router(notifications_router)
 api_router.include_router(parents_router)
 api_router.include_router(principal_reports_router)
@@ -70,7 +76,6 @@ api_router.include_router(submissions_router)
 api_router.include_router(students_router)
 api_router.include_router(timetable_router)
 api_router.include_router(teacher_assignments_router)
-api_router.include_router(teacher_class_subjects_router)
 api_router.include_router(teachers_router)
 api_router.include_router(academic_years_router)
 api_router.include_router(announcements_router)

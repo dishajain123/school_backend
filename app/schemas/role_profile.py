@@ -83,3 +83,22 @@ class RoleProfileListResponse(BaseModel):
     page: int
     page_size: int
     total_pages: int
+
+
+class IdentifierConfigResponse(BaseModel):
+    identifier_type: str
+    format_template: str
+    sequence_padding: int
+    reset_yearly: bool
+    is_locked: bool
+    prefix: Optional[str] = None
+    preview_next: Optional[str] = None
+    warning: Optional[str] = None
+
+
+class IdentifierConfigUpsertRequest(BaseModel):
+    identifier_type: str
+    format_template: str = Field(..., min_length=1, max_length=100)
+    sequence_padding: int = Field(..., ge=1, le=12)
+    reset_yearly: bool
+    prefix: Optional[str] = Field(None, max_length=20)

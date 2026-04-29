@@ -23,6 +23,19 @@ from app.utils.enums import RegistrationSource, RoleEnum, UserStatus
 
 router = APIRouter(prefix="/approvals", tags=["Approvals"])
 
+def _requested_student_admission_number(submitted_data: Optional[dict]) -> Optional[str]:
+    if not submitted_data:
+        return None
+    raw = (
+        submitted_data.get("student_admission_number")
+        or submitted_data.get("admission_number")
+        or submitted_data.get("child_admission_number")
+    )
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    return text or None
+
 
 @router.get("/queue", response_model=ApprovalQueueResponse)
 async def list_approval_queue(
@@ -56,6 +69,9 @@ async def list_approval_queue(
                 school_id=u.school_id,
                 status=u.status,
                 registration_source=u.registration_source,
+                requested_student_admission_number=_requested_student_admission_number(
+                    u.submitted_data
+                ),
                 rejection_reason=u.rejection_reason,
                 hold_reason=u.hold_reason,
                 approved_at=u.approved_at,
@@ -111,6 +127,9 @@ async def get_approval_detail(
         school_id=user.school_id,
         status=user.status,
         registration_source=user.registration_source,
+        requested_student_admission_number=_requested_student_admission_number(
+            user.submitted_data
+        ),
         rejection_reason=user.rejection_reason,
         hold_reason=user.hold_reason,
         approved_by_id=user.approved_by_id,

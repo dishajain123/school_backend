@@ -14,7 +14,11 @@ from app.models.student import Student
 from app.models.teacher import Teacher
 from app.models.teacher_class_subject import TeacherClassSubject
 from app.models.user import User
+from app.models.identifier_counter import IdentifierCounter
+from app.models.identifier_format_config import IdentifierFormatConfig
 from app.schemas.role_profile import (
+    IdentifierConfigResponse,
+    IdentifierConfigUpsertRequest,
     ParentProfileCreate,
     ParentProfileResponse,
     RoleProfileListResponse,
@@ -23,8 +27,8 @@ from app.schemas.role_profile import (
     TeacherProfileCreate,
     TeacherProfileResponse,
 )
-from app.services.identifier import IdentifierService
-from app.utils.enums import RoleEnum, UserStatus
+from app.services.identifier import DEFAULT_FORMATS, IdentifierService
+from app.utils.enums import IdentifierType, RoleEnum, UserStatus
 
 
 class RoleProfileService:
@@ -312,6 +316,146 @@ class RoleProfileService:
             }
 
         raise NotFoundException("Role profile")
+
+    async def list_identifier_configs(
+        self,
+        school_id: uuid.UUID,
+    ) -> list[IdentifierConfigResponse]:
+        rows = await self.db.execute(
+            select(IdentifierFormatConfig).where(
+                IdentifierFormatConfig.school_id == school_id
+            )
+        )
+        existing = {r.identifier_type: r for r in rows.scalars().all()}
+        items: list[IdentifierConfigResponse] = []
+
+        for identifier_type in IdentifierType:
+            cfg = existing.get(identifier_type.value)
+            if cfg is None:
+                defaults = DEFAULT_FORMATS[identifier_type]
+                cfg = IdentifierFormatConfig(
+                    school_id=school_id,
+                    identifier_type=identifier_type.value,
+                    format_template=defaults["format_template"],
+                    sequence_padding=defaults["sequence_padding"],
+                    reset_yearly=defaults["reset_yearly"],
+                    is_locked=False,
+                )
+                self.db.add(cfg)
+                await self.db.flush()
+
+            preview = await self._preview_next_identifier(cfg)
+            warning = (
+                "Format is locked because identifiers were already issued."
+                if cfg.is_locked
+                else None
+            )
+            items.append(
+                IdentifierConfigResponse(
+                    identifier_type=cfg.identifier_type,
+                    format_template=cfg.format_template,
+                    sequence_padding=cfg.sequence_padding,
+                    reset_yearly=cfg.reset_yearly,
+                    is_locked=cfg.is_locked,
+                    prefix=cfg.prefix,
+                    preview_next=preview,
+                    warning=warning,
+                )
+            )
+
+        await self.db.commit()
+        return items
+
+    async def upsert_identifier_config(
+        self,
+        school_id: uuid.UUID,
+        payload: IdentifierConfigUpsertRequest,
+        actor: CurrentUser,
+    ) -> IdentifierConfigResponse:
+        try:
+            id_type = IdentifierType(payload.identifier_type.upper())
+        except Exception:
+            raise ValidationException(
+                "identifier_type must be one of ADMISSION_NUMBER, EMPLOYEE_ID, PARENT_CODE"
+            )
+
+        row = await self.db.execute(
+            select(IdentifierFormatConfig).where(
+                and_(
+                    IdentifierFormatConfig.school_id == school_id,
+                    IdentifierFormatConfig.identifier_type == id_type.value,
+                )
+            )
+        )
+        cfg = row.scalar_one_or_none()
+        if cfg is None:
+            cfg = IdentifierFormatConfig(
+                school_id=school_id,
+                identifier_type=id_type.value,
+                format_template=payload.format_template.strip(),
+                sequence_padding=payload.sequence_padding,
+                reset_yearly=payload.reset_yearly,
+                prefix=payload.prefix.strip() if payload.prefix else None,
+                configured_by_id=actor.id,
+            )
+            self.db.add(cfg)
+            await self.db.flush()
+        else:
+            new_prefix = payload.prefix.strip() if payload.prefix else None
+            if cfg.is_locked and (
+                cfg.format_template != payload.format_template.strip()
+                or cfg.sequence_padding != payload.sequence_padding
+                or cfg.reset_yearly != payload.reset_yearly
+                or cfg.prefix != new_prefix
+            ):
+                raise ValidationException(
+                    "Identifier format is locked and cannot be modified."
+                )
+            cfg.format_template = payload.format_template.strip()
+            cfg.sequence_padding = payload.sequence_padding
+            cfg.reset_yearly = payload.reset_yearly
+            cfg.prefix = new_prefix
+            cfg.configured_by_id = actor.id
+            await self.db.flush()
+
+        preview = await self._preview_next_identifier(cfg)
+        warning = (
+            "Format is locked because identifiers were already issued."
+            if cfg.is_locked
+            else None
+        )
+        await self.db.commit()
+        return IdentifierConfigResponse(
+            identifier_type=cfg.identifier_type,
+            format_template=cfg.format_template,
+            sequence_padding=cfg.sequence_padding,
+            reset_yearly=cfg.reset_yearly,
+            is_locked=cfg.is_locked,
+            prefix=cfg.prefix,
+            preview_next=preview,
+            warning=warning,
+        )
+
+    async def _preview_next_identifier(self, cfg: IdentifierFormatConfig) -> str:
+        year_tag = str(datetime.now().year) if cfg.reset_yearly else "ALL"
+        row = await self.db.execute(
+            select(IdentifierCounter.last_number).where(
+                and_(
+                    IdentifierCounter.school_id == cfg.school_id,
+                    IdentifierCounter.identifier_type == cfg.identifier_type,
+                    IdentifierCounter.year_tag == year_tag,
+                )
+            )
+        )
+        last_number = row.scalar_one_or_none() or 0
+        seq_num = int(last_number) + 1
+
+        year_val = datetime.now().year
+        padded_seq = str(seq_num).zfill(cfg.sequence_padding)
+        value = cfg.format_template.replace("{YEAR}", str(year_val))
+        value = value.replace("{SEQ}", padded_seq)
+        value = value.replace("{PREFIX}", cfg.prefix or "")
+        return value
 
 
     async def _get_target_user(

@@ -38,16 +38,6 @@ def _make_tracked(method: str, template: str, migration_hint: str, track_only: b
 DEPRECATED_APIS: tuple[TrackedApi, ...] = (
     _make_tracked(
         "GET",
-        "/api/v1/teacher-class-subjects/mine",
-        "Migrate to GET /api/v1/teacher-assignments/mine.",
-    ),
-    _make_tracked(
-        "GET",
-        "/api/v1/teacher-class-subjects",
-        "Migrate to GET /api/v1/teacher-assignments?teacher_id=... or by class filters.",
-    ),
-    _make_tracked(
-        "GET",
         "/api/v1/files/{}/{}",
         "Use presigned URLs returned by domain APIs (documents/gallery/receipts).",
     ),

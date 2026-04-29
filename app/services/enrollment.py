@@ -57,6 +57,7 @@ class EnrollmentService:
         school_id = actor.school_id
 
         student = await self._load_student(data.student_id, school_id)
+        await self._load_academic_year(data.academic_year_id, school_id)
 
         existing = await self.repo.get_by_student_year(data.student_id, data.academic_year_id)
         if existing:
@@ -150,6 +151,9 @@ class EnrollmentService:
             )
 
         if data.standard_id:
+            await self._load_standard(
+                data.standard_id, mapping.academic_year_id, actor.school_id
+            )
             mapping.standard_id = data.standard_id
         if data.section_id is not None:
             section = await self._load_section(
@@ -229,6 +233,8 @@ class EnrollmentService:
         mapping.standard_id = data.new_standard_id
         mapping.section_id = data.new_section_id
         mapping.section_name = new_section_name
+        if data.effective_date and data.effective_date > date.today():
+            raise ValidationException("Transfer effective date cannot be in the future.")
         if data.new_roll_number is not None:
             mapping.roll_number = data.new_roll_number
         mapping.last_modified_by_id = actor.id
@@ -254,7 +260,8 @@ class EnrollmentService:
             description=(
                 f"{actor.full_name} transferred student '{student.admission_number}' "
                 f"to {action_label} {new_std.name} Section {new_section_name or 'N/A'}. "
-                f"Reason: {data.transfer_reason}"
+                f"Reason: {data.transfer_reason}. "
+                f"Effective: {data.effective_date or date.today()}"
             ),
             before_state=before,
             after_state=after,
@@ -337,6 +344,8 @@ class EnrollmentService:
                 f"Only ACTIVE mappings can be marked COMPLETED. "
                 f"Current status: {mapping.status.value}"
             )
+        if data.completed_on and data.completed_on > date.today():
+            raise ValidationException("Completion date cannot be in the future.")
 
         before = {"status": mapping.status.value}
         mapping.status = EnrollmentStatus.COMPLETED
@@ -354,7 +363,8 @@ class EnrollmentService:
             school_id=actor.school_id,
             description=(
                 f"{actor.full_name} marked mapping {mapping_id} as COMPLETED "
-                f"(year-end, eligible for promotion)."
+                f"(year-end, eligible for promotion). "
+                f"Completed on: {data.completed_on or date.today()}"
             ),
             before_state=before,
             after_state={"status": EnrollmentStatus.COMPLETED.value},
@@ -548,7 +558,25 @@ class EnrollmentService:
         std = row.scalar_one_or_none()
         if not std:
             raise NotFoundException("Standard/Class not found in this school.")
+        if std.academic_year_id and std.academic_year_id != academic_year_id:
+            raise ValidationException(
+                "Selected class does not belong to the selected academic year."
+            )
         return std
+
+    async def _load_academic_year(self, academic_year_id: uuid.UUID, school_id: uuid.UUID) -> AcademicYear:
+        row = await self.db.execute(
+            select(AcademicYear).where(
+                and_(
+                    AcademicYear.id == academic_year_id,
+                    AcademicYear.school_id == school_id,
+                )
+            )
+        )
+        year = row.scalar_one_or_none()
+        if not year:
+            raise NotFoundException("Academic year not found in this school.")
+        return year
 
     async def _load_section(
         self,

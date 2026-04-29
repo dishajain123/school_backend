@@ -46,14 +46,16 @@ async def preview_promotion(
     standard_id: Optional[uuid.UUID] = Query(
         None, description="Filter preview to one class"
     ),
-    current_user: CurrentUser = Depends(require_permission("enrollment:read")),
+    current_user: CurrentUser = Depends(
+        require_any_permission("enrollment:read", "student:promote", "user:manage")
+    ),
     service: PromotionWorkflowService = Depends(get_service),
 ):
     """
     Phase 7: Preview the promotion run — shows all eligible students,
     their current class, the system-suggested next class, and any warnings.
     This is a READ-ONLY operation. Nothing is written to the database.
-    Staff Admin (review-only) and Academic Admin can both call this.
+    Staff Admin (review-only), Academic Admin, and user-manage admins can call this.
     """
     if not current_user.school_id:
         raise ForbiddenException("School context required")

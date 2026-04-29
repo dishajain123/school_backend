@@ -16,6 +16,7 @@ class ApprovalQueueItem(BaseModel):
     school_id: Optional[uuid.UUID]
     status: UserStatus
     registration_source: RegistrationSource
+    requested_student_admission_number: Optional[str] = None
     rejection_reason: Optional[str]
     hold_reason: Optional[str]
     approved_at: Optional[datetime]
@@ -39,6 +40,7 @@ class ApprovalDetailResponse(BaseModel):
     school_id: Optional[uuid.UUID]
     status: UserStatus
     registration_source: RegistrationSource
+    requested_student_admission_number: Optional[str] = None
     rejection_reason: Optional[str]
     hold_reason: Optional[str]
     approved_by_id: Optional[uuid.UUID]
@@ -122,4 +124,3 @@ class ApprovalWithProfileResponse(BaseModel):
     teacher_profile: Optional[dict[str, Any]] = None
     parent_profile: Optional[dict[str, Any]] = None
     profile_error: Optional[str] = None  # If profile creation failed but approval succeeded
-
