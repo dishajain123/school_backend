@@ -29,7 +29,7 @@ from app.schemas.enrollment import (
     StudentAcademicHistoryResponse,
     RollNumberAssignRequest,
 )
-from app.core.dependencies import get_current_user, require_permission, CurrentUser
+from app.core.dependencies import get_current_user, require_any_permission, require_permission, CurrentUser
 from app.core.exceptions import ForbiddenException, ValidationException
 
 router = APIRouter(prefix="/enrollments", tags=["Enrollments"])
@@ -44,7 +44,7 @@ def get_service(db: AsyncSession = Depends(get_db)) -> EnrollmentService:
 @router.post("/mappings", response_model=EnrollmentMappingResponse, status_code=201)
 async def create_enrollment_mapping(
     data: EnrollmentMappingCreate,
-    current_user: CurrentUser = Depends(require_permission("enrollment:create")),
+    current_user: CurrentUser = Depends(require_any_permission("enrollment:create", "user:manage")),
     service: EnrollmentService = Depends(get_service),
 ):
     """
@@ -62,7 +62,7 @@ async def create_enrollment_mapping(
 @router.get("/mappings/{mapping_id}", response_model=EnrollmentMappingResponse)
 async def get_enrollment_mapping(
     mapping_id: uuid.UUID,
-    current_user: CurrentUser = Depends(require_permission("enrollment:read")),
+    current_user: CurrentUser = Depends(require_any_permission("enrollment:read", "user:manage")),
     service: EnrollmentService = Depends(get_service),
 ):
     """Get a single enrollment mapping by ID."""
@@ -77,7 +77,7 @@ async def get_enrollment_mapping(
 async def update_enrollment_mapping(
     mapping_id: uuid.UUID,
     data: EnrollmentMappingUpdate,
-    current_user: CurrentUser = Depends(require_permission("enrollment:update")),
+    current_user: CurrentUser = Depends(require_any_permission("enrollment:update", "user:manage")),
     service: EnrollmentService = Depends(get_service),
 ):
     """
@@ -96,7 +96,7 @@ async def update_enrollment_mapping(
 async def transfer_student(
     mapping_id: uuid.UUID,
     data: SectionTransferRequest,
-    current_user: CurrentUser = Depends(require_permission("enrollment:update")),
+    current_user: CurrentUser = Depends(require_any_permission("enrollment:update", "user:manage")),
     service: EnrollmentService = Depends(get_service),
 ):
     """
@@ -125,7 +125,7 @@ async def transfer_student(
 async def exit_student(
     mapping_id: uuid.UUID,
     data: EnrollmentExitRequest,
-    current_user: CurrentUser = Depends(require_permission("enrollment:update")),
+    current_user: CurrentUser = Depends(require_any_permission("enrollment:update", "user:manage")),
     service: EnrollmentService = Depends(get_service),
 ):
     """
@@ -144,7 +144,7 @@ async def exit_student(
 async def complete_mapping(
     mapping_id: uuid.UUID,
     data: EnrollmentCompleteRequest,
-    current_user: CurrentUser = Depends(require_permission("student:promote")),
+    current_user: CurrentUser = Depends(require_any_permission("student:promote", "user:manage")),
     service: EnrollmentService = Depends(get_service),
 ):
     """
@@ -164,7 +164,7 @@ async def get_class_roster(
     standard_id: uuid.UUID = Query(...),
     academic_year_id: uuid.UUID = Query(...),
     section_id: Optional[uuid.UUID] = Query(None),
-    current_user: CurrentUser = Depends(require_permission("enrollment:read")),
+    current_user: CurrentUser = Depends(require_any_permission("enrollment:read", "user:manage")),
     service: EnrollmentService = Depends(get_service),
 ):
     """
@@ -186,7 +186,7 @@ async def get_class_roster(
 @router.get("/history/{student_id}", response_model=StudentAcademicHistoryResponse)
 async def get_student_history(
     student_id: uuid.UUID,
-    current_user: CurrentUser = Depends(require_permission("enrollment:read")),
+    current_user: CurrentUser = Depends(require_any_permission("enrollment:read", "user:manage")),
     service: EnrollmentService = Depends(get_service),
 ):
     """

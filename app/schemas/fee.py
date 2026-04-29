@@ -1,6 +1,10 @@
+# app/schemas/fee.py
+from __future__ import annotations
+
 import uuid
+import math
 from datetime import date, datetime
-from typing import Optional, Any
+from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -8,12 +12,11 @@ from app.utils.enums import FeeCategory, FeeStatus, PaymentMode
 
 
 # ---------------------------------------------------------------------------
-# Installment Plan
+# Installment plan item
 # ---------------------------------------------------------------------------
 
 class InstallmentPlanItem(BaseModel):
-    """One item in FeeStructure.installment_plan JSON array."""
-    name: str = Field(..., min_length=1, max_length=120)
+    name: str
     due_date: date
     amount: float
 
@@ -24,62 +27,28 @@ class InstallmentPlanItem(BaseModel):
             raise ValueError("Installment amount must be positive")
         return v
 
-    @field_validator("name")
-    @classmethod
-    def name_clean(cls, v: str) -> str:
-        v = " ".join(v.strip().split())
-        if not v:
-            raise ValueError("Installment name is required")
-        return v
-
 
 # ---------------------------------------------------------------------------
-# Fee Structure
+# Fee Structures
 # ---------------------------------------------------------------------------
 
-class FeeStructureCreate(BaseModel):
+class FeeStructureItem(BaseModel):
     standard_id: uuid.UUID
-    academic_year_id: Optional[uuid.UUID] = None
+    academic_year_id: uuid.UUID
     fee_category: FeeCategory
-    custom_fee_head: Optional[str] = None
     amount: float
     due_date: date
+    custom_fee_head: Optional[str] = None
     description: Optional[str] = None
     installment_plan: Optional[list[InstallmentPlanItem]] = None
 
-    @field_validator("amount")
+    @field_validator("custom_fee_head", mode="before")
     @classmethod
-    def amount_positive(cls, v: float) -> float:
-        if v <= 0:
-            raise ValueError("Amount must be positive")
-        return v
-
-    @field_validator("custom_fee_head")
-    @classmethod
-    def normalize_custom_fee_head(cls, v: Optional[str]) -> Optional[str]:
+    def normalize_custom_head(cls, v: Optional[str]) -> Optional[str]:
         if v is None:
             return None
         normalized = " ".join(v.strip().split())
-        if not normalized:
-            return None
-        if len(normalized) > 120:
-            raise ValueError("custom_fee_head must be <= 120 characters")
-        return normalized
-
-
-class FeeStructureHeadCreate(BaseModel):
-    name: str
-    amount: float
-
-    @field_validator("name")
-    @classmethod
-    def name_valid(cls, v: str) -> str:
-        normalized = " ".join(v.strip().split())
-        if not normalized:
-            raise ValueError("Fee head name is required")
-        if len(normalized) > 120:
-            raise ValueError("Fee head name must be <= 120 characters")
-        return normalized
+        return normalized if normalized else None
 
     @field_validator("amount")
     @classmethod
@@ -90,26 +59,7 @@ class FeeStructureHeadCreate(BaseModel):
 
 
 class FeeStructureBatchCreate(BaseModel):
-    standard_id: Optional[uuid.UUID] = None
-    standard_ids: list[uuid.UUID] = Field(default_factory=list)
-    apply_to_all_classes: bool = False
-    academic_year_id: Optional[uuid.UUID] = None
-    due_date: date
-    description: Optional[str] = None
-    fee_heads: list[FeeStructureHeadCreate] = Field(default_factory=list)
-    installment_plan: Optional[list[InstallmentPlanItem]] = None
-
-    @field_validator("fee_heads")
-    @classmethod
-    def fee_heads_non_empty(cls, v: list[FeeStructureHeadCreate]) -> list[FeeStructureHeadCreate]:
-        if not v:
-            raise ValueError("At least one fee head is required")
-        return v
-
-    @field_validator("standard_ids")
-    @classmethod
-    def dedupe_standard_ids(cls, v: list[uuid.UUID]) -> list[uuid.UUID]:
-        return list(dict.fromkeys(v))
+    structures: list[FeeStructureItem] = Field(..., min_length=1)
 
 
 class FeeStructureResponse(BaseModel):
@@ -121,16 +71,18 @@ class FeeStructureResponse(BaseModel):
     amount: float
     due_date: date
     description: Optional[str] = None
+    installment_plan: Optional[list[dict]] = None
     school_id: uuid.UUID
-    installment_plan: Optional[list[Any]] = None
     created_at: datetime
     updated_at: datetime
+    standard: Optional[dict] = None
+    academic_year: Optional[dict] = None
 
     model_config = {"from_attributes": True}
 
     @field_validator("custom_fee_head", mode="before")
     @classmethod
-    def empty_custom_head_to_none(cls, v: Optional[str]) -> Optional[str]:
+    def empty_to_none(cls, v: Optional[str]) -> Optional[str]:
         return v or None
 
 
@@ -142,33 +94,21 @@ class FeeStructureListResponse(BaseModel):
 class FeeStructureBatchResponse(BaseModel):
     items: list[FeeStructureResponse]
     total: int
-    created: int
-    updated: int
+    created: int = 0
+    updated: int = 0
 
 
 class FeeStructureUpdate(BaseModel):
-    custom_fee_head: Optional[str] = None
     amount: Optional[float] = None
     due_date: Optional[date] = None
     description: Optional[str] = None
-    apply_to_all_classes: bool = False
+    custom_fee_head: Optional[str] = None
     installment_plan: Optional[list[InstallmentPlanItem]] = None
+    apply_to_all_classes: bool = False
 
-    @field_validator("custom_fee_head")
+    @field_validator("amount", mode="before")
     @classmethod
-    def normalize_custom_fee_head(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return None
-        normalized = " ".join(v.strip().split())
-        if not normalized:
-            return None
-        if len(normalized) > 120:
-            raise ValueError("custom_fee_head must be <= 120 characters")
-        return normalized
-
-    @field_validator("amount")
-    @classmethod
-    def amount_positive(cls, v: Optional[float]) -> Optional[float]:
+    def amount_positive_if_set(cls, v: Optional[float]) -> Optional[float]:
         if v is None:
             return None
         if v <= 0:
@@ -211,6 +151,41 @@ class FeeLedgerResponse(BaseModel):
         return v or None
 
 
+class AdminLedgerEntry(BaseModel):
+    """Ledger entry with embedded student info for admin list view."""
+    id: uuid.UUID
+    student_id: uuid.UUID
+    fee_structure_id: uuid.UUID
+    student_name: Optional[str] = None
+    admission_number: Optional[str] = None
+    standard_name: Optional[str] = None
+    installment_name: str = ""
+    fee_category: Optional[FeeCategory] = None
+    custom_fee_head: Optional[str] = None
+    due_date: Optional[date] = None
+    total_amount: float
+    paid_amount: float
+    outstanding_amount: float
+    status: FeeStatus
+    last_payment_date: Optional[date] = None
+    school_id: uuid.UUID
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class AdminLedgerListResponse(BaseModel):
+    items: list[AdminLedgerEntry]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+    total_billed: float = 0.0
+    total_paid: float = 0.0
+    total_outstanding: float = 0.0
+
+
 class CustomFeeHeadInput(BaseModel):
     name: str
     amount: float
@@ -240,6 +215,13 @@ class LedgerGenerateRequest(BaseModel):
     standard_id: uuid.UUID
     academic_year_id: Optional[uuid.UUID] = None
     custom_fee_heads: list[CustomFeeHeadInput] = Field(default_factory=list)
+
+
+class StudentLedgerGenerateRequest(BaseModel):
+    """Generate fee ledger for a single student — used for mid-year admissions or overrides."""
+    student_id: uuid.UUID
+    standard_id: uuid.UUID
+    academic_year_id: Optional[uuid.UUID] = None
 
 
 class LedgerGenerateResponse(BaseModel):

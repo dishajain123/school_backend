@@ -10,6 +10,7 @@ from app.core.security import decode_token
 from app.core.exceptions import UnauthorizedException, ForbiddenException
 from app.models.jti_blocklist import JtiBlocklist
 from app.models.parent import Parent
+from app.models.school import School
 from app.models.user import User
 from app.utils.enums import RoleEnum, UserStatus
 
@@ -60,13 +61,30 @@ async def get_current_user(
     )
 
     user_row = await db.execute(
-        select(User.status, User.is_active).where(User.id == uuid.UUID(payload["sub"]))
+        select(User.status, User.is_active, User.school_id).where(
+            User.id == uuid.UUID(payload["sub"])
+        )
     )
     user_state = user_row.one_or_none()
     if not user_state:
         raise UnauthorizedException(detail="User not found")
-    if user_state.status != UserStatus.ACTIVE or not user_state.is_active:
+    user_status, user_is_active, user_school_id = user_state
+    if user_status != UserStatus.ACTIVE or not user_is_active:
         raise ForbiddenException(detail="Account is not active")
+
+    resolved_school_id: Optional[uuid.UUID] = None
+    if school_id_raw:
+        resolved_school_id = uuid.UUID(school_id_raw)
+    elif user_school_id:
+        resolved_school_id = user_school_id
+    else:
+        # Single-school fallback: pick first active school when user-school is null.
+        school_row = await db.execute(
+            select(School.id)
+            .where(School.is_active.is_(True))
+            .order_by(School.created_at.asc())
+        )
+        resolved_school_id = school_row.scalar_one_or_none()
     # Backward compatibility: some tokens may miss parent_id for parent role.
     # Resolve it once here so all parent-scoped services work consistently.
     if resolved_parent_id is None and payload.get("role") == RoleEnum.PARENT.value:
@@ -78,14 +96,14 @@ async def get_current_user(
     return CurrentUser(
         id=uuid.UUID(payload["sub"]),
         role=RoleEnum(payload["role"]),
-        school_id=uuid.UUID(school_id_raw) if school_id_raw else None,
+        school_id=resolved_school_id,
         parent_id=resolved_parent_id,
         permissions=payload.get("permissions", []),
         full_name=payload.get("full_name"),
         email=payload.get("email"),
         phone=payload.get("phone"),
-        status=user_state.status,
-        is_active=user_state.is_active,
+        status=user_status,
+        is_active=user_is_active,
     )
 
 
@@ -94,6 +112,17 @@ def require_permission(permission: str):
         if permission not in current_user.permissions:
             raise ForbiddenException(
                 detail=f"Permission '{permission}' is required to access this resource"
+            )
+        return current_user
+    return checker
+
+
+def require_any_permission(*permissions: str):
+    async def checker(current_user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+        if not any(permission in current_user.permissions for permission in permissions):
+            raise ForbiddenException(
+                detail="One of the following permissions is required: "
+                + ", ".join(permissions),
             )
         return current_user
     return checker

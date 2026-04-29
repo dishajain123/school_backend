@@ -54,6 +54,25 @@ class TeacherClassSubjectService:
                 detail="Teacher assignment is allowed only for approved active teachers"
             )
 
+    async def _resolve_teacher_in_school(
+        self,
+        teacher_identifier: uuid.UUID,
+        school_id: uuid.UUID,
+    ):
+        """
+        Backward-compatible resolver:
+        - preferred: teacher_identifier is Teacher.id
+        - fallback: teacher_identifier is User.id linked to Teacher
+        """
+        teacher = await self.teacher_repo.get_by_id(teacher_identifier, school_id)
+        if teacher:
+            return teacher
+
+        teacher_by_user = await self.teacher_repo.get_by_user_id(teacher_identifier)
+        if teacher_by_user and teacher_by_user.school_id == school_id:
+            return teacher_by_user
+        return None
+
     async def _load_sections_registry(self, school_id: uuid.UUID) -> dict:
         setting = await self.settings_repo.get_by_key(
             school_id,
@@ -122,7 +141,7 @@ class TeacherClassSubjectService:
             raise ValidationException(detail="Section is required")
 
         # Validate teacher belongs to school
-        teacher = await self.teacher_repo.get_by_id(payload.teacher_id, school_id)
+        teacher = await self._resolve_teacher_in_school(payload.teacher_id, school_id)
         if not teacher:
             raise NotFoundException(detail="Teacher not found in this school")
         self._ensure_teacher_is_approved(teacher)
@@ -298,15 +317,15 @@ class TeacherClassSubjectService:
         # A TEACHER can only view their own assignments
         if current_user.role == RoleEnum.TEACHER:
             teacher = await self.teacher_repo.get_by_user_id(current_user.id)
-            if not teacher or teacher.id != teacher_id:
+            if not teacher or (teacher.id != teacher_id and teacher.user_id != teacher_id):
                 raise ForbiddenException(detail="Access denied")
 
         # Verify teacher belongs to school
-        teacher = await self.teacher_repo.get_by_id(teacher_id, school_id)
+        teacher = await self._resolve_teacher_in_school(teacher_id, school_id)
         if not teacher:
             raise NotFoundException(detail="Teacher not found in this school")
 
-        return await self.repo.list_by_teacher(teacher_id, academic_year_id)
+        return await self.repo.list_by_teacher(teacher.id, academic_year_id)
 
     async def list_by_class(
         self,

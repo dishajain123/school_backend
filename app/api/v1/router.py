@@ -2,6 +2,7 @@
 from fastapi import APIRouter
 
 from app.api.v1.endpoints.academic_years import router as academic_years_router
+from app.api.v1.endpoints.announcements import router as announcements_router
 from app.api.v1.endpoints.approvals import router as approvals_router
 from app.api.v1.endpoints.audit_logs import router as audit_logs_router
 from app.api.v1.endpoints.assignments import router as assignments_router
@@ -72,3 +73,4 @@ api_router.include_router(teacher_assignments_router)
 api_router.include_router(teacher_class_subjects_router)
 api_router.include_router(teachers_router)
 api_router.include_router(academic_years_router)
+api_router.include_router(announcements_router)

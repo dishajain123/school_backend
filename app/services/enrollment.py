@@ -89,6 +89,7 @@ class EnrollmentService:
             section_name=section_name,
             roll_number=data.roll_number,
             status=EnrollmentStatus.ACTIVE,
+            admission_type=data.admission_type,
             joined_on=data.joined_on or date.today(),
             created_by_id=actor.id,
             last_modified_by_id=actor.id,
@@ -297,6 +298,7 @@ class EnrollmentService:
         await self.db.flush()
 
         student = await self._load_student(mapping.student_id, actor.school_id)
+        await self._sync_student_flat_fields(student, mapping)
 
         await self.audit.log(
             action=AuditAction.STUDENT_EXITED,
@@ -340,6 +342,8 @@ class EnrollmentService:
         mapping.status = EnrollmentStatus.COMPLETED
         mapping.last_modified_by_id = actor.id
         await self.db.flush()
+        student = await self._load_student(mapping.student_id, actor.school_id)
+        await self._sync_student_flat_fields(student, mapping)
 
         await self.audit.log(
             action=AuditAction.STUDENT_PROMOTED,
@@ -568,13 +572,43 @@ class EnrollmentService:
     async def _sync_student_flat_fields(
         self, student: Student, mapping: StudentYearMapping
     ) -> None:
-        """Keep Student denormalized flat fields in sync with the ACTIVE mapping."""
+        """Keep Student denormalized flat fields synced to current ACTIVE mapping."""
         if mapping.status == EnrollmentStatus.ACTIVE:
             student.standard_id = mapping.standard_id
             student.section = mapping.section_name
             student.roll_number = mapping.roll_number
             student.academic_year_id = mapping.academic_year_id
             await self.db.flush()
+            return
+
+        active_stmt = (
+            select(StudentYearMapping)
+            .where(
+                and_(
+                    StudentYearMapping.student_id == student.id,
+                    StudentYearMapping.school_id == student.school_id,
+                    StudentYearMapping.status == EnrollmentStatus.ACTIVE,
+                )
+            )
+            .order_by(
+                StudentYearMapping.joined_on.desc(),
+                StudentYearMapping.created_at.desc(),
+            )
+            .limit(1)
+        )
+        active_row = await self.db.execute(active_stmt)
+        active_mapping = active_row.scalar_one_or_none()
+        if active_mapping:
+            student.standard_id = active_mapping.standard_id
+            student.section = active_mapping.section_name
+            student.roll_number = active_mapping.roll_number
+            student.academic_year_id = active_mapping.academic_year_id
+        else:
+            student.standard_id = None
+            student.section = None
+            student.roll_number = None
+            student.academic_year_id = None
+        await self.db.flush()
 
     def _to_response(self, m: StudentYearMapping) -> EnrollmentMappingResponse:
         student_name = None

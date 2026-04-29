@@ -684,6 +684,125 @@ async def init_db() -> None:
                 )
             )
 
+            # ── AnnouncementType enum sync ──────────────────────────────────
+            await conn.execute(
+                text(
+                    """
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM pg_type WHERE typname = 'announcement_type_enum'
+                        ) THEN
+                            CREATE TYPE announcement_type_enum AS ENUM (
+                                'GENERAL',
+                                'URGENT',
+                                'FEE',
+                                'EXAM',
+                                'EVENT',
+                                'HOLIDAY'
+                            );
+                        END IF;
+                    END $$;
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM pg_enum
+                            WHERE enumlabel = 'GENERAL'
+                              AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'announcement_type_enum')
+                        ) THEN
+                            ALTER TYPE announcement_type_enum ADD VALUE 'GENERAL';
+                        END IF;
+                    END $$;
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM pg_enum
+                            WHERE enumlabel = 'URGENT'
+                              AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'announcement_type_enum')
+                        ) THEN
+                            ALTER TYPE announcement_type_enum ADD VALUE 'URGENT';
+                        END IF;
+                    END $$;
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM pg_enum
+                            WHERE enumlabel = 'FEE'
+                              AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'announcement_type_enum')
+                        ) THEN
+                            ALTER TYPE announcement_type_enum ADD VALUE 'FEE';
+                        END IF;
+                    END $$;
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM pg_enum
+                            WHERE enumlabel = 'EXAM'
+                              AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'announcement_type_enum')
+                        ) THEN
+                            ALTER TYPE announcement_type_enum ADD VALUE 'EXAM';
+                        END IF;
+                    END $$;
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM pg_enum
+                            WHERE enumlabel = 'EVENT'
+                              AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'announcement_type_enum')
+                        ) THEN
+                            ALTER TYPE announcement_type_enum ADD VALUE 'EVENT';
+                        END IF;
+                    END $$;
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM pg_enum
+                            WHERE enumlabel = 'HOLIDAY'
+                              AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'announcement_type_enum')
+                        ) THEN
+                            ALTER TYPE announcement_type_enum ADD VALUE 'HOLIDAY';
+                        END IF;
+                    END $$;
+                    """
+                )
+            )
+
         logger.info("Database tables created/verified successfully")
     except Exception as e:
         logger.error(f"Failed to initialize database: {e}")

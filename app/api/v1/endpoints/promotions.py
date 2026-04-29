@@ -27,7 +27,7 @@ from app.schemas.promotion_workflow import (
     CopyTeacherAssignmentsRequest,
     CopyTeacherAssignmentsResponse,
 )
-from app.core.dependencies import get_current_user, require_permission, CurrentUser
+from app.core.dependencies import get_current_user, require_any_permission, require_permission, CurrentUser
 from app.core.exceptions import ForbiddenException
 
 router = APIRouter(prefix="/promotions", tags=["Promotions"])
@@ -99,7 +99,7 @@ async def execute_promotion(
 async def reenroll_student(
     student_id: uuid.UUID,
     data: SingleReenrollRequest,
-    current_user: CurrentUser = Depends(require_permission("enrollment:create")),
+    current_user: CurrentUser = Depends(require_any_permission("enrollment:create", "user:manage")),
     service: PromotionWorkflowService = Depends(get_service),
 ):
     """

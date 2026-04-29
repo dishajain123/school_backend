@@ -5,6 +5,8 @@ from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.document import Document
+from app.models.student import Student
+from app.utils.enums import DocumentStatus, DocumentType
 
 
 class DocumentRepository:
@@ -42,12 +44,31 @@ class DocumentRepository:
         )
         return list(result.scalars().all())
 
-    async def list_for_school(self, school_id: uuid.UUID) -> list[Document]:
-        result = await self.db.execute(
-            select(Document).where(
-                Document.school_id == school_id,
-            ).order_by(Document.requested_at.desc())
+    async def list_for_school(
+        self,
+        school_id: uuid.UUID,
+        *,
+        academic_year_id: Optional[uuid.UUID] = None,
+        standard_id: Optional[uuid.UUID] = None,
+        section: Optional[str] = None,
+    ) -> list[Document]:
+        stmt = (
+            select(Document)
+            .join(Student, Student.id == Document.student_id)
+            .where(
+                and_(
+                    Document.school_id == school_id,
+                    Student.school_id == school_id,
+                )
+            )
         )
+        if academic_year_id is not None:
+            stmt = stmt.where(Student.academic_year_id == academic_year_id)
+        if standard_id is not None:
+            stmt = stmt.where(Student.standard_id == standard_id)
+        if section is not None:
+            stmt = stmt.where(Student.section == section)
+        result = await self.db.execute(stmt.order_by(Document.requested_at.desc()))
         return list(result.scalars().all())
 
     async def list_for_students(
@@ -73,3 +94,25 @@ class DocumentRepository:
         await self.db.flush()
         await self.db.refresh(doc)
         return doc
+
+    async def get_latest_pending_request(
+        self,
+        *,
+        student_id: uuid.UUID,
+        school_id: uuid.UUID,
+        academic_year_id: uuid.UUID,
+        document_type: DocumentType,
+    ) -> Optional[Document]:
+        result = await self.db.execute(
+            select(Document).where(
+                and_(
+                    Document.student_id == student_id,
+                    Document.school_id == school_id,
+                    Document.academic_year_id == academic_year_id,
+                    Document.document_type == document_type,
+                    Document.status == DocumentStatus.PENDING,
+                    Document.file_key.is_(None),
+                )
+            ).order_by(Document.requested_at.desc())
+        )
+        return result.scalars().first()

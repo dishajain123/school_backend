@@ -61,6 +61,11 @@ class AuditAction(str, Enum):
     TEACHER_ASSIGNMENT_UPDATED = "TEACHER_ASSIGNMENT_UPDATED"     # Phase 14/15
     TEACHER_ASSIGNMENT_DELETED = "TEACHER_ASSIGNMENT_DELETED"     # Phase 14/15
     TEACHER_ASSIGNMENT_COPIED = "TEACHER_ASSIGNMENT_COPIED"
+    DOCUMENT_APPROVED = "DOCUMENT_APPROVED"
+    DOCUMENT_REJECTED = "DOCUMENT_REJECTED"
+    ANNOUNCEMENT_CREATED = "ANNOUNCEMENT_CREATED"
+    ANNOUNCEMENT_UPDATED = "ANNOUNCEMENT_UPDATED"
+    ANNOUNCEMENT_DELETED = "ANNOUNCEMENT_DELETED"
 
 
 class IdentifierType(str, Enum):
@@ -96,6 +101,13 @@ class FeeCategory(str, Enum):
     SPORTS = "SPORTS"
     EXAMINATION = "EXAMINATION"
     MISCELLANEOUS = "MISCELLANEOUS"
+
+
+class FeeStatus(str, Enum):
+    PENDING = "PENDING"
+    PARTIAL = "PARTIAL"
+    PAID = "PAID"
+    OVERDUE = "OVERDUE"
 
 
 class ExamType(str, Enum):
@@ -134,6 +146,13 @@ class LeaveType(str, Enum):
 
 
 class DocumentType(str, Enum):
+    # Newer document types used by admin/mobile flows
+    ID_CARD = "ID_CARD"
+    BONAFIDE = "BONAFIDE"
+    LEAVING_CERT = "LEAVING_CERT"
+    REPORT_CARD = "REPORT_CARD"
+
+    # Legacy types kept for backward compatibility with older records
     ID_PROOF = "ID_PROOF"
     ADDRESS_PROOF = "ADDRESS_PROOF"
     ACADEMIC_CERTIFICATE = "ACADEMIC_CERTIFICATE"
@@ -143,16 +162,24 @@ class DocumentType(str, Enum):
 
 
 class DocumentStatus(str, Enum):
+    # Current workflow statuses (used by services and admin UI)
     PENDING = "PENDING"
+    PROCESSING = "PROCESSING"
+    READY = "READY"
+    FAILED = "FAILED"
+
+    # Legacy statuses kept for compatibility with historical rows
     VERIFIED = "VERIFIED"
     REJECTED = "REJECTED"
 
 
 class AnnouncementType(str, Enum):
     GENERAL = "GENERAL"
+    URGENT = "URGENT"
+    FEE = "FEE"
     EXAM = "EXAM"
-    HOLIDAY = "HOLIDAY"
     EVENT = "EVENT"
+    HOLIDAY = "HOLIDAY"
 
 
 class ComplaintCategory(str, Enum):

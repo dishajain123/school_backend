@@ -39,13 +39,21 @@ async def _resolve_school_scope(
 
 
 def _can_view_profiles(current_user: CurrentUser) -> bool:
-    if current_user.role in (RoleEnum.SUPERADMIN, RoleEnum.PRINCIPAL):
+    if current_user.role in (
+        RoleEnum.SUPERADMIN,
+        RoleEnum.PRINCIPAL,
+        RoleEnum.STAFF_ADMIN,
+    ):
         return True
     perms = set(current_user.permissions or [])
     return (
         "user:manage" in perms
         or "settings:manage" in perms
         or "teacher_assignment:manage" in perms
+        or "enrollment:read" in perms
+        or "enrollment:update" in perms
+        or "enrollment:create" in perms
+        or "student:promote" in perms
     )
 
 
@@ -86,6 +94,7 @@ async def list_role_profiles(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     search: Optional[str] = Query(None),
+    academic_year_id: Optional[uuid.UUID] = Query(None),
     standard_id: Optional[uuid.UUID] = Query(None),
     section: Optional[str] = Query(None),
     current_user: CurrentUser = Depends(get_current_user),
@@ -100,6 +109,7 @@ async def list_role_profiles(
         page=page,
         page_size=page_size,
         search=search,
+        academic_year_id=academic_year_id,
         standard_id=standard_id,
         section=section,
     )

@@ -11,6 +11,7 @@ class DocumentRequest(BaseModel):
     student_id: uuid.UUID
     document_type: DocumentType
     academic_year_id: Optional[uuid.UUID] = None
+    note: Optional[str] = Field(None, max_length=500)
 
 
 class DocumentResponse(BaseModel):
@@ -57,6 +58,8 @@ class DocumentRequirementItem(BaseModel):
     document_type: DocumentType
     is_mandatory: bool = True
     note: Optional[str] = Field(None, max_length=500)
+    academic_year_id: Optional[uuid.UUID] = None
+    standard_id: Optional[uuid.UUID] = None
 
 
 class DocumentRequirementsUpsertRequest(BaseModel):
@@ -67,6 +70,8 @@ class DocumentRequirementResponse(BaseModel):
     document_type: DocumentType
     is_mandatory: bool
     note: Optional[str] = None
+    academic_year_id: Optional[uuid.UUID] = None
+    standard_id: Optional[uuid.UUID] = None
 
 
 class DocumentRequirementsResponse(BaseModel):
@@ -85,4 +90,5 @@ class DocumentRequirementStatusResponse(BaseModel):
     reviewed_by: Optional[uuid.UUID] = None
     needs_reupload: bool = False
     is_completed: bool = False
-
+    academic_year_id: Optional[uuid.UUID] = None
+    standard_id: Optional[uuid.UUID] = None

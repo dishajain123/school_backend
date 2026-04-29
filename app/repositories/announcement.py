@@ -5,6 +5,7 @@ from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.announcement import Announcement
+from app.utils.enums import RoleEnum
 
 
 class AnnouncementRepository:
@@ -30,11 +31,19 @@ class AnnouncementRepository:
         return result.scalar_one_or_none()
 
     async def list_for_school(
-        self, school_id: uuid.UUID, include_inactive: bool = False
+        self,
+        school_id: uuid.UUID,
+        include_inactive: bool = False,
+        target_role: Optional[RoleEnum] = None,
+        target_standard_id: Optional[uuid.UUID] = None,
     ) -> list[Announcement]:
         stmt = select(Announcement).where(Announcement.school_id == school_id)
         if not include_inactive:
             stmt = stmt.where(Announcement.is_active == True)  # noqa: E712
+        if target_role is not None:
+            stmt = stmt.where(Announcement.target_role == target_role)
+        if target_standard_id is not None:
+            stmt = stmt.where(Announcement.target_standard_id == target_standard_id)
         stmt = stmt.order_by(Announcement.published_at.desc())
         result = await self.db.execute(stmt)
         return list(result.scalars().all())

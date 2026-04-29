@@ -12,6 +12,7 @@ from app.core.exceptions import ForbiddenException, NotFoundException, Validatio
 from app.models.parent import Parent
 from app.models.student import Student
 from app.models.teacher import Teacher
+from app.models.teacher_class_subject import TeacherClassSubject
 from app.models.user import User
 from app.schemas.role_profile import (
     ParentProfileCreate,
@@ -185,6 +186,7 @@ class RoleProfileService:
         page: int,
         page_size: int,
         search: Optional[str],
+        academic_year_id: Optional[uuid.UUID] = None,
         standard_id: Optional[uuid.UUID] = None,
         section: Optional[str] = None,
     ) -> RoleProfileListResponse:
@@ -201,13 +203,26 @@ class RoleProfileService:
                 page=page,
                 page_size=page_size,
                 search=search,
+                academic_year_id=academic_year_id,
                 standard_id=standard_id,
                 section=section,
             )
         elif role_norm == "TEACHER":
-            items, total = await self._list_teacher_profiles(school_id, page, page_size, search)
+            items, total = await self._list_teacher_profiles(
+                school_id=school_id,
+                page=page,
+                page_size=page_size,
+                search=search,
+                academic_year_id=academic_year_id,
+            )
         else:
-            items, total = await self._list_parent_profiles(school_id, page, page_size, search)
+            items, total = await self._list_parent_profiles(
+                school_id=school_id,
+                page=page,
+                page_size=page_size,
+                search=search,
+                academic_year_id=academic_year_id,
+            )
 
         total_pages = math.ceil(total / page_size) if total else 1
         return RoleProfileListResponse(
@@ -235,6 +250,7 @@ class RoleProfileService:
                 raise ForbiddenException("Profile is outside your school scope")
             return {
                 "role": "STUDENT",
+                "student_id": str(s.id),
                 "user_id": str(u.id),
                 "full_name": self._display_name(u),
                 "email": u.email,
@@ -260,6 +276,7 @@ class RoleProfileService:
                 raise ForbiddenException("Profile is outside your school scope")
             return {
                 "role": "TEACHER",
+                "teacher_id": str(t.id),
                 "user_id": str(u.id),
                 "full_name": self._display_name(u),
                 "email": u.email,
@@ -283,6 +300,7 @@ class RoleProfileService:
                 raise ForbiddenException("Profile is outside your school scope")
             return {
                 "role": "PARENT",
+                "parent_id": str(p.id),
                 "user_id": str(u.id),
                 "full_name": self._display_name(u),
                 "email": u.email,
@@ -340,10 +358,13 @@ class RoleProfileService:
         page: int,
         page_size: int,
         search: Optional[str],
+        academic_year_id: Optional[uuid.UUID] = None,
         standard_id: Optional[uuid.UUID] = None,
         section: Optional[str] = None,
     ) -> tuple[list[dict[str, Any]], int]:
         filters = [Student.school_id == school_id]
+        if academic_year_id is not None:
+            filters.append(Student.academic_year_id == academic_year_id)
         if standard_id is not None:
             filters.append(Student.standard_id == standard_id)
         if section and section.strip():
@@ -378,6 +399,7 @@ class RoleProfileService:
         items = [
             {
                 "role": "STUDENT",
+                "student_id": str(student.id),
                 "user_id": str(user.id),
                 "full_name": self._display_name(user),
                 "email": user.email,
@@ -400,6 +422,7 @@ class RoleProfileService:
         page: int,
         page_size: int,
         search: Optional[str],
+        academic_year_id: Optional[uuid.UUID] = None,
     ) -> tuple[list[dict[str, Any]], int]:
         filters = [Teacher.school_id == school_id]
         if search:
@@ -413,25 +436,28 @@ class RoleProfileService:
                 )
             )
 
+        stmt = select(Teacher, User).join(User, User.id == Teacher.user_id)
+        count_stmt = select(func.count(Teacher.id)).join(User, User.id == Teacher.user_id)
+        if academic_year_id is not None:
+            teacher_ids_for_year = select(TeacherClassSubject.teacher_id).where(
+                TeacherClassSubject.academic_year_id == academic_year_id
+            )
+            filters.append(Teacher.id.in_(teacher_ids_for_year))
+
         stmt = (
-            select(Teacher, User)
-            .join(User, User.id == Teacher.user_id)
-            .where(and_(*filters))
+            stmt.where(and_(*filters))
             .order_by(Teacher.created_at.desc())
             .offset((page - 1) * page_size)
             .limit(page_size)
         )
-        count_stmt = (
-            select(func.count(Teacher.id))
-            .join(User, User.id == Teacher.user_id)
-            .where(and_(*filters))
-        )
+        count_stmt = count_stmt.where(and_(*filters))
 
         rows = (await self.db.execute(stmt)).all()
         total = (await self.db.execute(count_stmt)).scalar_one()
         items = [
             {
                 "role": "TEACHER",
+                "teacher_id": str(teacher.id),
                 "user_id": str(user.id),
                 "full_name": self._display_name(user),
                 "email": user.email,
@@ -454,6 +480,7 @@ class RoleProfileService:
         page: int,
         page_size: int,
         search: Optional[str],
+        academic_year_id: Optional[uuid.UUID] = None,
     ) -> tuple[list[dict[str, Any]], int]:
         filters = [Parent.school_id == school_id]
         if search:
@@ -467,25 +494,29 @@ class RoleProfileService:
                 )
             )
 
+        stmt = select(Parent, User).join(User, User.id == Parent.user_id)
+        count_stmt = select(func.count(Parent.id)).join(User, User.id == Parent.user_id)
+        if academic_year_id is not None:
+            parent_ids_for_year = select(Student.parent_id).where(
+                Student.academic_year_id == academic_year_id,
+                Student.parent_id.is_not(None),
+            )
+            filters.append(Parent.id.in_(parent_ids_for_year))
+
         stmt = (
-            select(Parent, User)
-            .join(User, User.id == Parent.user_id)
-            .where(and_(*filters))
+            stmt.where(and_(*filters))
             .order_by(Parent.created_at.desc())
             .offset((page - 1) * page_size)
             .limit(page_size)
         )
-        count_stmt = (
-            select(func.count(Parent.id))
-            .join(User, User.id == Parent.user_id)
-            .where(and_(*filters))
-        )
+        count_stmt = count_stmt.where(and_(*filters))
 
         rows = (await self.db.execute(stmt)).all()
         total = (await self.db.execute(count_stmt)).scalar_one()
         items = [
             {
                 "role": "PARENT",
+                "parent_id": str(parent.id),
                 "user_id": str(user.id),
                 "full_name": self._display_name(user),
                 "email": user.email,

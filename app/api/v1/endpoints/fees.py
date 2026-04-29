@@ -1,8 +1,11 @@
+# app/api/v1/endpoints/fees.py
 import uuid
+import math
 from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import HTMLResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import (
@@ -27,6 +30,8 @@ from app.schemas.fee import (
     PaymentListResponse,
     FeeAnalyticsResponse,
     DefaulterListResponse,
+    AdminLedgerListResponse,
+    StudentLedgerGenerateRequest,
 )
 from app.services.fee import FeeService
 from app.utils.enums import RoleEnum
@@ -38,19 +43,23 @@ router = APIRouter(prefix="/fees", tags=["Fees"])
 # ---------------------------------------------------------------------------
 
 def _assert_fee_read(current_user: CurrentUser) -> None:
-    can_read = "fee:read" in current_user.permissions
+    can_read = "fee:read" in current_user.permissions or "fee:create" in current_user.permissions
     own_scope = current_user.role in (RoleEnum.STUDENT, RoleEnum.PARENT)
     if not can_read and not own_scope:
         raise ForbiddenException(
-            detail="Permission 'fee:read' is required to access this resource"
+            detail="Permission 'fee:read' or 'fee:create' is required to access this resource"
         )
 
 
 def _assert_analytics_access(current_user: CurrentUser) -> None:
     allowed = (RoleEnum.PRINCIPAL, RoleEnum.TRUSTEE, RoleEnum.SUPERADMIN)
-    if current_user.role not in allowed:
+    has_fee_access = (
+        "fee:read" in current_user.permissions
+        or "fee:create" in current_user.permissions
+    )
+    if current_user.role not in allowed and not has_fee_access:
         raise ForbiddenException(
-            detail="Only Principal, Trustee or Superadmin can access fee analytics"
+            detail="Fee analytics access requires Principal/Trustee/Superadmin role or fee permissions"
         )
 
 
@@ -86,14 +95,32 @@ async def update_fee_structure(
     )
 
 
+@router.delete("/structures/{structure_id}", status_code=204)
+async def delete_fee_structure(
+    structure_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_permission("fee:create")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Delete a fee structure.
+    - Cannot delete if ledger entries exist for this structure (use update instead).
+    - Returns 204 No Content on success.
+    """
+    await FeeService(db).delete_structure(
+        structure_id=structure_id,
+        current_user=current_user,
+    )
+
+
 @router.get("/structures", response_model=FeeStructureListResponse)
 async def list_fee_structures(
     standard_id: uuid.UUID = Query(...),
     academic_year_id: Optional[uuid.UUID] = Query(None),
-    current_user: CurrentUser = Depends(require_permission("fee:read")),
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """List fee structures for a class and academic year (includes installment_plan)."""
+    _assert_fee_read(current_user)
     return await FeeService(db).list_structures(
         standard_id=standard_id,
         academic_year_id=academic_year_id,
@@ -116,6 +143,47 @@ async def generate_ledger(
     - Overdue status is set automatically for past-due installments.
     """
     return await FeeService(db).generate_ledger(payload, current_user)
+
+
+@router.post("/ledger/generate-student", response_model=LedgerGenerateResponse, status_code=201)
+async def generate_student_ledger(
+    payload: StudentLedgerGenerateRequest,
+    current_user: CurrentUser = Depends(require_permission("fee:create")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Generate/assign fee ledger for a single student (individual override or mid-year admission).
+    Idempotent — already-existing entries are skipped.
+    """
+    return await FeeService(db).generate_student_ledger(payload, current_user)
+
+
+@router.get("/ledger", response_model=AdminLedgerListResponse)
+async def list_ledger_entries(
+    standard_id: Optional[uuid.UUID] = Query(None),
+    academic_year_id: Optional[uuid.UUID] = Query(None),
+    student_id: Optional[uuid.UUID] = Query(None),
+    status: Optional[str] = Query(None, description="PENDING|PARTIAL|PAID|OVERDUE"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Admin: list all fee ledger entries across students.
+    Filterable by class, academic year, student, and status.
+    Includes student name, admission number, total/paid/outstanding amounts.
+    """
+    _assert_fee_read(current_user)
+    return await FeeService(db).list_admin_ledgers(
+        current_user=current_user,
+        standard_id=standard_id,
+        academic_year_id=academic_year_id,
+        student_id=student_id,
+        status=status,
+        page=page,
+        page_size=page_size,
+    )
 
 
 @router.post("/payments", response_model=PaymentResponse, status_code=201)
@@ -181,6 +249,33 @@ async def get_receipt(
     return {"url": url}
 
 
+@router.get("/payments/{payment_id}/receipt-fallback", response_class=HTMLResponse)
+async def get_receipt_fallback(
+    payment_id: uuid.UUID,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Fallback receipt page when object storage URL generation is unavailable."""
+    _assert_fee_read(current_user)
+    data = await FeeService(db).get_receipt_fallback_data(payment_id, current_user)
+    return f"""
+    <html>
+      <head><title>Payment Receipt</title></head>
+      <body style="font-family: Arial, sans-serif; padding: 24px;">
+        <h2>Payment Receipt (Fallback)</h2>
+        <p><b>Payment ID:</b> {data["payment_id"]}</p>
+        <p><b>Student ID:</b> {data["student_id"]}</p>
+        <p><b>Ledger ID:</b> {data["fee_ledger_id"]}</p>
+        <p><b>Amount:</b> INR {data["amount"]:.2f}</p>
+        <p><b>Date:</b> {data["payment_date"]}</p>
+        <p><b>Mode:</b> {data["payment_mode"]}</p>
+        <p><b>Reference No:</b> {data["reference_number"]}</p>
+        <p><b>Transaction Ref:</b> {data["transaction_ref"]}</p>
+      </body>
+    </html>
+    """
+
+
 # ---------------------------------------------------------------------------
 # Defaulters — Principal / Trustee / Superadmin only
 # ---------------------------------------------------------------------------
@@ -190,9 +285,7 @@ async def get_defaulters(
     academic_year_id: Optional[uuid.UUID] = Query(None),
     standard_id: Optional[uuid.UUID] = Query(None),
     section: Optional[str] = Query(None),
-    current_user: CurrentUser = Depends(
-        require_roles(RoleEnum.PRINCIPAL, RoleEnum.TRUSTEE, RoleEnum.SUPERADMIN)
-    ),
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -202,6 +295,7 @@ async def get_defaulters(
     - Returns: student info, count of overdue ledgers, total overdue amount, oldest due date.
     - Filterable by class and section.
     """
+    _assert_analytics_access(current_user)
     return await FeeService(db).get_defaulters(
         current_user=current_user,
         academic_year_id=academic_year_id,
@@ -217,15 +311,14 @@ async def get_defaulters(
 @router.post("/ledger/refresh-overdue")
 async def refresh_overdue(
     academic_year_id: Optional[uuid.UUID] = Query(None),
-    current_user: CurrentUser = Depends(
-        require_roles(RoleEnum.PRINCIPAL, RoleEnum.TRUSTEE, RoleEnum.SUPERADMIN)
-    ),
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Bulk-refresh overdue statuses for all unpaid/partial ledgers past their due date.
     Safe to call repeatedly (idempotent). Returns count of updated rows.
     """
+    _assert_analytics_access(current_user)
     return await FeeService(db).refresh_overdue_statuses(
         current_user=current_user,
         academic_year_id=academic_year_id,
@@ -243,9 +336,7 @@ async def fee_analytics(
     standard_id: Optional[uuid.UUID] = Query(None),
     section: Optional[str] = Query(None),
     student_id: Optional[uuid.UUID] = Query(None),
-    current_user: CurrentUser = Depends(
-        require_roles(RoleEnum.PRINCIPAL, RoleEnum.TRUSTEE, RoleEnum.SUPERADMIN)
-    ),
+    current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -260,6 +351,7 @@ async def fee_analytics(
     - by_class: class-wise collection with defaulters count
     - by_installment: installment-wise collection (when installment plan is used)
     """
+    _assert_analytics_access(current_user)
     return await FeeService(db).fee_analytics(
         current_user=current_user,
         academic_year_id=academic_year_id,

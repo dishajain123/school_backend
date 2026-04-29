@@ -12,18 +12,28 @@ from app.core.exceptions import ForbiddenException, NotFoundException, Validatio
 from app.models.user import User
 from app.models.user_approval_audit import UserApprovalAudit
 from app.schemas.approval import ApprovalDecisionRequest
+from app.services.audit_log import AuditLogService
 from app.services.registration import RegistrationService
-from app.utils.enums import ApprovalAction, RegistrationSource, RoleEnum, UserStatus
+from app.utils.enums import ApprovalAction, RegistrationSource, RoleEnum, UserStatus, AuditAction
 
 
 class ApprovalService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.registration_service = RegistrationService(db)
+        self.audit_service = AuditLogService(db)
 
     @staticmethod
     def _can_decide(user: CurrentUser) -> bool:
         return user.role in (RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN)
+
+    @staticmethod
+    def _is_actionable_status(status: UserStatus) -> bool:
+        return status in (
+            UserStatus.PENDING_APPROVAL,
+            UserStatus.ON_HOLD,
+            UserStatus.REJECTED,
+        )
 
     async def _get_user_in_scope(self, user_id: uuid.UUID, current_user: CurrentUser) -> User:
         stmt = select(User).where(User.id == user_id)
@@ -115,6 +125,11 @@ class ApprovalService:
         user = await self._get_user_in_scope(user_id, current_user)
         now = datetime.now(timezone.utc)
         from_status = user.status
+        before_is_active = user.is_active
+        if not self._is_actionable_status(user.status):
+            raise ValidationException(
+                f"User is in '{user.status.value}' state and cannot be decided from approvals queue."
+            )
 
         issues, duplicates = await self.registration_service.validate_user_for_approval(user)
         blocking_findings = bool(issues or duplicates)
@@ -156,6 +171,30 @@ class ApprovalService:
             user.approved_at = now
         else:
             raise ValidationException("Unsupported approval action")
+
+        mapped_audit_action = {
+            ApprovalAction.APPROVE: AuditAction.USER_APPROVED,
+            ApprovalAction.REJECT: AuditAction.USER_REJECTED,
+            ApprovalAction.HOLD: AuditAction.USER_HELD,
+        }[data.action]
+        await self.audit_service.log(
+            action=mapped_audit_action,
+            actor_id=current_user.id,
+            target_user_id=user.id,
+            entity_type="User",
+            entity_id=str(user.id),
+            description=f"User {data.action.value.lower()} by {current_user.role.value}",
+            before_state={
+                "status": from_status.value if from_status else None,
+                "is_active": before_is_active,
+            },
+            after_state={
+                "status": user.status.value,
+                "is_active": user.is_active,
+                "note": data.note,
+            },
+            school_id=user.school_id,
+        )
 
         audit = UserApprovalAudit(
             user_id=user.id,
