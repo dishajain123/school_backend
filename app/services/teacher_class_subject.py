@@ -181,7 +181,7 @@ class TeacherClassSubjectService:
 
         # Guard: duplicate assignment
         duplicate = await self.repo.get_duplicate(
-            teacher_id=payload.teacher_id,
+            teacher_id=teacher.id,
             standard_id=payload.standard_id,
             section=normalized_section,
             subject_id=payload.subject_id,
@@ -194,7 +194,7 @@ class TeacherClassSubjectService:
 
         obj = await self.repo.create(
             {
-                "teacher_id": payload.teacher_id,
+                "teacher_id": teacher.id,
                 "standard_id": payload.standard_id,
                 "section": normalized_section,
                 "subject_id": payload.subject_id,

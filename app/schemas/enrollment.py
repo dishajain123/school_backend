@@ -8,6 +8,7 @@ from datetime import date, datetime
 from typing import Optional
 from pydantic import BaseModel, Field
 from app.utils.enums import EnrollmentStatus, AdmissionType
+from app.utils.enums import RoleEnum, UserStatus
 
 
 # ── Create ────────────────────────────────────────────────────────────────────
@@ -142,3 +143,28 @@ class StudentAcademicHistoryResponse(BaseModel):
     admission_number: Optional[str]
     student_name: Optional[str]
     history: list[EnrollmentMappingResponse]
+
+
+class OnboardingQueueItem(BaseModel):
+    user_id: uuid.UUID
+    profile_id: Optional[uuid.UUID] = None
+    full_name: Optional[str]
+    email: Optional[str]
+    phone: Optional[str]
+    role: RoleEnum
+    status: UserStatus
+    school_id: Optional[uuid.UUID]
+    profile_created: bool
+    enrollment_completed: bool
+    enrollment_pending: bool
+    pending_reason: Optional[str] = None
+    suggested_identifier: Optional[str] = None
+    academic_year_id: Optional[uuid.UUID] = None
+    academic_year_name: Optional[str] = None
+    approved_at: Optional[datetime] = None
+    created_at: datetime
+
+
+class OnboardingQueueResponse(BaseModel):
+    items: list[OnboardingQueueItem]
+    total: int

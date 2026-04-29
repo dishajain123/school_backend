@@ -14,8 +14,12 @@ from app.models.masters import Standard
 from app.models.section import Section
 from app.models.academic_year import AcademicYear
 from app.models.user import User
+from app.models.teacher import Teacher
+from app.models.parent import Parent
+from app.models.teacher_class_subject import TeacherClassSubject
 from app.repositories.enrollment import EnrollmentRepository
 from app.services.audit_log import AuditLogService
+from app.services.academic_year import get_active_year
 from app.schemas.enrollment import (
     EnrollmentMappingCreate,
     EnrollmentMappingUpdate,
@@ -27,7 +31,7 @@ from app.schemas.enrollment import (
     ClassRosterResponse,
     StudentAcademicHistoryResponse,
 )
-from app.utils.enums import EnrollmentStatus, AuditAction, RoleEnum
+from app.utils.enums import EnrollmentStatus, AuditAction, RoleEnum, UserStatus
 from app.core.exceptions import (
     ConflictException, ValidationException,
     NotFoundException, ForbiddenException
@@ -45,6 +49,133 @@ class EnrollmentService:
         self.db = db
         self.repo = EnrollmentRepository(db)
         self.audit = AuditLogService(db)
+
+    async def list_onboarding_queue(
+        self,
+        school_id: uuid.UUID,
+        role: Optional[RoleEnum] = None,
+        pending_only: bool = False,
+        academic_year_id: Optional[uuid.UUID] = None,
+    ) -> list[dict]:
+        if academic_year_id is not None:
+            active_year = await self._load_academic_year(academic_year_id, school_id)
+        else:
+            active_year = await get_active_year(school_id, self.db)
+        filters = [
+            User.school_id == school_id,
+            User.status == UserStatus.ACTIVE,
+        ]
+        if role is not None:
+            filters.append(User.role == role)
+
+        rows = await self.db.execute(
+            select(User).where(and_(*filters)).order_by(User.created_at.desc())
+        )
+        users = list(rows.scalars().all())
+
+        items: list[dict] = []
+        for u in users:
+            profile_created = False
+            enrollment_completed = False
+            pending_reason: Optional[str] = None
+            suggested_identifier: Optional[str] = None
+            profile_id: Optional[uuid.UUID] = None
+
+            if u.role == RoleEnum.STUDENT:
+                student_row = await self.db.execute(
+                    select(Student).where(Student.user_id == u.id)
+                )
+                student = student_row.scalar_one_or_none()
+                profile_created = student is not None
+                if student:
+                    profile_id = student.id
+                    suggested_identifier = student.admission_number
+                    mapping_count = await self.db.execute(
+                        select(func.count(StudentYearMapping.id)).where(
+                            StudentYearMapping.student_id == student.id,
+                            StudentYearMapping.status == EnrollmentStatus.ACTIVE,
+                        )
+                    )
+                    enrollment_completed = (mapping_count.scalar_one() or 0) > 0
+                if not profile_created:
+                    pending_reason = "Student profile not created"
+                elif not enrollment_completed:
+                    pending_reason = "Class/section assignment pending"
+
+            elif u.role == RoleEnum.TEACHER:
+                teacher_row = await self.db.execute(
+                    select(Teacher).where(Teacher.user_id == u.id)
+                )
+                teacher = teacher_row.scalar_one_or_none()
+                profile_created = teacher is not None
+                if teacher:
+                    profile_id = teacher.id
+                    suggested_identifier = teacher.employee_code
+                    assignment_count = await self.db.execute(
+                        select(func.count(TeacherClassSubject.id)).where(
+                            TeacherClassSubject.teacher_id == teacher.id,
+                            TeacherClassSubject.academic_year_id == active_year.id,
+                        )
+                    )
+                    enrollment_completed = (assignment_count.scalar_one() or 0) > 0
+                if not profile_created:
+                    pending_reason = "Teacher profile not created"
+                elif not enrollment_completed:
+                    pending_reason = "Class/section/subject assignment pending"
+
+            elif u.role == RoleEnum.PARENT:
+                parent_row = await self.db.execute(
+                    select(Parent).where(Parent.user_id == u.id)
+                )
+                parent = parent_row.scalar_one_or_none()
+                profile_created = parent is not None
+                if parent:
+                    profile_id = parent.id
+                    suggested_identifier = parent.parent_code
+                    child_count = await self.db.execute(
+                        select(func.count(Student.id)).where(Student.parent_id == parent.id)
+                    )
+                    enrollment_completed = (child_count.scalar_one() or 0) > 0
+                if not profile_created:
+                    pending_reason = "Parent profile not created"
+                elif not enrollment_completed:
+                    pending_reason = "Child linking pending"
+
+            elif u.role in (RoleEnum.PRINCIPAL, RoleEnum.TRUSTEE):
+                profile_created = True
+                enrollment_completed = True
+                pending_reason = None
+
+            else:
+                profile_created = True
+                enrollment_completed = True
+
+            enrollment_pending = not enrollment_completed
+            if pending_only and not enrollment_pending:
+                continue
+
+            items.append(
+                {
+                    "user_id": u.id,
+                    "profile_id": profile_id,
+                    "full_name": u.full_name,
+                    "email": u.email,
+                    "phone": u.phone,
+                    "role": u.role,
+                    "status": u.status,
+                    "school_id": u.school_id,
+                    "profile_created": profile_created,
+                    "enrollment_completed": enrollment_completed,
+                    "enrollment_pending": enrollment_pending,
+                    "pending_reason": pending_reason,
+                    "suggested_identifier": suggested_identifier,
+                    "academic_year_id": active_year.id,
+                    "academic_year_name": active_year.name,
+                    "approved_at": u.approved_at,
+                    "created_at": u.created_at,
+                }
+            )
+        return items
 
     # ────────────────────────────────────────────────────────────
     # CREATE MAPPING

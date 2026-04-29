@@ -12,7 +12,6 @@ from app.core.exceptions import ForbiddenException, NotFoundException, Validatio
 from app.models.parent import Parent
 from app.models.student import Student
 from app.models.teacher import Teacher
-from app.models.teacher_class_subject import TeacherClassSubject
 from app.models.user import User
 from app.models.identifier_counter import IdentifierCounter
 from app.models.identifier_format_config import IdentifierFormatConfig
@@ -524,23 +523,16 @@ class RoleProfileService:
                 )
             )
 
-        stmt = (
-            select(Student, User)
-            .join(User, User.id == Student.user_id)
-            .where(and_(*filters))
-            .order_by(Student.created_at.desc())
-            .offset((page - 1) * page_size)
-            .limit(page_size)
-        )
-        count_stmt = (
-            select(func.count(Student.id))
-            .join(User, User.id == Student.user_id)
-            .where(and_(*filters))
-        )
+        student_rows = (
+            await self.db.execute(
+                select(Student, User)
+                .join(User, User.id == Student.user_id)
+                .where(and_(*filters))
+                .order_by(Student.created_at.desc())
+            )
+        ).all()
 
-        rows = (await self.db.execute(stmt)).all()
-        total = (await self.db.execute(count_stmt)).scalar_one()
-        items = [
+        items: list[dict[str, Any]] = [
             {
                 "role": "STUDENT",
                 "student_id": str(student.id),
@@ -556,9 +548,62 @@ class RoleProfileService:
                 "section": student.section,
                 "created_at": student.created_at,
             }
-            for student, user in rows
+            for student, user in student_rows
         ]
-        return items, total
+
+        # Include approved student users even when student profile is not yet created.
+        # This avoids parent-child linking deadlocks in admin flows.
+        if academic_year_id is None and standard_id is None and not (section and section.strip()):
+            pending_filters = [
+                User.school_id == school_id,
+                User.role == RoleEnum.STUDENT,
+                User.status == UserStatus.ACTIVE,
+                User.is_active.is_(True),
+                ~select(Student.id).where(Student.user_id == User.id).exists(),
+            ]
+            if search:
+                q = f"%{search.strip().lower()}%"
+                pending_filters.append(
+                    or_(
+                        func.lower(func.coalesce(User.full_name, "")).like(q),
+                        func.lower(func.coalesce(User.email, "")).like(q),
+                        func.lower(func.coalesce(User.phone, "")).like(q),
+                    )
+                )
+            pending_rows = (
+                await self.db.execute(
+                    select(User)
+                    .where(and_(*pending_filters))
+                    .order_by(User.created_at.desc())
+                )
+            ).scalars().all()
+            for user in pending_rows:
+                submitted = dict(user.submitted_data or {})
+                suggested_identifier = submitted.get("admission_number")
+                items.append(
+                    {
+                        "role": "STUDENT",
+                        "student_id": None,
+                        "user_id": str(user.id),
+                        "full_name": self._display_name(user),
+                        "email": user.email,
+                        "phone": user.phone,
+                        "identifier": suggested_identifier,
+                        "admission_number": suggested_identifier,
+                        "is_identifier_custom": False,
+                        "identifier_issued_at": None,
+                        "standard_id": None,
+                        "section": None,
+                        "created_at": user.created_at,
+                        "profile_created": False,
+                    }
+                )
+
+        items.sort(key=lambda x: x.get("created_at") or datetime.min, reverse=True)
+        total = len(items)
+        start = (page - 1) * page_size
+        end = start + page_size
+        return items[start:end], total
 
     async def _list_teacher_profiles(
         self,
@@ -580,25 +625,15 @@ class RoleProfileService:
                 )
             )
 
-        stmt = select(Teacher, User).join(User, User.id == Teacher.user_id)
-        count_stmt = select(func.count(Teacher.id)).join(User, User.id == Teacher.user_id)
-        if academic_year_id is not None:
-            teacher_ids_for_year = select(TeacherClassSubject.teacher_id).where(
-                TeacherClassSubject.academic_year_id == academic_year_id
+        rows = (
+            await self.db.execute(
+                select(Teacher, User)
+                .join(User, User.id == Teacher.user_id)
+                .where(and_(*filters))
+                .order_by(Teacher.created_at.desc())
             )
-            filters.append(Teacher.id.in_(teacher_ids_for_year))
-
-        stmt = (
-            stmt.where(and_(*filters))
-            .order_by(Teacher.created_at.desc())
-            .offset((page - 1) * page_size)
-            .limit(page_size)
-        )
-        count_stmt = count_stmt.where(and_(*filters))
-
-        rows = (await self.db.execute(stmt)).all()
-        total = (await self.db.execute(count_stmt)).scalar_one()
-        items = [
+        ).all()
+        items: list[dict[str, Any]] = [
             {
                 "role": "TEACHER",
                 "teacher_id": str(teacher.id),
@@ -616,7 +651,60 @@ class RoleProfileService:
             }
             for teacher, user in rows
         ]
-        return items, total
+
+        # Include approved teacher users even if profile is not yet created.
+        pending_filters = [
+            User.school_id == school_id,
+            User.role == RoleEnum.TEACHER,
+            User.status == UserStatus.ACTIVE,
+            User.is_active.is_(True),
+            ~select(Teacher.id).where(Teacher.user_id == User.id).exists(),
+        ]
+        if search:
+            q = f"%{search.strip().lower()}%"
+            pending_filters.append(
+                or_(
+                    func.lower(func.coalesce(User.full_name, "")).like(q),
+                    func.lower(func.coalesce(User.email, "")).like(q),
+                    func.lower(func.coalesce(User.phone, "")).like(q),
+                )
+            )
+        pending_rows = (
+            await self.db.execute(
+                select(User).where(and_(*pending_filters)).order_by(User.created_at.desc())
+            )
+        ).scalars().all()
+        for user in pending_rows:
+            submitted = dict(user.submitted_data or {})
+            suggested_identifier = (
+                submitted.get("teacher_identifier")
+                or submitted.get("employee_id")
+                or submitted.get("identifier")
+            )
+            items.append(
+                {
+                    "role": "TEACHER",
+                    "teacher_id": None,
+                    "user_id": str(user.id),
+                    "full_name": self._display_name(user),
+                    "email": user.email,
+                    "phone": user.phone,
+                    "identifier": suggested_identifier,
+                    "employee_id": suggested_identifier,
+                    "is_identifier_custom": False,
+                    "identifier_issued_at": None,
+                    "specialization": None,
+                    "join_date": None,
+                    "created_at": user.created_at,
+                    "profile_created": False,
+                }
+            )
+
+        items.sort(key=lambda x: x.get("created_at") or datetime.min, reverse=True)
+        total = len(items)
+        start = (page - 1) * page_size
+        end = start + page_size
+        return items[start:end], total
 
     async def _list_parent_profiles(
         self,
@@ -640,12 +728,8 @@ class RoleProfileService:
 
         stmt = select(Parent, User).join(User, User.id == Parent.user_id)
         count_stmt = select(func.count(Parent.id)).join(User, User.id == Parent.user_id)
-        if academic_year_id is not None:
-            parent_ids_for_year = select(Student.parent_id).where(
-                Student.academic_year_id == academic_year_id,
-                Student.parent_id.is_not(None),
-            )
-            filters.append(Parent.id.in_(parent_ids_for_year))
+        # Keep parent profiles visible immediately after approval/profile creation.
+        # Do not gate profile visibility by child enrollment status.
 
         stmt = (
             stmt.where(and_(*filters))

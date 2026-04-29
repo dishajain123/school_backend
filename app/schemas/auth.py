@@ -76,3 +76,7 @@ class CurrentUserSchema(BaseModel):
     phone: Optional[str]
     status: UserStatus
     is_active: bool
+    profile_created: bool = False
+    enrollment_completed: bool = False
+    enrollment_pending: bool = True
+    onboarding_message: Optional[str] = None

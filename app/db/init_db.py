@@ -684,6 +684,25 @@ async def init_db() -> None:
                 )
             )
 
+            # ── Enrollment mapping compatibility (admission_type) ───────────
+            await conn.execute(
+                text(
+                    """
+                    ALTER TABLE IF EXISTS student_year_mappings
+                    ADD COLUMN IF NOT EXISTS admission_type VARCHAR(30) NULL
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    UPDATE student_year_mappings
+                    SET admission_type = 'NEW_ADMISSION'
+                    WHERE admission_type IS NULL
+                    """
+                )
+            )
+
             # ── AnnouncementType enum sync ──────────────────────────────────
             await conn.execute(
                 text(

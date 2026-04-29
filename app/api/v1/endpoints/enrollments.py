@@ -28,9 +28,12 @@ from app.schemas.enrollment import (
     ClassRosterResponse,
     StudentAcademicHistoryResponse,
     RollNumberAssignRequest,
+    OnboardingQueueItem,
+    OnboardingQueueResponse,
 )
 from app.core.dependencies import get_current_user, require_any_permission, require_permission, CurrentUser
 from app.core.exceptions import ForbiddenException, ValidationException
+from app.utils.enums import RoleEnum
 
 router = APIRouter(prefix="/enrollments", tags=["Enrollments"])
 
@@ -214,3 +217,31 @@ async def assign_roll_numbers(
     if not current_user.school_id:
         raise ForbiddenException("School context required")
     return await service.assign_roll_numbers(data, current_user)
+@router.get("/onboarding-queue", response_model=OnboardingQueueResponse)
+async def get_onboarding_queue(
+    role: Optional[RoleEnum] = Query(None),
+    pending_only: bool = Query(True),
+    academic_year_id: Optional[uuid.UUID] = Query(None),
+    current_user: CurrentUser = Depends(require_any_permission("enrollment:read", "user:manage")),
+    service: EnrollmentService = Depends(get_service),
+):
+    """
+    Approved users onboarding queue.
+    Shows role-wise profile/enrollment completion states:
+      - Student: profile + active class/section mapping
+      - Teacher: profile + class/section/subject assignment
+      - Parent: profile + child linking
+      - Principal/Trustee: auto-complete (no assignment needed)
+    """
+    if not current_user.school_id:
+        raise ForbiddenException("School context required")
+    items = await service.list_onboarding_queue(
+        school_id=current_user.school_id,
+        role=role,
+        pending_only=pending_only,
+        academic_year_id=academic_year_id,
+    )
+    return OnboardingQueueResponse(
+        items=[OnboardingQueueItem.model_validate(i) for i in items],
+        total=len(items),
+    )
