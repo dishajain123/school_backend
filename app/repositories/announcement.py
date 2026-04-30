@@ -36,6 +36,7 @@ class AnnouncementRepository:
         include_inactive: bool = False,
         target_role: Optional[RoleEnum] = None,
         target_standard_id: Optional[uuid.UUID] = None,
+        target_section: Optional[str] = None,
     ) -> list[Announcement]:
         stmt = select(Announcement).where(Announcement.school_id == school_id)
         if not include_inactive:
@@ -44,6 +45,8 @@ class AnnouncementRepository:
             stmt = stmt.where(Announcement.target_role == target_role)
         if target_standard_id is not None:
             stmt = stmt.where(Announcement.target_standard_id == target_standard_id)
+        if target_section is not None:
+            stmt = stmt.where(Announcement.target_section == target_section)
         stmt = stmt.order_by(Announcement.published_at.desc())
         result = await self.db.execute(stmt)
         return list(result.scalars().all())

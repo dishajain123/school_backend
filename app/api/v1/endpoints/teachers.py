@@ -128,7 +128,10 @@ async def get_my_teacher_profile(
 ):
     if not current_user.school_id:
         raise ValidationException("school_id is required")
-    teacher = await TeacherRepository(db).get_by_user_id(current_user.id)
+    teacher = await TeacherRepository(db).get_by_user_id(
+        current_user.id,
+        school_id=current_user.school_id,
+    )
     if not teacher:
         raise ValidationException("Teacher profile not found for current user")
     return _to_response(teacher)
@@ -141,7 +144,10 @@ async def get_my_teacher_profile_compat(
 ):
     if not current_user.school_id:
         raise ValidationException("school_id is required")
-    teacher = await TeacherRepository(db).get_by_user_id(current_user.id)
+    teacher = await TeacherRepository(db).get_by_user_id(
+        current_user.id,
+        school_id=current_user.school_id,
+    )
     if not teacher:
         raise ValidationException("Teacher profile not found for current user")
     return _to_response(teacher)

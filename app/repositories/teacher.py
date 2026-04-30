@@ -35,12 +35,19 @@ class TeacherRepository:
         )
         return result.scalar_one_or_none()
 
-    async def get_by_user_id(self, user_id: uuid.UUID) -> Optional[Teacher]:
-        result = await self.db.execute(
+    async def get_by_user_id(
+        self,
+        user_id: uuid.UUID,
+        school_id: Optional[uuid.UUID] = None,
+    ) -> Optional[Teacher]:
+        stmt = (
             select(Teacher)
             .options(selectinload(Teacher.user))
             .where(Teacher.user_id == user_id)
         )
+        if school_id is not None:
+            stmt = stmt.where(Teacher.school_id == school_id)
+        result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
     async def get_by_employee_code(self, employee_code: str) -> Optional[Teacher]:

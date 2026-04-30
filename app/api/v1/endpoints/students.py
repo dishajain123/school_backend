@@ -17,6 +17,7 @@ from app.schemas.student import (
     StudentResponse,
     StudentListResponse,
     StudentBulkPromotionResponse,
+    StudentDetailResponse,
 )
 from app.core.dependencies import get_current_user, require_permission, CurrentUser
 from app.core.exceptions import ForbiddenException
@@ -150,7 +151,7 @@ async def get_my_student_profile_compat_v2(
     )
 
 
-@router.get("/{student_id}", response_model=StudentResponse)
+@router.get("/{student_id}", response_model=StudentDetailResponse)
 async def get_student(
     student_id: uuid.UUID,
     current_user: CurrentUser = Depends(get_current_user),

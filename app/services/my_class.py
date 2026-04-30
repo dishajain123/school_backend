@@ -926,13 +926,59 @@ class MyClassService:
         child_id: Optional[uuid.UUID] = None,
     ) -> QuizResponse:
         school_id = self._require_school(current_user)
-        self._assert_teacher_write_role(current_user)
         quiz = await self.quiz_repo.get_by_id(quiz_id, school_id)
         if not quiz:
             raise NotFoundException("Quiz not found")
 
+        topic = await self.topic_repo.get_by_id(quiz.topic_id)
+        if not topic:
+            raise NotFoundException("Topic not found")
+        chapter = await self.chapter_repo.get_by_id(topic.chapter_id, school_id)
+        if not chapter:
+            raise NotFoundException("Chapter not found")
+
+        if current_user.role == RoleEnum.TEACHER:
+            await self._assert_teacher_access(
+                current_user,
+                standard_id=chapter.standard_id,
+                section_id=chapter.section_id,
+                subject_id=chapter.subject_id,
+                academic_year_id=chapter.academic_year_id,
+            )
+        elif current_user.role == RoleEnum.STUDENT:
+            student = await self._get_student_by_user(current_user.id, school_id)
+            await self._assert_student_enrollment(
+                student.id,
+                chapter.standard_id,
+                chapter.section_id,
+                chapter.academic_year_id,
+                school_id,
+            )
+        elif current_user.role == RoleEnum.PARENT:
+            student_id = await self._resolve_student_id_for_role(
+                current_user, school_id, child_id
+            )
+            await self._assert_student_enrollment(
+                student_id,
+                chapter.standard_id,
+                chapter.section_id,
+                chapter.academic_year_id,
+                school_id,
+            )
+        elif current_user.role not in (
+            RoleEnum.PRINCIPAL,
+            RoleEnum.SUPERADMIN,
+            RoleEnum.TRUSTEE,
+            RoleEnum.STAFF_ADMIN,
+        ):
+            raise ForbiddenException("Role not permitted to view this quiz")
+
         include_answers = current_user.role in (
-            RoleEnum.TEACHER, RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN
+            RoleEnum.TEACHER,
+            RoleEnum.PRINCIPAL,
+            RoleEnum.SUPERADMIN,
+            RoleEnum.TRUSTEE,
+            RoleEnum.STAFF_ADMIN,
         )
         return await self._build_quiz_response(quiz, include_answers=include_answers)
 
@@ -1170,7 +1216,6 @@ class MyClassService:
     ) -> AttemptListResponse:
         """Teacher/Admin: view all student attempts for a quiz."""
         school_id = self._require_school(current_user)
-        self._assert_teacher_write_role(current_user)
         quiz = await self.quiz_repo.get_by_id(quiz_id, school_id)
         if not quiz:
             raise NotFoundException("Quiz not found")
@@ -1185,6 +1230,13 @@ class MyClassService:
                 subject_id=chapter.subject_id,
                 academic_year_id=chapter.academic_year_id,
             )
+        elif current_user.role not in (
+            RoleEnum.PRINCIPAL,
+            RoleEnum.SUPERADMIN,
+            RoleEnum.TRUSTEE,
+            RoleEnum.STAFF_ADMIN,
+        ):
+            raise ForbiddenException("Role not permitted to view quiz attempts")
 
         attempts = await self.attempt_repo.list_by_quiz(quiz_id, school_id)
         return AttemptListResponse(

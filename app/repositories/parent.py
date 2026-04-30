@@ -30,12 +30,19 @@ class ParentRepository:
         )
         return result.scalar_one_or_none()
 
-    async def get_by_user_id(self, user_id: uuid.UUID) -> Optional[Parent]:
-        result = await self.db.execute(
+    async def get_by_user_id(
+        self,
+        user_id: uuid.UUID,
+        school_id: Optional[uuid.UUID] = None,
+    ) -> Optional[Parent]:
+        stmt = (
             select(Parent)
             .options(selectinload(Parent.user))
             .where(Parent.user_id == user_id)
         )
+        if school_id is not None:
+            stmt = stmt.where(Parent.school_id == school_id)
+        result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
     async def get_by_id_raw(self, parent_id: uuid.UUID) -> Optional[Parent]:

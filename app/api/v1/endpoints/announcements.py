@@ -46,6 +46,7 @@ async def list_announcements(
     include_inactive: bool = Query(False),
     target_role: Optional[RoleEnum] = Query(None),
     target_standard_id: Optional[uuid.UUID] = Query(None),
+    target_section: Optional[str] = Query(None),
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -54,6 +55,7 @@ async def list_announcements(
         include_inactive=include_inactive,
         target_role=target_role,
         target_standard_id=target_standard_id,
+        target_section=target_section,
     )
 
 

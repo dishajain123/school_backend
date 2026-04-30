@@ -9,6 +9,7 @@ from app.core.dependencies import CurrentUser, get_current_user
 from app.core.exceptions import ValidationException, ForbiddenException
 from app.models.school import School
 from app.services.teacher_class_subject import TeacherClassSubjectService
+from app.repositories.masters import SectionRepository
 from app.schemas.teacher_class_subject import (
     TeacherAssignmentCreate,
     TeacherAssignmentUpdate,
@@ -42,10 +43,41 @@ def _can_manage_assignments(current_user: CurrentUser) -> bool:
     return current_user.role in (RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN)
 
 
-def _to_response(obj) -> TeacherAssignmentResponse:
+async def _resolve_or_create_section_id(obj, db: AsyncSession) -> Optional[uuid.UUID]:
+    section_name = (obj.section or "").strip().upper()
+    if not section_name:
+        return None
+
+    section_repo = SectionRepository(db)
+    existing = await section_repo.get_by_key(
+        school_id=obj.standard.school_id,
+        standard_id=obj.standard_id,
+        academic_year_id=obj.academic_year_id,
+        name=section_name,
+    )
+    if existing:
+        return existing.id
+
+    created = await section_repo.create(
+        {
+            "school_id": obj.standard.school_id,
+            "standard_id": obj.standard_id,
+            "academic_year_id": obj.academic_year_id,
+            "name": section_name,
+            "is_active": True,
+            "capacity": None,
+        }
+    )
+    await db.flush()
+    return created.id
+
+
+async def _to_response(obj, db: AsyncSession) -> TeacherAssignmentResponse:
+    section_id = await _resolve_or_create_section_id(obj, db)
     return TeacherAssignmentResponse(
         id=obj.id,
         section=obj.section,
+        section_id=section_id,
         teacher=TeacherSummary(
             id=obj.teacher.id,
             employee_code=obj.teacher.employee_code,
@@ -86,7 +118,9 @@ async def create_assignment(
     school_id = await _resolve_school_scope(current_user, db)
     service = TeacherClassSubjectService(db)
     obj = await service.create_assignment(payload, school_id)
-    return _to_response(obj)
+    response = await _to_response(obj, db)
+    await db.commit()
+    return response
 
 
 @router.get("/mine", response_model=TeacherAssignmentListResponse)
@@ -102,8 +136,10 @@ async def list_my_assignments(
         school_id=school_id,
         academic_year_id=academic_year_id,
     )
+    responses = [await _to_response(i, db) for i in items]
+    await db.commit()
     return TeacherAssignmentListResponse(
-        items=[_to_response(i) for i in items],
+        items=responses,
         total=total,
     )
 
@@ -137,7 +173,9 @@ async def update_assignment(
     school_id = await _resolve_school_scope(current_user, db)
     service = TeacherClassSubjectService(db)
     obj = await service.update_assignment(assignment_id, payload, school_id)
-    return _to_response(obj)
+    response = await _to_response(obj, db)
+    await db.commit()
+    return response
 
 
 @router.get("", response_model=TeacherAssignmentListResponse)
@@ -177,7 +215,6 @@ async def list_assignments(
             "Provide either 'teacher_id', or 'standard_id' (optional 'section') as query parameters"
         )
 
-    return TeacherAssignmentListResponse(
-        items=[_to_response(i) for i in items],
-        total=total,
-    )
+    responses = [await _to_response(i, db) for i in items]
+    await db.commit()
+    return TeacherAssignmentListResponse(items=responses, total=total)

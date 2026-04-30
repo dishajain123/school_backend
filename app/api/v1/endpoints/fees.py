@@ -34,6 +34,7 @@ from app.schemas.fee import (
     DefaulterListResponse,
     AdminLedgerListResponse,
     StudentLedgerGenerateRequest,
+    ClassFeeStudentListResponse,
 )
 from app.services.fee import FeeService
 from app.utils.enums import RoleEnum
@@ -158,6 +159,27 @@ async def generate_student_ledger(
     Idempotent — already-existing entries are skipped.
     """
     return await FeeService(db).generate_student_ledger(payload, current_user)
+
+
+@router.get("/ledger/class-students", response_model=ClassFeeStudentListResponse)
+async def list_class_fee_students(
+    standard_id: uuid.UUID = Query(...),
+    academic_year_id: Optional[uuid.UUID] = Query(None),
+    status: Optional[str] = Query(None, description="PENDING|PARTIAL|PAID|OVERDUE"),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Admin: one row per student for a class, with parent info and installment breakdown.
+    Automatically refreshes overdue statuses before returning.
+    """
+    _assert_fee_read(current_user)
+    return await FeeService(db).list_class_fee_students(
+        current_user=current_user,
+        standard_id=standard_id,
+        academic_year_id=academic_year_id,
+        status_filter=status,
+    )
 
 
 @router.get("/ledger", response_model=AdminLedgerListResponse)

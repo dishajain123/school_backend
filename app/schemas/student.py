@@ -2,6 +2,7 @@ import uuid
 from datetime import date, datetime
 from typing import Optional
 from pydantic import BaseModel, Field
+from app.utils.enums import IncidentType
 
 
 class StudentCreate(BaseModel):
@@ -64,6 +65,29 @@ class StudentResponse(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class StudentParentSummary(BaseModel):
+    id: uuid.UUID
+    relation: Optional[str] = None
+    full_name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    occupation: Optional[str] = None
+
+
+class StudentBehaviourSummary(BaseModel):
+    latest_incident_type: Optional[IncidentType] = None
+    latest_description: Optional[str] = None
+    latest_incident_date: Optional[date] = None
+    positive_count: int = 0
+    negative_count: int = 0
+    neutral_count: int = 0
+
+
+class StudentDetailResponse(StudentResponse):
+    parent: Optional[StudentParentSummary] = None
+    behaviour_summary: Optional[StudentBehaviourSummary] = None
 
 
 class StudentListResponse(BaseModel):

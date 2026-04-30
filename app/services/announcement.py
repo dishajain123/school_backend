@@ -11,7 +11,9 @@ from app.core.exceptions import ValidationException, NotFoundException
 from app.integrations.minio_client import minio_client
 from app.repositories.announcement import AnnouncementRepository
 from app.repositories.notification import NotificationRepository
+from app.repositories.teacher_class_subject import TeacherClassSubjectRepository
 from app.services.audit_log import AuditLogService
+from app.services.assignment import _get_teacher_id
 from app.schemas.announcement import (
     AnnouncementCreate,
     AnnouncementUpdate,
@@ -35,6 +37,7 @@ async def _notify_announcement(
     body: str,
     target_role: Optional[RoleEnum],
     target_standard_id: Optional[uuid.UUID],
+    target_section: Optional[str],
 ) -> None:
     """Opens its own DB session — never reuses the request session."""
     from app.db.session import AsyncSessionLocal
@@ -48,11 +51,17 @@ async def _notify_announcement(
         user_ids: set[uuid.UUID] = set()
 
         if target_role in (RoleEnum.STUDENT, RoleEnum.PARENT) and target_standard_id:
+            normalized_section = (target_section or "").strip()
             result = await db.execute(
                 select(Student.user_id, Student.parent_id).where(
                     and_(
                         Student.school_id == school_id,
                         Student.standard_id == target_standard_id,
+                        (
+                            Student.section == normalized_section
+                            if normalized_section
+                            else True
+                        ),
                     )
                 )
             )
@@ -73,6 +82,7 @@ async def _notify_announcement(
                         user_ids.add(parent_user_id)
 
         elif target_role == RoleEnum.TEACHER and target_standard_id:
+            normalized_section = (target_section or "").strip()
             teacher_rows = await db.execute(
                 select(Teacher.user_id)
                 .join(
@@ -83,6 +93,11 @@ async def _notify_announcement(
                     and_(
                         Teacher.school_id == school_id,
                         TeacherClassSubject.standard_id == target_standard_id,
+                        (
+                            TeacherClassSubject.section == normalized_section
+                            if normalized_section
+                            else True
+                        ),
                     )
                 )
             )
@@ -91,11 +106,17 @@ async def _notify_announcement(
                     user_ids.add(teacher_user_id)
 
         elif target_role is None and target_standard_id:
+            normalized_section = (target_section or "").strip()
             student_rows = await db.execute(
                 select(Student.user_id, Student.parent_id).where(
                     and_(
                         Student.school_id == school_id,
                         Student.standard_id == target_standard_id,
+                        (
+                            Student.section == normalized_section
+                            if normalized_section
+                            else True
+                        ),
                     )
                 )
             )
@@ -124,6 +145,11 @@ async def _notify_announcement(
                     and_(
                         Teacher.school_id == school_id,
                         TeacherClassSubject.standard_id == target_standard_id,
+                        (
+                            TeacherClassSubject.section == normalized_section
+                            if normalized_section
+                            else True
+                        ),
                     )
                 )
             )
@@ -182,6 +208,38 @@ class AnnouncementService:
             )
         return data
 
+    async def _assert_teacher_target_scope(
+        self,
+        *,
+        school_id: uuid.UUID,
+        current_user: CurrentUser,
+        target_standard_id: Optional[uuid.UUID],
+        target_section: Optional[str],
+    ) -> None:
+        if current_user.role != RoleEnum.TEACHER:
+            return
+        if target_standard_id is None:
+            raise ValidationException("Teachers must select an assigned class")
+
+        teacher_id = await _get_teacher_id(self.db, current_user.id, school_id)
+        assignments, _ = await TeacherClassSubjectRepository(self.db).list_by_teacher(
+            teacher_id=teacher_id,
+            academic_year_id=None,
+        )
+        normalized_section = (target_section or "").strip()
+        has_scope = any(
+            assignment.standard_id == target_standard_id
+            and (
+                not normalized_section
+                or (assignment.section or "").strip() == normalized_section
+            )
+            for assignment in assignments
+        )
+        if not has_scope:
+            raise ValidationException(
+                "Teachers can target only assigned class/section announcements"
+            )
+
     async def create_announcement(
         self,
         body: AnnouncementCreate,
@@ -189,6 +247,13 @@ class AnnouncementService:
         background_tasks: BackgroundTasks,
     ) -> AnnouncementResponse:
         school_id = self._ensure_school(current_user)
+        normalized_section = (body.target_section or "").strip() or None
+        await self._assert_teacher_target_scope(
+            school_id=school_id,
+            current_user=current_user,
+            target_standard_id=body.target_standard_id,
+            target_section=normalized_section,
+        )
 
         announcement = await self.repo.create(
             {
@@ -198,6 +263,7 @@ class AnnouncementService:
                 "created_by": current_user.id,
                 "target_role": body.target_role,
                 "target_standard_id": body.target_standard_id,
+                "target_section": normalized_section,
                 "attachment_key": body.attachment_key,
                 "published_at": datetime.now(timezone.utc),
                 "is_active": True,
@@ -223,6 +289,7 @@ class AnnouncementService:
                 "target_standard_id": str(announcement.target_standard_id)
                 if announcement.target_standard_id
                 else None,
+                "target_section": announcement.target_section,
                 "is_active": announcement.is_active,
             },
             school_id=school_id,
@@ -236,6 +303,7 @@ class AnnouncementService:
             announcement.body,
             body.target_role,
             body.target_standard_id,
+            normalized_section,
         )
 
         return self._build_response(announcement)
@@ -246,6 +314,7 @@ class AnnouncementService:
         include_inactive: bool = False,
         target_role: Optional[RoleEnum] = None,
         target_standard_id: Optional[uuid.UUID] = None,
+        target_section: Optional[str] = None,
     ) -> AnnouncementListResponse:
         school_id = self._ensure_school(current_user)
 
@@ -256,6 +325,8 @@ class AnnouncementService:
         # FIX: these variables use Optional — which is now properly imported above.
         standard_ids: Optional[list[uuid.UUID]] = None
         standard_id: Optional[uuid.UUID] = None
+        standard_sections: set[tuple[uuid.UUID, str]] = set()
+        normalized_query_section = (target_section or "").strip() or None
 
         if current_user.role == RoleEnum.STUDENT:
             result = await self.db.execute(
@@ -268,6 +339,17 @@ class AnnouncementService:
             )
             standard_id = result.scalar_one_or_none()
             standard_ids = [standard_id] if standard_id else []
+            section_result = await self.db.execute(
+                select(Student.section).where(
+                    and_(
+                        Student.user_id == current_user.id,
+                        Student.school_id == school_id,
+                    )
+                )
+            )
+            student_section = section_result.scalar_one_or_none()
+            if standard_id and student_section and student_section.strip():
+                standard_sections.add((standard_id, student_section.strip()))
 
         elif current_user.role == RoleEnum.PARENT:
             result = await self.db.execute(
@@ -281,6 +363,17 @@ class AnnouncementService:
             standards = [row[0] for row in result.all() if row[0] is not None]
             standard_ids = list(dict.fromkeys(standards))
             standard_id = standard_ids[0] if standard_ids else None
+            child_rows = await self.db.execute(
+                select(Student.standard_id, Student.section).where(
+                    and_(
+                        Student.parent_id == current_user.parent_id,
+                        Student.school_id == school_id,
+                    )
+                )
+            )
+            for sid, section in child_rows.all():
+                if sid and section and section.strip():
+                    standard_sections.add((sid, section.strip()))
         elif current_user.role == RoleEnum.TEACHER:
             t_row = await self.db.execute(
                 select(Teacher.id).where(
@@ -300,6 +393,13 @@ class AnnouncementService:
                 standard_ids = list(
                     dict.fromkeys([sid for (sid,) in std_rows.all() if sid is not None])
                 )
+                section_rows = await self.db.execute(
+                    select(TeacherClassSubject.standard_id, TeacherClassSubject.section)
+                    .where(TeacherClassSubject.teacher_id == teacher_id)
+                )
+                for sid, section in section_rows.all():
+                    if sid and section and section.strip():
+                        standard_sections.add((sid, section.strip()))
             else:
                 standard_ids = []
 
@@ -309,6 +409,7 @@ class AnnouncementService:
             and current_user.role in (RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN),
             target_role=target_role,
             target_standard_id=target_standard_id,
+            target_section=normalized_query_section,
         )
 
         filtered = []
@@ -328,6 +429,15 @@ class AnnouncementService:
                         continue
                     if a.target_standard_id not in standard_ids:
                         continue
+            if (
+                a.target_section
+                and current_user.role
+                not in (RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN)
+            ):
+                if not a.target_standard_id:
+                    continue
+                if (a.target_standard_id, a.target_section.strip()) not in standard_sections:
+                    continue
             filtered.append(a)
 
         return AnnouncementListResponse(
@@ -347,6 +457,20 @@ class AnnouncementService:
             raise NotFoundException("Announcement")
 
         update_data = body.model_dump(exclude_unset=True)
+        if "target_section" in update_data:
+            update_data["target_section"] = (
+                (update_data.get("target_section") or "").strip() or None
+            )
+        next_standard_id = update_data.get(
+            "target_standard_id", announcement.target_standard_id
+        )
+        next_section = update_data.get("target_section", announcement.target_section)
+        await self._assert_teacher_target_scope(
+            school_id=school_id,
+            current_user=current_user,
+            target_standard_id=next_standard_id,
+            target_section=next_section,
+        )
         before_state = {
             "title": announcement.title,
             "body": announcement.body,
@@ -357,6 +481,7 @@ class AnnouncementService:
             "target_standard_id": str(announcement.target_standard_id)
             if announcement.target_standard_id
             else None,
+            "target_section": announcement.target_section,
             "attachment_key": announcement.attachment_key,
             "is_active": announcement.is_active,
         }
@@ -379,6 +504,7 @@ class AnnouncementService:
                 "target_standard_id": str(updated.target_standard_id)
                 if updated.target_standard_id
                 else None,
+                "target_section": updated.target_section,
                 "attachment_key": updated.attachment_key,
                 "is_active": updated.is_active,
             },
@@ -418,6 +544,7 @@ class AnnouncementService:
             "target_standard_id": str(announcement.target_standard_id)
             if announcement.target_standard_id
             else None,
+            "target_section": announcement.target_section,
             "is_active": announcement.is_active,
         }
         await self.repo.update(announcement, {"is_active": False})

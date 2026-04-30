@@ -68,7 +68,10 @@ class TeacherClassSubjectService:
         if teacher:
             return teacher
 
-        teacher_by_user = await self.teacher_repo.get_by_user_id(teacher_identifier)
+        teacher_by_user = await self.teacher_repo.get_by_user_id(
+            teacher_identifier,
+            school_id=school_id,
+        )
         if teacher_by_user and teacher_by_user.school_id == school_id:
             return teacher_by_user
         return None
@@ -316,7 +319,10 @@ class TeacherClassSubjectService:
     ) -> tuple[list[TeacherClassSubject], int]:
         # A TEACHER can only view their own assignments
         if current_user.role == RoleEnum.TEACHER:
-            teacher = await self.teacher_repo.get_by_user_id(current_user.id)
+            teacher = await self.teacher_repo.get_by_user_id(
+                current_user.id,
+                school_id=school_id,
+            )
             if not teacher or (teacher.id != teacher_id and teacher.user_id != teacher_id):
                 raise ForbiddenException(detail="Access denied")
 
@@ -361,7 +367,10 @@ class TeacherClassSubjectService:
         if current_user.role != RoleEnum.TEACHER:
             raise ForbiddenException(detail="Only teachers can access own assignments")
 
-        teacher = await self.teacher_repo.get_by_user_id(current_user.id)
+        teacher = await self.teacher_repo.get_by_user_id(
+            current_user.id,
+            school_id=school_id,
+        )
         if not teacher or teacher.school_id != school_id:
             raise NotFoundException(detail="Teacher profile not found in this school")
 

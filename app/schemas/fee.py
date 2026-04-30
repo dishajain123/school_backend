@@ -212,6 +212,51 @@ class AdminLedgerListResponse(BaseModel):
     total_outstanding: float = 0.0
 
 
+# ---------------------------------------------------------------------------
+# Student-wise class fee summary (admin console class view)
+# ---------------------------------------------------------------------------
+
+class StudentInstallmentSummary(BaseModel):
+    """One installment/fee-head row for a student."""
+    ledger_id: str
+    fee_head: str          # custom_fee_head or fee_category
+    installment_name: str
+    due_date: Optional[date] = None
+    total_amount: float
+    paid_amount: float
+    outstanding_amount: float
+    status: str            # PENDING | PARTIAL | PAID | OVERDUE
+    last_payment_date: Optional[date] = None
+
+
+class StudentFeeRow(BaseModel):
+    """One row per student in the class-wise fee view."""
+    student_id: str
+    student_name: Optional[str] = None
+    admission_number: Optional[str] = None
+    standard_name: Optional[str] = None
+    section: Optional[str] = None
+    # Parent info
+    parent_name: Optional[str] = None
+    parent_phone: Optional[str] = None
+    parent_email: Optional[str] = None
+    # Aggregated totals
+    total_billed: float = 0.0
+    total_paid: float = 0.0
+    total_outstanding: float = 0.0
+    has_overdue: bool = False
+    # Installment breakdown
+    installments: list[StudentInstallmentSummary] = []
+
+
+class ClassFeeStudentListResponse(BaseModel):
+    items: list[StudentFeeRow]
+    total: int
+    total_billed: float = 0.0
+    total_paid: float = 0.0
+    total_outstanding: float = 0.0
+
+
 class CustomFeeHeadInput(BaseModel):
     name: str
     amount: float

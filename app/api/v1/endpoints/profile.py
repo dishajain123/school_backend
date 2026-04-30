@@ -48,7 +48,10 @@ async def get_profile(
         return ProfileEnvelope(role="STUDENT", user=user_payload, profile=student.model_dump(mode="json"))
 
     if current_user.role == RoleEnum.TEACHER:
-        teacher = await TeacherRepository(db).get_by_user_id(current_user.id)
+        teacher = await TeacherRepository(db).get_by_user_id(
+            current_user.id,
+            school_id=current_user.school_id,
+        )
         if teacher:
             return ProfileEnvelope(
                 role="TEACHER",
@@ -64,7 +67,10 @@ async def get_profile(
         return ProfileEnvelope(role="TEACHER", user=user_payload, profile=None)
 
     if current_user.role == RoleEnum.PARENT:
-        parent = await ParentRepository(db).get_by_user_id(current_user.id)
+        parent = await ParentRepository(db).get_by_user_id(
+            current_user.id,
+            school_id=current_user.school_id,
+        )
         if parent:
             return ProfileEnvelope(
                 role="PARENT",

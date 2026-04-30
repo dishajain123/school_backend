@@ -42,6 +42,11 @@ class Announcement(BaseModel):
         nullable=True,
         index=True,
     )
+    target_section: Mapped[Optional[str]] = mapped_column(
+        String(20),
+        nullable=True,
+        index=True,
+    )
     attachment_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     published_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

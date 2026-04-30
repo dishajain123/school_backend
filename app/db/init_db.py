@@ -852,6 +852,24 @@ async def init_db() -> None:
                 )
             )
 
+            # ── Announcements: section-scoped targeting ──────────────────────
+            await conn.execute(
+                text(
+                    """
+                    ALTER TABLE IF EXISTS announcements
+                    ADD COLUMN IF NOT EXISTS target_section VARCHAR(20) NULL
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    CREATE INDEX IF NOT EXISTS ix_announcements_target_section
+                    ON announcements (target_section)
+                    """
+                )
+            )
+
         logger.info("Database tables created/verified successfully")
     except Exception as e:
         logger.error(f"Failed to initialize database: {e}")

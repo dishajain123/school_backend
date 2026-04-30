@@ -13,6 +13,7 @@ class AnnouncementCreate(BaseModel):
     type: AnnouncementType
     target_role: Optional[RoleEnum] = None
     target_standard_id: Optional[uuid.UUID] = None
+    target_section: Optional[str] = None
     attachment_key: Optional[str] = None
 
     @field_validator("title")
@@ -38,6 +39,7 @@ class AnnouncementUpdate(BaseModel):
     type: Optional[AnnouncementType] = None
     target_role: Optional[RoleEnum] = None
     target_standard_id: Optional[uuid.UUID] = None
+    target_section: Optional[str] = None
     attachment_key: Optional[str] = None
     is_active: Optional[bool] = None
 
@@ -50,6 +52,7 @@ class AnnouncementResponse(BaseModel):
     created_by: Optional[uuid.UUID] = None
     target_role: Optional[RoleEnum] = None
     target_standard_id: Optional[uuid.UUID] = None
+    target_section: Optional[str] = None
     attachment_key: Optional[str] = None
     attachment_url: Optional[str] = None
     published_at: datetime

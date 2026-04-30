@@ -43,6 +43,9 @@ class ChatService:
     def _user_display_name(user) -> str:
         if user is None:
             return "Unknown"
+        full_name = (getattr(user, "full_name", None) or "").strip()
+        if full_name:
+            return full_name
         email = (getattr(user, "email", None) or "").strip()
         if email:
             local_part = email.split("@", 1)[0]
@@ -75,9 +78,6 @@ class ChatService:
         return cls._user_display_name(pseudo_user)
 
     def _conversation_display_name(self, conversation, current_user_id: uuid.UUID) -> str:
-        if conversation.name and conversation.name.strip():
-            return conversation.name.strip()
-
         if conversation.type == ConversationType.ONE_TO_ONE:
             for participant in conversation.participants or []:
                 if participant.user_id == current_user_id:
@@ -85,7 +85,13 @@ class ChatService:
                 user = participant.user
                 if user is not None:
                     return self._user_display_name(user)
+            # Fallback: if participant resolution fails, keep a custom name if present.
+            if conversation.name and conversation.name.strip():
+                return conversation.name.strip()
             return "Direct Message"
+
+        if conversation.name and conversation.name.strip():
+            return conversation.name.strip()
 
         return "Group Chat"
 

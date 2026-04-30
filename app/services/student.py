@@ -3,7 +3,7 @@ import math
 import json
 from datetime import datetime, timezone
 from typing import Optional
-from sqlalchemy import and_, select
+from sqlalchemy import and_, select, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.masters import Standard
@@ -12,6 +12,12 @@ from app.repositories.student import StudentRepository
 from app.repositories.settings import SettingsRepository
 from app.schemas.student import StudentCreate, StudentUpdate, StudentPromotionUpdate
 from app.models.student import Student
+from app.models.student_behaviour_log import StudentBehaviourLog
+from app.schemas.student import (
+    StudentDetailResponse,
+    StudentParentSummary,
+    StudentBehaviourSummary,
+)
 from app.core.dependencies import CurrentUser
 from app.core.exceptions import (
     NotFoundException,
@@ -19,7 +25,7 @@ from app.core.exceptions import (
     ForbiddenException,
     ValidationException,
 )
-from app.utils.enums import RoleEnum, PromotionStatus
+from app.utils.enums import RoleEnum, PromotionStatus, IncidentType
 from app.services.academic_year import get_active_year
 
 
@@ -207,8 +213,77 @@ class StudentService:
         student_id: uuid.UUID,
         school_id: uuid.UUID,
         current_user: CurrentUser,
-    ) -> Student:
-        return await self._get_and_authorize(student_id, school_id, current_user)
+    ) -> StudentDetailResponse:
+        student = await self._get_and_authorize(student_id, school_id, current_user)
+        return await self._build_student_detail_response(student)
+
+    async def _build_student_detail_response(
+        self,
+        student: Student,
+    ) -> StudentDetailResponse:
+        parent_summary: Optional[StudentParentSummary] = None
+        if student.parent:
+            relation_value = None
+            if student.parent.relation is not None:
+                relation_value = getattr(
+                    student.parent.relation,
+                    "value",
+                    str(student.parent.relation),
+                )
+            parent_summary = StudentParentSummary(
+                id=student.parent.id,
+                relation=relation_value,
+                full_name=student.parent.user.full_name if student.parent.user else None,
+                email=student.parent.user.email if student.parent.user else None,
+                phone=student.parent.user.phone if student.parent.user else None,
+                occupation=student.parent.occupation,
+            )
+
+        latest_row = (
+            await self.db.execute(
+                select(
+                    StudentBehaviourLog.incident_type,
+                    StudentBehaviourLog.description,
+                    StudentBehaviourLog.incident_date,
+                )
+                .where(StudentBehaviourLog.student_id == student.id)
+                .order_by(
+                    StudentBehaviourLog.incident_date.desc(),
+                    StudentBehaviourLog.created_at.desc(),
+                )
+                .limit(1)
+            )
+        ).one_or_none()
+
+        counts_row = (
+            await self.db.execute(
+                select(
+                    func.count(
+                        case((StudentBehaviourLog.incident_type == IncidentType.POSITIVE, 1))
+                    ),
+                    func.count(
+                        case((StudentBehaviourLog.incident_type == IncidentType.NEGATIVE, 1))
+                    ),
+                    func.count(
+                        case((StudentBehaviourLog.incident_type == IncidentType.NEUTRAL, 1))
+                    ),
+                ).where(StudentBehaviourLog.student_id == student.id)
+            )
+        ).one()
+
+        behaviour_summary = StudentBehaviourSummary(
+            latest_incident_type=latest_row[0] if latest_row else None,
+            latest_description=latest_row[1] if latest_row else None,
+            latest_incident_date=latest_row[2] if latest_row else None,
+            positive_count=counts_row[0] or 0,
+            negative_count=counts_row[1] or 0,
+            neutral_count=counts_row[2] or 0,
+        )
+
+        payload = StudentDetailResponse.model_validate(student).model_dump()
+        payload["parent"] = parent_summary.model_dump() if parent_summary else None
+        payload["behaviour_summary"] = behaviour_summary.model_dump()
+        return StudentDetailResponse.model_validate(payload)
 
     async def get_my_student_profile(
         self,

@@ -66,6 +66,7 @@ class AcademicYearSummary(BaseModel):
 class TeacherAssignmentResponse(BaseModel):
     id: uuid.UUID
     section: str
+    section_id: Optional[uuid.UUID] = None
     teacher: TeacherSummary
     standard: StandardSummary
     subject: SubjectSummary
