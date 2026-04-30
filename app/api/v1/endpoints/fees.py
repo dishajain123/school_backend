@@ -15,6 +15,8 @@ from app.core.dependencies import (
     require_roles,
 )
 from app.core.exceptions import ForbiddenException
+from app.repositories.parent import ParentRepository
+from app.repositories.student import StudentRepository
 from app.db.session import get_db
 from app.schemas.fee import (
     FeeStructureListResponse,
@@ -224,6 +226,42 @@ async def fee_dashboard(
     """
     _assert_fee_read(current_user)
     return await FeeService(db).fee_dashboard(student_id, current_user, academic_year_id)
+
+
+@router.get("/me", response_model=FeeDashboardResponse)
+async def my_fee_dashboard(
+    student_id: Optional[uuid.UUID] = Query(None),
+    academic_year_id: Optional[uuid.UUID] = Query(None),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    _assert_fee_read(current_user)
+
+    target_student_id: Optional[uuid.UUID] = student_id
+    student_repo = StudentRepository(db)
+
+    if current_user.role == RoleEnum.STUDENT:
+        me = await student_repo.get_by_user_id(current_user.id)
+        if not me:
+            raise ForbiddenException(detail="Student profile not found for current user")
+        target_student_id = me.id
+    elif current_user.role == RoleEnum.PARENT and target_student_id is None:
+        parent = await ParentRepository(db).get_by_user_id(current_user.id)
+        if not parent:
+            raise ForbiddenException(detail="Parent profile not found for current user")
+        children = await student_repo.list_by_parent(parent.id, current_user.school_id)
+        if not children:
+            raise ForbiddenException(detail="No linked children found for current parent")
+        if len(children) > 1:
+            raise ForbiddenException(
+                detail="Multiple linked children found. Please provide student_id."
+            )
+        target_student_id = children[0].id
+
+    if target_student_id is None:
+        raise ForbiddenException(detail="student_id is required for this role")
+
+    return await FeeService(db).fee_dashboard(target_student_id, current_user, academic_year_id)
 
 
 @router.get("/payments", response_model=PaymentListResponse)

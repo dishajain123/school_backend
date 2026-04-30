@@ -102,6 +102,38 @@ class FeeService:
             return FeeStatus.OVERDUE
         return FeeStatus.PENDING
 
+    def _serialize_structure(self, structure: FeeStructure) -> FeeStructureResponse:
+        """
+        Build a FeeStructureResponse without triggering async lazy-loads.
+        """
+        payload = {
+            "id": structure.id,
+            "standard_id": structure.standard_id,
+            "academic_year_id": structure.academic_year_id,
+            "fee_category": structure.fee_category,
+            "custom_fee_head": structure.custom_fee_head or None,
+            "amount": structure.amount,
+            "due_date": structure.due_date,
+            "description": structure.description,
+            "installment_plan": structure.installment_plan,
+            "school_id": structure.school_id,
+            "created_at": structure.created_at,
+            "updated_at": structure.updated_at,
+            "standard": None,
+            "academic_year": None,
+        }
+
+        # Avoid relationship lazy loading; use related objects only if already present.
+        standard_obj = structure.__dict__.get("standard")
+        if standard_obj is not None:
+            payload["standard"] = standard_obj
+
+        academic_year_obj = structure.__dict__.get("academic_year")
+        if academic_year_obj is not None:
+            payload["academic_year"] = academic_year_obj
+
+        return FeeStructureResponse.model_validate(payload)
+
     async def _assert_student_access(
         self,
         school_id: uuid.UUID,
@@ -253,7 +285,7 @@ class FeeService:
             await self.db.refresh(s)
 
         return FeeStructureBatchResponse(
-            items=[FeeStructureResponse.model_validate(s) for s in structures],
+            items=[self._serialize_structure(s) for s in structures],
             total=len(structures),
             created=created,
             updated=updated,
@@ -328,7 +360,7 @@ class FeeService:
             await self.db.refresh(s)
 
         return FeeStructureUpdateResponse(
-            items=[FeeStructureResponse.model_validate(s) for s in updated_structures],
+            items=[self._serialize_structure(s) for s in updated_structures],
             total=len(updated_structures),
         )
 
@@ -375,7 +407,7 @@ class FeeService:
             standard_id=standard_id,
             academic_year_id=resolved_year_id,
         )
-        items = [FeeStructureResponse.model_validate(s) for s in structures]
+        items = [self._serialize_structure(s) for s in structures]
         return FeeStructureListResponse(items=items, total=len(items))
 
     # ------------------------------------------------------------------

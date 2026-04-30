@@ -13,6 +13,7 @@ from app.core.dependencies import (
 )
 from app.core.exceptions import ValidationException
 from app.services.parent import ParentService
+from app.repositories.parent import ParentRepository
 from app.schemas.parent import (
     ParentCreate,
     ParentUpdate,
@@ -53,6 +54,32 @@ async def get_my_children(
         children=[ChildSummary.model_validate(c) for c in children],
         total=len(children),
     )
+
+
+@router.get("/me", response_model=ParentResponse)
+async def get_my_parent_profile(
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not current_user.school_id:
+        raise ValidationException("school_id is required")
+    parent = await ParentRepository(db).get_by_user_id(current_user.id)
+    if not parent:
+        raise ValidationException("Parent profile not found for current user")
+    return _to_response(parent)
+
+
+@router.get("/me/profile", response_model=ParentResponse)
+async def get_my_parent_profile_compat(
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not current_user.school_id:
+        raise ValidationException("school_id is required")
+    parent = await ParentRepository(db).get_by_user_id(current_user.id)
+    if not parent:
+        raise ValidationException("Parent profile not found for current user")
+    return _to_response(parent)
 
 
 @router.get("", response_model=ParentListResponse)

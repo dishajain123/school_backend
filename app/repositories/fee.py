@@ -24,7 +24,7 @@ def _structure_with_relations(stmt):
 def _ledger_with_relations(stmt):
     return stmt.options(
         selectinload(FeeLedger.fee_structure).selectinload(FeeStructure.standard),
-        selectinload(FeeLedger.student),
+        selectinload(FeeLedger.student).selectinload(Student.user),
     )
 
 
@@ -219,7 +219,7 @@ class FeeRepository:
         result = await self.db.execute(
             stmt.options(
                 selectinload(FeeLedger.fee_structure).selectinload(FeeStructure.standard),
-                selectinload(FeeLedger.student),
+                selectinload(FeeLedger.student).selectinload(Student.user),
             )
         )
         return list(result.scalars().all()), total

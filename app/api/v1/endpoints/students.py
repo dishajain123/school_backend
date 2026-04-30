@@ -124,6 +124,32 @@ async def get_my_student_profile(
     )
 
 
+@router.get("/profile", response_model=StudentResponse)
+async def get_my_student_profile_compat(
+    current_user: CurrentUser = Depends(get_current_user),
+    service: StudentService = Depends(get_service),
+):
+    if not current_user.school_id:
+        raise ForbiddenException("School context required")
+    return await service.get_my_student_profile(
+        school_id=current_user.school_id,
+        current_user=current_user,
+    )
+
+
+@router.get("/me/profile", response_model=StudentResponse)
+async def get_my_student_profile_compat_v2(
+    current_user: CurrentUser = Depends(get_current_user),
+    service: StudentService = Depends(get_service),
+):
+    if not current_user.school_id:
+        raise ForbiddenException("School context required")
+    return await service.get_my_student_profile(
+        school_id=current_user.school_id,
+        current_user=current_user,
+    )
+
+
 @router.get("/{student_id}", response_model=StudentResponse)
 async def get_student(
     student_id: uuid.UUID,

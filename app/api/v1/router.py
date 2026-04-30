@@ -10,6 +10,7 @@ from app.api.v1.endpoints.approvals import router as approvals_router
 from app.api.v1.endpoints.audit_logs import router as audit_logs_router
 from app.api.v1.endpoints.assignments import router as assignments_router
 from app.api.v1.endpoints.auth import router as auth_router
+from app.api.v1.endpoints.attendance import router as attendance_router
 from app.api.v1.endpoints.behaviour import router as behaviour_router
 from app.api.v1.endpoints.chat import router as chat_router
 from app.api.v1.endpoints.complaints import router as complaints_router
@@ -28,6 +29,7 @@ from app.api.v1.endpoints.masters import router as masters_router
 from app.api.v1.endpoints.my_class import router as my_class_router
 from app.api.v1.endpoints.notifications import router as notifications_router
 from app.api.v1.endpoints.parents import router as parents_router
+from app.api.v1.endpoints.profile import router as profile_router
 from app.api.v1.endpoints.principal_reports import router as principal_reports_router
 from app.api.v1.endpoints.promotions import router as promotions_router     # Phase 7
 from app.api.v1.endpoints.registrations import router as registrations_router
@@ -47,6 +49,7 @@ api_router.include_router(auth_router)
 api_router.include_router(approvals_router)
 api_router.include_router(audit_logs_router)
 api_router.include_router(assignments_router)
+api_router.include_router(attendance_router)
 api_router.include_router(behaviour_router)
 api_router.include_router(chat_router)
 api_router.include_router(complaints_router)
@@ -65,6 +68,7 @@ api_router.include_router(masters_router)
 api_router.include_router(my_class_router)
 api_router.include_router(notifications_router)
 api_router.include_router(parents_router)
+api_router.include_router(profile_router)
 api_router.include_router(principal_reports_router)
 api_router.include_router(promotions_router)         # Phase 7
 api_router.include_router(results_router)

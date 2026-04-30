@@ -13,6 +13,7 @@ from app.core.dependencies import (
 from app.core.exceptions import ValidationException
 from app.services.teacher import TeacherService
 from app.services.teacher_class_subject import TeacherClassSubjectService
+from app.repositories.teacher import TeacherRepository
 from app.schemas.teacher import (
     TeacherCreate,
     TeacherUpdate,
@@ -118,6 +119,32 @@ async def get_my_teacher_analytics(
         section=section,
         subject_id=subject_id,
     )
+
+
+@router.get("/me", response_model=TeacherResponse)
+async def get_my_teacher_profile(
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not current_user.school_id:
+        raise ValidationException("school_id is required")
+    teacher = await TeacherRepository(db).get_by_user_id(current_user.id)
+    if not teacher:
+        raise ValidationException("Teacher profile not found for current user")
+    return _to_response(teacher)
+
+
+@router.get("/me/profile", response_model=TeacherResponse)
+async def get_my_teacher_profile_compat(
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not current_user.school_id:
+        raise ValidationException("school_id is required")
+    teacher = await TeacherRepository(db).get_by_user_id(current_user.id)
+    if not teacher:
+        raise ValidationException("Teacher profile not found for current user")
+    return _to_response(teacher)
 
 
 @router.get("/{teacher_id}", response_model=TeacherResponse)

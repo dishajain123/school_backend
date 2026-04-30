@@ -57,9 +57,35 @@ class FeeStructureItem(BaseModel):
             raise ValueError("Amount must be positive")
         return v
 
+    @field_validator("custom_fee_head")
+    @classmethod
+    def require_custom_head_for_misc(cls, v: Optional[str], info):
+        fee_category = info.data.get("fee_category")
+        if fee_category == FeeCategory.MISCELLANEOUS and not v:
+            raise ValueError("custom_fee_head is required when fee_category is MISCELLANEOUS")
+        return v
+
 
 class FeeStructureBatchCreate(BaseModel):
     structures: list[FeeStructureItem] = Field(..., min_length=1)
+
+
+class StandardRef(BaseModel):
+    id: uuid.UUID
+    name: str
+    level: int
+
+    model_config = {"from_attributes": True}
+
+
+class AcademicYearRef(BaseModel):
+    id: uuid.UUID
+    name: str
+    start_date: date
+    end_date: date
+    is_active: bool
+
+    model_config = {"from_attributes": True}
 
 
 class FeeStructureResponse(BaseModel):
@@ -75,8 +101,8 @@ class FeeStructureResponse(BaseModel):
     school_id: uuid.UUID
     created_at: datetime
     updated_at: datetime
-    standard: Optional[dict] = None
-    academic_year: Optional[dict] = None
+    standard: Optional[StandardRef] = None
+    academic_year: Optional[AcademicYearRef] = None
 
     model_config = {"from_attributes": True}
 
