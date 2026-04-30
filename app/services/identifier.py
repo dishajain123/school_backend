@@ -69,7 +69,7 @@ class IdentifierService:
         """
         Main entry point. Returns a unique identifier string.
         If custom_value is provided:
-          - Requires SUPER_ADMIN or ADMIN role
+          - Requires SUPERADMIN, PRINCIPAL, or STAFF_ADMIN role
           - Validates format and uniqueness
           - Returns as-is (does NOT increment counter)
         """
@@ -331,12 +331,16 @@ class IdentifierService:
     ) -> str:
         """
         Admin override path. Validates format and checks uniqueness.
-        Only ADMIN and SUPER_ADMIN can use custom identifiers.
+        Only SUPERADMIN, PRINCIPAL, and STAFF_ADMIN can use custom identifiers.
         """
         # Permission
-        if actor is None or actor.role not in [RoleEnum.ADMIN, RoleEnum.SUPERADMIN]:
+        if actor is None or actor.role not in [
+            RoleEnum.SUPERADMIN,
+            RoleEnum.PRINCIPAL,
+            RoleEnum.STAFF_ADMIN,
+        ]:
             raise ForbiddenException(
-                "Custom identifier override requires Admin or Super Admin role."
+                "Custom identifier override requires Super Admin, Principal, or Staff Admin role."
             )
 
         # Format validation

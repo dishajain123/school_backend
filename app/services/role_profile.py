@@ -11,6 +11,7 @@ from app.core.dependencies import CurrentUser
 from app.core.exceptions import ForbiddenException, NotFoundException, ValidationException
 from app.models.parent import Parent
 from app.models.student import Student
+from app.models.student_year_mapping import StudentYearMapping
 from app.models.teacher import Teacher
 from app.models.user import User
 from app.models.identifier_counter import IdentifierCounter
@@ -27,7 +28,7 @@ from app.schemas.role_profile import (
     TeacherProfileResponse,
 )
 from app.services.identifier import DEFAULT_FORMATS, IdentifierService
-from app.utils.enums import IdentifierType, RoleEnum, UserStatus
+from app.utils.enums import EnrollmentStatus, IdentifierType, RoleEnum, UserStatus
 
 
 class RoleProfileService:
@@ -532,6 +533,20 @@ class RoleProfileService:
             )
         ).all()
 
+        student_ids = [student.id for student, _ in student_rows]
+        enrolled_ids: set[uuid.UUID] = set()
+        if student_ids:
+            enrolled_rows = await self.db.execute(
+                select(StudentYearMapping.student_id)
+                .where(
+                    StudentYearMapping.student_id.in_(student_ids),
+                    StudentYearMapping.school_id == school_id,
+                    StudentYearMapping.status == EnrollmentStatus.ACTIVE,
+                )
+                .group_by(StudentYearMapping.student_id)
+            )
+            enrolled_ids = set(enrolled_rows.scalars().all())
+
         items: list[dict[str, Any]] = [
             {
                 "role": "STUDENT",
@@ -546,6 +561,7 @@ class RoleProfileService:
                 "identifier_issued_at": student.identifier_issued_at,
                 "standard_id": str(student.standard_id) if student.standard_id else None,
                 "section": student.section,
+                "enrollment_completed": student.id in enrolled_ids,
                 "created_at": student.created_at,
             }
             for student, user in student_rows

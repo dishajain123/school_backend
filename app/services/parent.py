@@ -8,6 +8,7 @@ from app.repositories.user import UserRepository
 from app.schemas.parent import ParentCreate, ParentUpdate
 from app.models.parent import Parent
 from app.models.student import Student
+from app.models.student_year_mapping import StudentYearMapping
 from app.models.user import User
 from app.core.security import hash_password, verify_password
 from app.core.exceptions import (
@@ -16,7 +17,7 @@ from app.core.exceptions import (
     ConflictException,
 )
 from app.core.dependencies import CurrentUser
-from app.utils.enums import RegistrationSource, RoleEnum, UserStatus
+from app.utils.enums import EnrollmentStatus, RegistrationSource, RoleEnum, UserStatus
 
 
 class ParentService:
@@ -61,6 +62,31 @@ class ParentService:
         for student in students:
             user = users.get(student.user_id)
             self._ensure_user_is_active(user, "Student")
+
+    async def _ensure_students_are_enrolled(
+        self,
+        students: list[Student],
+        school_id: uuid.UUID,
+    ) -> None:
+        student_ids = [student.id for student in students]
+        if not student_ids:
+            return
+        rows = await self.db.execute(
+            select(StudentYearMapping.student_id)
+            .where(
+                StudentYearMapping.school_id == school_id,
+                StudentYearMapping.student_id.in_(student_ids),
+                StudentYearMapping.status == EnrollmentStatus.ACTIVE,
+            )
+            .group_by(StudentYearMapping.student_id)
+        )
+        enrolled_ids = set(rows.scalars().all())
+        not_enrolled = [sid for sid in student_ids if sid not in enrolled_ids]
+        if not_enrolled:
+            raise ValidationException(
+                "Student must be enrolled before linking to a parent. "
+                f"Enroll student first for: {', '.join(str(sid) for sid in not_enrolled)}"
+            )
 
     async def create_parent(
         self,
@@ -251,6 +277,7 @@ class ParentService:
         if not student:
             raise NotFoundException(detail="Student not found")
         await self._ensure_students_are_active([student])
+        await self._ensure_students_are_enrolled([student], school_id)
 
         if student.parent_id == parent_id:
             # Idempotent behavior: return current links when child is already
@@ -344,6 +371,7 @@ class ParentService:
                 f"Some students were not found in this school: {', '.join(str(sid) for sid in missing_ids)}"
             )
         await self._ensure_students_are_active(students)
+        await self._ensure_students_are_enrolled(students, school_id)
 
         for student in students:
             student.parent_id = parent.id

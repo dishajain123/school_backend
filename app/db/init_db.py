@@ -693,6 +693,36 @@ async def init_db() -> None:
                     """
                 )
             )
+
+            # ── Enrollment mapping compatibility (next_year_mapping_id) ─────
+            await conn.execute(
+                text(
+                    """
+                    ALTER TABLE IF EXISTS student_year_mappings
+                    ADD COLUMN IF NOT EXISTS next_year_mapping_id UUID NULL
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1
+                            FROM pg_constraint
+                            WHERE conname = 'fk_student_year_mappings_next_year_mapping_id'
+                        ) THEN
+                            ALTER TABLE student_year_mappings
+                            ADD CONSTRAINT fk_student_year_mappings_next_year_mapping_id
+                            FOREIGN KEY (next_year_mapping_id)
+                            REFERENCES student_year_mappings(id)
+                            ON DELETE SET NULL;
+                        END IF;
+                    END $$;
+                    """
+                )
+            )
             await conn.execute(
                 text(
                     """

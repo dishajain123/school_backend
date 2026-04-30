@@ -32,6 +32,8 @@ class TeacherSummary(BaseModel):
     employee_code: str
     user_id: uuid.UUID
     full_name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
 
     model_config = {"from_attributes": True}
 

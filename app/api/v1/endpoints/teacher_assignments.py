@@ -51,6 +51,8 @@ def _to_response(obj) -> TeacherAssignmentResponse:
             employee_code=obj.teacher.employee_code,
             user_id=obj.teacher.user_id,
             full_name=getattr(getattr(obj.teacher, "user", None), "full_name", None),
+            email=getattr(getattr(obj.teacher, "user", None), "email", None),
+            phone=getattr(getattr(obj.teacher, "user", None), "phone", None),
         ),
         standard=StandardSummary(
             id=obj.standard.id,
