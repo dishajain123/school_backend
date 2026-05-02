@@ -240,6 +240,9 @@ class StudentFeeRow(BaseModel):
     parent_name: Optional[str] = None
     parent_phone: Optional[str] = None
     parent_email: Optional[str] = None
+    student_phone: Optional[str] = None
+    payment_cycle: str = "UNASSIGNED"
+    status: str = "PENDING"
     # Aggregated totals
     total_billed: float = 0.0
     total_paid: float = 0.0
@@ -293,6 +296,7 @@ class StudentLedgerGenerateRequest(BaseModel):
     student_id: uuid.UUID
     standard_id: uuid.UUID
     academic_year_id: Optional[uuid.UUID] = None
+    payment_cycle: Optional[str] = None
 
 
 class LedgerGenerateResponse(BaseModel):
@@ -321,6 +325,42 @@ class PaymentCreate(BaseModel):
         if v <= 0:
             raise ValueError("Amount must be positive")
         return v
+
+
+class PaymentAllocateCreate(BaseModel):
+    student_id: uuid.UUID
+    amount: float
+    payment_date: Optional[date] = None
+    payment_mode: PaymentMode
+    payment_cycle: Optional[str] = None
+    academic_year_id: Optional[uuid.UUID] = None
+    reference_number: Optional[str] = None
+    transaction_ref: Optional[str] = None
+
+    @field_validator("amount")
+    @classmethod
+    def allocate_amount_positive(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("Amount must be positive")
+        return v
+
+
+class PaymentAllocationItem(BaseModel):
+    payment_id: uuid.UUID
+    fee_ledger_id: uuid.UUID
+    installment_name: str = ""
+    applied_amount: float
+    remaining_outstanding: float
+    status: FeeStatus
+
+
+class PaymentAllocateResponse(BaseModel):
+    student_id: uuid.UUID
+    payment_cycle: str = "UNASSIGNED"
+    total_requested: float
+    total_applied: float
+    total_unapplied: float
+    allocations: list[PaymentAllocationItem]
 
 
 class PaymentResponse(BaseModel):

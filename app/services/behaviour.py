@@ -179,7 +179,7 @@ class BehaviourService:
             student, user = row
             student_name = student.student_name
             if not student_name and user is not None:
-                student_name = user.email or user.phone
+                student_name = user.full_name or user.phone
             if not student_name:
                 student_name = student.admission_number
 
@@ -196,7 +196,12 @@ class BehaviourService:
         student_ids = list({log.student_id for log in logs})
         rows = (
             await self.db.execute(
-                select(Student.id, Student.admission_number, User.email, User.phone)
+                select(
+                    Student.id,
+                    Student.admission_number,
+                    User.full_name,
+                    User.phone,
+                )
                 .join(User, User.id == Student.user_id, isouter=True)
                 .where(Student.id.in_(student_ids))
             )
@@ -205,11 +210,8 @@ class BehaviourService:
         name_map: dict[uuid.UUID, str] = {}
         for row in rows:
             derived = None
-            if row.email:
-                local = row.email.split("@", 1)[0]
-                cleaned = local.replace(".", " ").replace("_", " ").replace("-", " ").strip()
-                if cleaned:
-                    derived = " ".join(w.capitalize() for w in cleaned.split())
+            if row.full_name and row.full_name.strip():
+                derived = row.full_name.strip()
             if not derived and row.phone:
                 derived = row.phone
             if not derived:

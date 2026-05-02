@@ -30,6 +30,7 @@ from app.schemas.enrollment import (
     EnrollmentMappingResponse,
     ClassRosterResponse,
     StudentAcademicHistoryResponse,
+    AnnualReenrollResponse,
 )
 from app.utils.enums import EnrollmentStatus, AuditAction, RoleEnum, UserStatus
 from app.core.exceptions import (
@@ -49,6 +50,117 @@ class EnrollmentService:
         self.db = db
         self.repo = EnrollmentRepository(db)
         self.audit = AuditLogService(db)
+
+    @staticmethod
+    def _requested_admission_numbers(submitted_data: Optional[dict]) -> tuple[Optional[str], list[str]]:
+        if not submitted_data:
+            return None, []
+        first = (
+            submitted_data.get("student_admission_number")
+            or submitted_data.get("admission_number")
+            or submitted_data.get("child_admission_number")
+        )
+        first_text = str(first).strip() if first is not None else ""
+        first_value = first_text if first_text else None
+
+        requested: list[str] = []
+        if first_value:
+            requested.append(first_value)
+
+        extra = submitted_data.get("child_admission_numbers")
+        if isinstance(extra, list):
+            requested.extend(
+                [str(v).strip() for v in extra if str(v).strip()]
+            )
+
+        # De-dupe while preserving order.
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for value in requested:
+            key = value.upper()
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(value)
+        return first_value, deduped
+
+    @staticmethod
+    def _status_text(value) -> str:
+        """Safely render enum-like status values from mixed ORM payloads."""
+        if value is None:
+            return "UNKNOWN"
+        return getattr(value, "value", str(value))
+
+    async def reenroll_user_for_year(
+        self,
+        *,
+        user_id: uuid.UUID,
+        academic_year_id: uuid.UUID,
+        actor: CurrentUser,
+    ) -> AnnualReenrollResponse:
+        school_id = actor.school_id
+        if not school_id:
+            raise ValidationException("School context required")
+        year = await self._load_academic_year(academic_year_id, school_id)
+        today = date.today()
+        active_year: Optional[AcademicYear] = None
+        try:
+            active_year = await get_active_year(school_id, self.db)
+        except Exception:
+            active_year = None
+
+        admin_override_roles = {RoleEnum.SUPERADMIN, RoleEnum.STAFF_ADMIN}
+        if (
+            actor.role not in admin_override_roles
+            and active_year is not None
+            and active_year.end_date is not None
+            and today <= active_year.end_date
+        ):
+            raise ValidationException(
+                "Re-enrollment opens after the active academic year end date"
+            )
+
+        # Re-enrollment should allow active or upcoming years created by admin.
+        # Block only already-ended academic years.
+        if year.end_date and year.end_date < today:
+            raise ValidationException(
+                "Past academic year cannot be selected for re-enrollment"
+            )
+
+        user_row = await self.db.execute(
+            select(User).where(
+                and_(
+                    User.id == user_id,
+                    User.school_id == school_id,
+                )
+            )
+        )
+        user = user_row.scalar_one_or_none()
+        if not user:
+            raise NotFoundException("User not found in this school")
+
+        submitted = dict(user.submitted_data or {})
+        history = submitted.get("reenrollment_history")
+        if not isinstance(history, list):
+            history = []
+        history.append(
+            {
+                "academic_year_id": str(academic_year_id),
+                "at": datetime.now(timezone.utc).isoformat(),
+                "by": str(actor.id),
+            }
+        )
+        submitted["reenrollment_history"] = history[-20:]
+        submitted["academic_year_id"] = str(academic_year_id)
+        user.submitted_data = submitted
+        await self.db.flush()
+        await self.db.commit()
+        return AnnualReenrollResponse(
+            user_id=user.id,
+            role=user.role,
+            academic_year_id=academic_year_id,
+            updated=True,
+        )
 
     async def list_onboarding_queue(
         self,
@@ -76,10 +188,17 @@ class EnrollmentService:
         items: list[dict] = []
         for u in users:
             profile_created = False
+            reenrollment_completed = False
             enrollment_completed = False
             pending_reason: Optional[str] = None
             suggested_identifier: Optional[str] = None
             profile_id: Optional[uuid.UUID] = None
+            submitted = u.submitted_data if isinstance(u.submitted_data, dict) else {}
+            selected_year = str(submitted.get("academic_year_id") or "").strip()
+            reenrollment_completed = selected_year == str(active_year.id)
+            requested_admission, requested_admissions = self._requested_admission_numbers(
+                u.submitted_data
+            )
 
             if u.role == RoleEnum.STUDENT:
                 student_row = await self.db.execute(
@@ -93,14 +212,18 @@ class EnrollmentService:
                     mapping_count = await self.db.execute(
                         select(func.count(StudentYearMapping.id)).where(
                             StudentYearMapping.student_id == student.id,
+                            StudentYearMapping.academic_year_id == active_year.id,
                             StudentYearMapping.status == EnrollmentStatus.ACTIVE,
+                            StudentYearMapping.section_id.is_not(None),
                         )
                     )
                     enrollment_completed = (mapping_count.scalar_one() or 0) > 0
                 if not profile_created:
                     pending_reason = "Student profile not created"
+                elif not reenrollment_completed:
+                    pending_reason = "Academic year re-enrollment pending"
                 elif not enrollment_completed:
-                    pending_reason = "Class/section assignment pending"
+                    pending_reason = "Promotion/class-section assignment pending"
 
             elif u.role == RoleEnum.TEACHER:
                 teacher_row = await self.db.execute(
@@ -120,6 +243,8 @@ class EnrollmentService:
                     enrollment_completed = (assignment_count.scalar_one() or 0) > 0
                 if not profile_created:
                     pending_reason = "Teacher profile not created"
+                elif not reenrollment_completed:
+                    pending_reason = "Academic year re-enrollment pending"
                 elif not enrollment_completed:
                     pending_reason = "Class/section/subject assignment pending"
 
@@ -133,11 +258,22 @@ class EnrollmentService:
                     profile_id = parent.id
                     suggested_identifier = parent.parent_code
                     child_count = await self.db.execute(
-                        select(func.count(Student.id)).where(Student.parent_id == parent.id)
+                        select(func.count(Student.id)).where(
+                            Student.parent_id == parent.id,
+                            Student.id.in_(
+                                select(StudentYearMapping.student_id).where(
+                                    StudentYearMapping.school_id == school_id,
+                                    StudentYearMapping.academic_year_id == active_year.id,
+                                    StudentYearMapping.status == EnrollmentStatus.ACTIVE,
+                                )
+                            ),
+                        )
                     )
                     enrollment_completed = (child_count.scalar_one() or 0) > 0
                 if not profile_created:
                     pending_reason = "Parent profile not created"
+                elif not reenrollment_completed:
+                    pending_reason = "Academic year re-enrollment pending"
                 elif not enrollment_completed:
                     pending_reason = "Child linking pending"
 
@@ -165,10 +301,13 @@ class EnrollmentService:
                     "status": u.status,
                     "school_id": u.school_id,
                     "profile_created": profile_created,
+                    "reenrollment_completed": reenrollment_completed,
                     "enrollment_completed": enrollment_completed,
                     "enrollment_pending": enrollment_pending,
                     "pending_reason": pending_reason,
                     "suggested_identifier": suggested_identifier,
+                    "requested_student_admission_number": requested_admission,
+                    "requested_child_admission_numbers": requested_admissions,
                     "academic_year_id": active_year.id,
                     "academic_year_name": active_year.name,
                     "approved_at": u.approved_at,
@@ -194,7 +333,7 @@ class EnrollmentService:
         if existing:
             raise ConflictException(
                 f"Student already has an enrollment mapping for this academic year. "
-                f"Current status: {existing.status.value}"
+                f"Current status: {self._status_text(existing.status)}"
             )
 
         std = await self._load_standard(data.standard_id, data.academic_year_id, school_id)
@@ -212,6 +351,12 @@ class EnrollmentService:
             if section.capacity and enrolled_count >= section.capacity:
                 pass  # non-blocking capacity warning
 
+        # Section assignment is mandatory for "fully enrolled".
+        # If class is selected but section is pending, keep mapping on HOLD so
+        # onboarding queue continues showing the student under Pending.
+        initial_status = (
+            EnrollmentStatus.ACTIVE if data.section_id is not None else EnrollmentStatus.HOLD
+        )
         mapping = StudentYearMapping(
             student_id=data.student_id,
             school_id=school_id,
@@ -220,7 +365,7 @@ class EnrollmentService:
             section_id=data.section_id,
             section_name=section_name,
             roll_number=data.roll_number,
-            status=EnrollmentStatus.ACTIVE,
+            status=initial_status,
             admission_type=data.admission_type,
             joined_on=data.joined_on or date.today(),
             created_by_id=actor.id,
@@ -277,7 +422,7 @@ class EnrollmentService:
 
         if mapping.status not in VALID_UPDATE_FROM:
             raise ValidationException(
-                f"Cannot update mapping with status: {mapping.status.value}. "
+                f"Cannot update mapping with status: {self._status_text(mapping.status)}. "
                 f"Must be ACTIVE or HOLD."
             )
 
@@ -327,7 +472,7 @@ class EnrollmentService:
 
         if mapping.status not in VALID_UPDATE_FROM:
             raise ValidationException(
-                f"Cannot transfer a student with status: {mapping.status.value}. "
+                f"Cannot transfer a student with status: {self._status_text(mapping.status)}. "
                 f"Student must be ACTIVE or HOLD."
             )
 
@@ -417,17 +562,17 @@ class EnrollmentService:
 
         if data.status not in VALID_EXIT_STATUSES:
             raise ValidationException(
-                f"Exit status must be LEFT or TRANSFERRED. Got: {data.status.value}"
+                f"Exit status must be LEFT or TRANSFERRED. Got: {self._status_text(data.status)}"
             )
         if mapping.status not in VALID_EXIT_FROM:
             raise ValidationException(
-                f"Cannot exit a student with status: {mapping.status.value}. "
+                f"Cannot exit a student with status: {self._status_text(mapping.status)}. "
                 f"Must be ACTIVE or HOLD."
             )
         if data.left_on > date.today():
             raise ValidationException("Exit date cannot be in the future.")
 
-        before = {"status": mapping.status.value}
+        before = {"status": self._status_text(mapping.status)}
 
         mapping.status = data.status
         mapping.left_on = data.left_on
@@ -446,11 +591,11 @@ class EnrollmentService:
             entity_id=str(mapping_id),
             school_id=actor.school_id,
             description=(
-                f"{actor.full_name} marked student as {data.status.value}. "
+                f"{actor.full_name} marked student as {self._status_text(data.status)}. "
                 f"Exit date: {data.left_on}. Reason: {data.exit_reason}"
             ),
             before_state=before,
-            after_state={"status": data.status.value, "left_on": str(data.left_on)},
+            after_state={"status": self._status_text(data.status), "left_on": str(data.left_on)},
         )
 
         await self.db.commit()
@@ -473,12 +618,12 @@ class EnrollmentService:
         if mapping.status != EnrollmentStatus.ACTIVE:
             raise ValidationException(
                 f"Only ACTIVE mappings can be marked COMPLETED. "
-                f"Current status: {mapping.status.value}"
+                f"Current status: {self._status_text(mapping.status)}"
             )
         if data.completed_on and data.completed_on > date.today():
             raise ValidationException("Completion date cannot be in the future.")
 
-        before = {"status": mapping.status.value}
+        before = {"status": self._status_text(mapping.status)}
         mapping.status = EnrollmentStatus.COMPLETED
         mapping.last_modified_by_id = actor.id
         await self.db.flush()

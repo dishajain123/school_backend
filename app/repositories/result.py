@@ -50,6 +50,10 @@ class ResultRepository:
         )
         return result.scalar_one_or_none()
 
+    async def delete_exam(self, exam: Exam) -> None:
+        await self.db.delete(exam)
+        await self.db.flush()
+
     async def get_exam_duplicate(
         self, school_id: uuid.UUID, standard_id: uuid.UUID, academic_year_id: uuid.UUID, name: str
     ) -> Optional[Exam]:

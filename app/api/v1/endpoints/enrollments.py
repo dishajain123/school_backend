@@ -30,6 +30,8 @@ from app.schemas.enrollment import (
     RollNumberAssignRequest,
     OnboardingQueueItem,
     OnboardingQueueResponse,
+    AnnualReenrollRequest,
+    AnnualReenrollResponse,
 )
 from app.core.dependencies import get_current_user, require_any_permission, require_permission, CurrentUser
 from app.core.exceptions import ForbiddenException, ValidationException
@@ -244,4 +246,31 @@ async def get_onboarding_queue(
     return OnboardingQueueResponse(
         items=[OnboardingQueueItem.model_validate(i) for i in items],
         total=len(items),
+    )
+
+
+@router.post("/annual-reenroll/{user_id}", response_model=AnnualReenrollResponse)
+async def annual_reenroll_user(
+    user_id: uuid.UUID,
+    data: AnnualReenrollRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    service: EnrollmentService = Depends(get_service),
+):
+    """
+    Mark yearly re-enrollment for any user role against the selected
+    active/upcoming academic year. Historical year decisions are preserved
+    in submitted_data.
+    """
+    if not current_user.school_id:
+        raise ForbiddenException("School context required")
+    can_manage_others = (
+        "enrollment:update" in current_user.permissions
+        or "user:manage" in current_user.permissions
+    )
+    if user_id != current_user.id and not can_manage_others:
+        raise ForbiddenException("You can only re-enroll your own account")
+    return await service.reenroll_user_for_year(
+        user_id=user_id,
+        academic_year_id=data.academic_year_id,
+        actor=current_user,
     )

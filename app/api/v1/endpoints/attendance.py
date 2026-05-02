@@ -51,7 +51,6 @@ async def list_attendance(
     month: Optional[int] = Query(None, ge=1, le=12),
     year: Optional[int] = Query(None, ge=2000, le=2100),
     subject_id: Optional[uuid.UUID] = Query(None),
-    lecture_number: Optional[int] = Query(None, ge=1, le=12),
     current_user: CurrentUser = Depends(get_current_user),
     service: AttendanceService = Depends(get_service),
 ):
@@ -65,7 +64,6 @@ async def list_attendance(
         month=month,
         year=year,
         subject_id=subject_id,
-        lecture_number=lecture_number,
     )
     return AttendanceListResponse(
         items=[AttendanceResponse.model_validate(item) for item in data["items"]],
@@ -145,7 +143,6 @@ async def get_lecture_attendance(
     subject_id: uuid.UUID = Query(...),
     academic_year_id: uuid.UUID = Query(...),
     record_date: date = Query(..., alias="date"),
-    lecture_number: int = Query(1, ge=1, le=12),
     current_user: CurrentUser = Depends(get_current_user),
     service: AttendanceService = Depends(get_service),
 ):
@@ -155,7 +152,6 @@ async def get_lecture_attendance(
         subject_id=subject_id,
         academic_year_id=academic_year_id,
         record_date=record_date,
-        lecture_number=lecture_number,
         current_user=current_user,
     )
 

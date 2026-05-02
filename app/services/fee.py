@@ -9,12 +9,14 @@ from typing import Optional
 from fastapi import HTTPException
 from sqlalchemy import select, and_, func, distinct, case
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.dependencies import CurrentUser
 from app.core.exceptions import ForbiddenException, NotFoundException, ValidationException
 from app.models.fee import FeeStructure, FeeLedger
 from app.models.payment import Payment
 from app.models.student import Student
+from app.models.user import User
 from app.repositories.fee import FeeRepository
 from app.schemas.fee import (
     FeeStructureBatchCreate,
@@ -26,6 +28,9 @@ from app.schemas.fee import (
     LedgerGenerateResponse,
     StudentLedgerGenerateRequest,
     PaymentCreate,
+    PaymentAllocateCreate,
+    PaymentAllocateResponse,
+    PaymentAllocationItem,
     PaymentResponse,
     FeeDashboardResponse,
     FeeLedgerResponse,
@@ -169,21 +174,21 @@ class FeeService:
                 parent = result.scalar_one_or_none()
                 if not parent:
                     raise ForbiddenException("Parent record not found")
-                # Check child linkage
+                # Check child linkage strictly against this parent.
                 from app.models.student import Student as StudentModel
-                from sqlalchemy.orm import selectinload
                 result2 = await self.db.execute(
                     select(StudentModel)
                     .where(
                         and_(
                             StudentModel.id == student_id,
                             StudentModel.school_id == school_id,
+                            StudentModel.parent_id == parent.id,
                         )
                     )
                 )
                 student_obj = result2.scalar_one_or_none()
                 if not student_obj:
-                    raise ForbiddenException("Student not found")
+                    raise ForbiddenException("Access denied to this student's fee records")
 
     async def _sync_ledgers_for_structure(
         self, school_id: uuid.UUID, structure: FeeStructure
@@ -376,6 +381,7 @@ class FeeService:
         *,
         structure_id: uuid.UUID,
         current_user: CurrentUser,
+        delete_linked_entries: bool = False,
     ) -> None:
         school_id = self._ensure_school(current_user)
         structure = await self.repo.get_structure_by_id(structure_id, school_id)
@@ -384,10 +390,13 @@ class FeeService:
 
         ledger_count = await self.repo.count_ledgers_for_structure(structure_id, school_id)
         if ledger_count > 0:
-            raise ValidationException(
-                f"Cannot delete fee structure: {ledger_count} ledger entries exist. "
-                "Update the structure amount or delete ledger entries first."
-            )
+            if not delete_linked_entries:
+                raise ValidationException(
+                    f"Fee structure is linked with {ledger_count} ledger entries. "
+                    "Confirm delete_linked_entries=true to delete linked records as well."
+                )
+            # Cascade cleanup: deleting ledgers will cascade payments through FK.
+            await self.repo.delete_ledgers_for_structure(structure_id, school_id)
 
         await self.repo.delete_structure(structure)
         await self.db.commit()
@@ -496,7 +505,6 @@ class FeeService:
                 and_(
                     Student.school_id == school_id,
                     Student.standard_id == body.standard_id,
-                    Student.is_active.is_(True),
                 )
             )
         )
@@ -591,6 +599,22 @@ class FeeService:
         school_id = self._ensure_school(current_user)
         resolved_year_id = await self._resolve_academic_year(school_id, body.academic_year_id)
 
+        student_result = await self.db.execute(
+            select(Student).where(
+                and_(
+                    Student.id == body.student_id,
+                    Student.school_id == school_id,
+                )
+            )
+        )
+        student = student_result.scalar_one_or_none()
+        if not student:
+            raise NotFoundException("Student")
+        if student.standard_id != body.standard_id:
+            raise ValidationException("Student does not belong to the selected class")
+        if student.academic_year_id and student.academic_year_id != resolved_year_id:
+            raise ValidationException("Student does not belong to the selected academic year")
+
         structures = await self.repo.list_structures_for_standard(
             school_id=school_id,
             standard_id=body.standard_id,
@@ -599,9 +623,40 @@ class FeeService:
 
         created = skipped = 0
         today = datetime.now(timezone.utc).date()
+        cycle = (body.payment_cycle or "").strip().upper()
+
+        def _cycle_installments(total_amount: float, base_due: Optional[date]) -> list[dict]:
+            if cycle not in {"MONTHLY", "QUARTERLY"}:
+                return []
+            count = 12 if cycle == "MONTHLY" else 4
+            month_step = 1 if cycle == "MONTHLY" else 3
+            prefix = "Month" if cycle == "MONTHLY" else "Quarter"
+            due_base = base_due or today
+            per_amount = round(total_amount / count, 2)
+            running = 0.0
+            rows: list[dict] = []
+            for i in range(count):
+                due = date(
+                    due_base.year + ((due_base.month - 1 + (i * month_step)) // 12),
+                    ((due_base.month - 1 + (i * month_step)) % 12) + 1,
+                    due_base.day,
+                )
+                is_last = i == count - 1
+                amount = round(total_amount - running, 2) if is_last else per_amount
+                running += amount
+                rows.append(
+                    {
+                        "name": f"{prefix} {i + 1}",
+                        "due_date": due,
+                        "amount": amount,
+                    }
+                )
+            return rows
 
         for structure in structures:
-            installment_plan = structure.installment_plan or []
+            installment_plan = _cycle_installments(
+                float(structure.amount), structure.due_date
+            ) or (structure.installment_plan or [])
 
             if installment_plan:
                 for installment in installment_plan:
@@ -685,6 +740,9 @@ class FeeService:
         if academic_year_id:
             resolved_year_id = academic_year_id
         elif standard_id:
+            resolved_year_id = await self._resolve_academic_year(school_id, None)
+        else:
+            # Keep statuses fresh for default admin listings as well.
             resolved_year_id = await self._resolve_academic_year(school_id, None)
 
         fee_status = None
@@ -850,6 +908,123 @@ class FeeService:
         await self.db.commit()
         await self.db.refresh(payment)
         return PaymentResponse.model_validate(payment)
+
+    async def allocate_student_payment(
+        self,
+        body: PaymentAllocateCreate,
+        current_user: CurrentUser,
+    ) -> PaymentAllocateResponse:
+        school_id = self._ensure_school(current_user)
+        payment_date = body.payment_date or datetime.now(timezone.utc).date()
+        resolved_year_id = await self._resolve_academic_year(
+            school_id, body.academic_year_id
+        )
+
+        student_result = await self.db.execute(
+            select(Student).where(
+                and_(
+                    Student.id == body.student_id,
+                    Student.school_id == school_id,
+                )
+            )
+        )
+        student = student_result.scalar_one_or_none()
+        if not student:
+            raise NotFoundException("Student")
+
+        ledgers = await self.repo.list_ledger_for_student(school_id, body.student_id)
+        eligible_ledgers: list[FeeLedger] = []
+        for ledger in ledgers:
+            if (
+                ledger.fee_structure
+                and ledger.fee_structure.academic_year_id == resolved_year_id
+                and (float(ledger.total_amount) - float(ledger.paid_amount)) > 0.01
+            ):
+                eligible_ledgers.append(ledger)
+
+        def _priority(ledger: FeeLedger) -> int:
+            if ledger.status == FeeStatus.OVERDUE:
+                return 0
+            if ledger.status == FeeStatus.PARTIAL:
+                return 1
+            if ledger.status == FeeStatus.PENDING:
+                return 2
+            return 3
+
+        eligible_ledgers.sort(
+            key=lambda l: (_priority(l), l.due_date or date.max, l.created_at)
+        )
+
+        requested_cycle = (body.payment_cycle or "").strip().upper()
+        if requested_cycle not in {"MONTHLY", "QUARTERLY", "YEARLY"}:
+            requested_cycle = "UNASSIGNED"
+
+        remaining = float(body.amount)
+        total_applied = 0.0
+        allocations: list[PaymentAllocationItem] = []
+
+        for ledger in eligible_ledgers:
+            if remaining <= 0.01:
+                break
+            current_paid = float(ledger.paid_amount)
+            total = float(ledger.total_amount)
+            outstanding = max(total - current_paid, 0.0)
+            if outstanding <= 0.01:
+                continue
+
+            applied = min(remaining, outstanding)
+            is_late = bool(ledger.due_date and payment_date > ledger.due_date)
+            payment = await self.repo.create_payment(
+                {
+                    "student_id": body.student_id,
+                    "fee_ledger_id": ledger.id,
+                    "amount": applied,
+                    "payment_date": payment_date,
+                    "payment_mode": body.payment_mode,
+                    "reference_number": body.reference_number,
+                    "transaction_ref": body.transaction_ref,
+                    "recorded_by": current_user.id,
+                    "late_fee_applied": is_late,
+                    "original_due_date": ledger.due_date if is_late else None,
+                    "school_id": school_id,
+                }
+            )
+
+            new_paid = current_paid + applied
+            new_status = self._compute_ledger_status(
+                new_paid, total, ledger.due_date, payment_date
+            )
+            await self.repo.update_ledger(
+                ledger,
+                {
+                    "paid_amount": new_paid,
+                    "status": new_status,
+                    "last_payment_date": payment_date,
+                },
+            )
+
+            remaining -= applied
+            total_applied += applied
+            allocations.append(
+                PaymentAllocationItem(
+                    payment_id=payment.id,
+                    fee_ledger_id=ledger.id,
+                    installment_name=ledger.installment_name or "",
+                    applied_amount=round(applied, 2),
+                    remaining_outstanding=round(max(total - new_paid, 0.0), 2),
+                    status=new_status,
+                )
+            )
+
+        await self.db.commit()
+        return PaymentAllocateResponse(
+            student_id=body.student_id,
+            payment_cycle=requested_cycle,
+            total_requested=round(float(body.amount), 2),
+            total_applied=round(total_applied, 2),
+            total_unapplied=round(max(float(body.amount) - total_applied, 0.0), 2),
+            allocations=allocations,
+        )
 
     # ------------------------------------------------------------------
     # Overdue refresh
@@ -1045,34 +1220,33 @@ class FeeService:
                 Student.admission_number,
                 Student.standard_id,
                 Student.section,
+                User.full_name.label("student_name"),
                 func.count(FeeLedger.id).label("overdue_count"),
                 func.sum(FeeLedger.total_amount - FeeLedger.paid_amount).label("overdue_amount"),
                 func.min(FeeLedger.due_date).label("oldest_due"),
             )
+            .outerjoin(User, User.id == Student.user_id)
             .join(FeeLedger, FeeLedger.student_id == Student.id)
             .join(FeeStructure, FeeStructure.id == FeeLedger.fee_structure_id)
             .where(and_(*where))
-            .group_by(Student.id, Student.admission_number, Student.standard_id, Student.section)
+            .group_by(
+                Student.id,
+                Student.admission_number,
+                Student.standard_id,
+                Student.section,
+                User.full_name,
+            )
             .order_by(func.min(FeeLedger.due_date).asc())
         )
         rows = result.all()
 
         defaulters = []
         for row in rows:
-            # Fetch student name
-            user_result = await self.db.execute(
-                select(Student).where(Student.id == row.id)
-            )
-            student = user_result.scalar_one_or_none()
-            student_name = None
-            if student and student.user:
-                student_name = student.user.full_name
-
             defaulters.append(
                 DefaulterEntry(
                     student_id=row.id,
                     admission_number=row.admission_number or "",
-                    student_name=student_name,
+                    student_name=row.student_name,
                     standard_id=row.standard_id,
                     section=row.section,
                     overdue_ledgers=int(row.overdue_count or 0),
@@ -1478,6 +1652,8 @@ class FeeService:
         current_user: CurrentUser,
         standard_id: uuid.UUID,
         academic_year_id: Optional[uuid.UUID],
+        section: Optional[str] = None,
+        payment_cycle: Optional[str] = None,
         status_filter: Optional[str] = None,
     ) -> ClassFeeStudentListResponse:
         school_id = self._ensure_school(current_user)
@@ -1491,78 +1667,76 @@ class FeeService:
             as_of_date=today,
         )
 
-        fee_status = None
-        if status_filter:
-            try:
-                fee_status = FeeStatus(status_filter.upper())
-            except ValueError:
-                pass
-
         ledgers, _ = await self.repo.list_all_ledgers_paginated(
             school_id=school_id,
             academic_year_id=resolved_year_id,
             standard_id=standard_id,
-            status=fee_status,
+            status=None,
             page=1,
             page_size=2000,
         )
+        from app.models.parent import Parent
 
-        # Group ledgers by student
+        student_result = await self.db.execute(
+            # Parent/user details are required for class-wise fee verification rows.
+            # Imported locally to avoid circular import side effects at module load.
+            select(Student)
+            .options(
+                selectinload(Student.user),
+                selectinload(Student.parent).selectinload(Parent.user),
+                selectinload(Student.standard),
+            )
+            .where(
+                and_(
+                    Student.school_id == school_id,
+                    Student.standard_id == standard_id,
+                    *([Student.section == section.strip()] if section and section.strip() else []),
+                    (Student.academic_year_id == resolved_year_id)
+                    | (Student.academic_year_id.is_(None)),
+                )
+            )
+            .order_by(Student.admission_number.asc())
+        )
+        students = list(student_result.scalars().all())
+
         from collections import defaultdict
         student_ledgers: dict[str, list] = defaultdict(list)
         for ledger in ledgers:
             student_ledgers[str(ledger.student_id)].append(ledger)
 
-        from app.models.parent_student_link import ParentStudentLink
-        from app.models.parent import Parent
-        from app.models.user import User as UserModel
+        def _resolve_cycle(installments: list[StudentInstallmentSummary]) -> str:
+            if not installments:
+                return "UNASSIGNED"
+            names = [i.installment_name.lower() for i in installments if i.installment_name]
+            if any("month" in n for n in names):
+                return "MONTHLY"
+            if any("quarter" in n for n in names):
+                return "QUARTERLY"
+            if any("year" in n for n in names):
+                return "YEARLY"
+            if len(installments) >= 10:
+                return "MONTHLY"
+            if len(installments) == 4:
+                return "QUARTERLY"
+            if len(installments) <= 2:
+                return "YEARLY"
+            return "CUSTOM"
+
+        def _resolve_status(has_overdue: bool, total_paid: float, total_outstanding: float) -> str:
+            if has_overdue:
+                return FeeStatus.OVERDUE.value
+            if total_outstanding <= 0.01 and (total_paid > 0):
+                return FeeStatus.PAID.value
+            if total_paid > 0 and total_outstanding > 0.01:
+                return FeeStatus.PARTIAL.value
+            return FeeStatus.PENDING.value
 
         items: list[StudentFeeRow] = []
         grand_billed = grand_paid = grand_outstanding = 0.0
 
-        for student_id_str, student_ledger_list in student_ledgers.items():
-            first_ledger = student_ledger_list[0]
-            student = first_ledger.student
-
-            student_name = None
-            admission_number = None
-            standard_name = None
-            section = None
-
-            if student:
-                admission_number = student.admission_number
-                section = student.section
-                student_name = student.student_name
-                if first_ledger.fee_structure and first_ledger.fee_structure.standard:
-                    standard_name = first_ledger.fee_structure.standard.name
-
-            # Fetch linked parent
-            parent_name = parent_phone = parent_email = None
-            try:
-                link_result = await self.db.execute(
-                    select(ParentStudentLink)
-                    .where(ParentStudentLink.student_id == first_ledger.student_id)
-                    .limit(1)
-                )
-                link = link_result.scalar_one_or_none()
-                if link:
-                    parent_result = await self.db.execute(
-                        select(Parent).where(Parent.id == link.parent_id)
-                    )
-                    parent = parent_result.scalar_one_or_none()
-                    if parent:
-                        user_result = await self.db.execute(
-                            select(UserModel).where(UserModel.id == parent.user_id)
-                        )
-                        parent_user = user_result.scalar_one_or_none()
-                        if parent_user:
-                            parent_name = parent_user.full_name
-                            parent_phone = parent_user.phone
-                            parent_email = parent_user.email
-            except Exception:
-                pass
-
-            # Build installment rows
+        for student in students:
+            student_id_str = str(student.id)
+            student_ledger_list = student_ledgers.get(student_id_str, [])
             installments: list[StudentInstallmentSummary] = []
             total_billed = total_paid = 0.0
             has_overdue = False
@@ -1600,6 +1774,13 @@ class FeeService:
                 )
 
             total_outstanding = max(total_billed - total_paid, 0.0)
+            student_status = _resolve_status(has_overdue, total_paid, total_outstanding)
+            if status_filter and student_status != status_filter.upper():
+                continue
+
+            cycle = _resolve_cycle(installments)
+            if payment_cycle and cycle != payment_cycle.strip().upper():
+                continue
             grand_billed += total_billed
             grand_paid += total_paid
             grand_outstanding += total_outstanding
@@ -1607,13 +1788,22 @@ class FeeService:
             items.append(
                 StudentFeeRow(
                     student_id=student_id_str,
-                    student_name=student_name,
-                    admission_number=admission_number,
-                    standard_name=standard_name,
-                    section=section,
-                    parent_name=parent_name,
-                    parent_phone=parent_phone,
-                    parent_email=parent_email,
+                    student_name=student.student_name,
+                    admission_number=student.admission_number,
+                    standard_name=student.standard.name if student.standard else None,
+                    section=student.section,
+                    parent_name=student.parent.user.full_name
+                    if student.parent and student.parent.user
+                    else None,
+                    parent_phone=student.parent.user.phone
+                    if student.parent and student.parent.user
+                    else None,
+                    parent_email=student.parent.user.email
+                    if student.parent and student.parent.user
+                    else None,
+                    student_phone=student.user.phone if student.user else None,
+                    payment_cycle=cycle,
+                    status=student_status,
                     total_billed=round(total_billed, 2),
                     total_paid=round(total_paid, 2),
                     total_outstanding=round(total_outstanding, 2),

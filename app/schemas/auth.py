@@ -80,3 +80,5 @@ class CurrentUserSchema(BaseModel):
     enrollment_completed: bool = False
     enrollment_pending: bool = True
     onboarding_message: Optional[str] = None
+    academic_year_id: Optional[uuid.UUID] = None
+    academic_year_name: Optional[str] = None

@@ -78,6 +78,16 @@ async def publish_exam(
     return {"updated": updated}
 
 
+@router.delete("/exams/{exam_id}", status_code=204)
+async def delete_exam(
+    exam_id: uuid.UUID,
+    current_user: CurrentUser = Depends(require_permission("result:create")),
+    db: AsyncSession = Depends(get_db),
+):
+    await ResultService(db).delete_exam(exam_id, current_user)
+    return None
+
+
 @router.get("", response_model=ResultListResponse)
 async def list_results(
     student_id: uuid.UUID = Query(...),

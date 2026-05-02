@@ -27,6 +27,8 @@ from app.schemas.fee import (
     LedgerGenerateRequest,
     LedgerGenerateResponse,
     PaymentCreate,
+    PaymentAllocateCreate,
+    PaymentAllocateResponse,
     PaymentResponse,
     FeeDashboardResponse,
     PaymentListResponse,
@@ -101,6 +103,7 @@ async def update_fee_structure(
 @router.delete("/structures/{structure_id}", status_code=204)
 async def delete_fee_structure(
     structure_id: uuid.UUID,
+    delete_linked_entries: bool = Query(False),
     current_user: CurrentUser = Depends(require_permission("fee:create")),
     db: AsyncSession = Depends(get_db),
 ):
@@ -112,6 +115,7 @@ async def delete_fee_structure(
     await FeeService(db).delete_structure(
         structure_id=structure_id,
         current_user=current_user,
+        delete_linked_entries=delete_linked_entries,
     )
 
 
@@ -165,6 +169,10 @@ async def generate_student_ledger(
 async def list_class_fee_students(
     standard_id: uuid.UUID = Query(...),
     academic_year_id: Optional[uuid.UUID] = Query(None),
+    section: Optional[str] = Query(None),
+    payment_cycle: Optional[str] = Query(
+        None, description="MONTHLY|QUARTERLY|YEARLY|CUSTOM|UNASSIGNED"
+    ),
     status: Optional[str] = Query(None, description="PENDING|PARTIAL|PAID|OVERDUE"),
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -178,6 +186,8 @@ async def list_class_fee_students(
         current_user=current_user,
         standard_id=standard_id,
         academic_year_id=academic_year_id,
+        section=section,
+        payment_cycle=payment_cycle,
         status_filter=status,
     )
 
@@ -226,6 +236,19 @@ async def record_payment(
     - Supports transaction_ref for external payment gateway reference.
     """
     return await FeeService(db).record_payment(payload, current_user)
+
+
+@router.post("/payments/allocate", response_model=PaymentAllocateResponse, status_code=201)
+async def allocate_student_payment(
+    payload: PaymentAllocateCreate,
+    current_user: CurrentUser = Depends(require_permission("fee:create")),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Record one consolidated payment for a student and auto-allocate it
+    across overdue/pending ledgers in due-date order.
+    """
+    return await FeeService(db).allocate_student_payment(payload, current_user)
 
 
 # ---------------------------------------------------------------------------

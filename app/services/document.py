@@ -470,12 +470,9 @@ class DocumentService:
             academic_year_id = (await get_active_year(school_id, self.db)).id
 
         await self._assert_student_scope(current_user, school_id, body.student_id)
-        if current_user.role in (RoleEnum.STUDENT, RoleEnum.PARENT):
-            required_types = await self._required_doc_type_set(school_id)
-            if required_types and body.document_type not in required_types:
-                raise ForbiddenException(
-                    "This document type is not requested by school for upload"
-                )
+        # Student/parent may request any document type for admin to issue or upload
+        # (ID card, report card, etc.). Upload restrictions use required-doc rules only
+        # in upload_document(), not here.
 
         doc = await self.repo.create(
             {
@@ -709,7 +706,9 @@ class DocumentService:
 
         await self._assert_student_scope(current_user, school_id, doc.student_id)
 
-        if doc.status != DocumentStatus.READY or not doc.file_key:
+        # Presign whenever a file exists so admins can review PROCESSING uploads
+        # and users can open uploads pending verification or rejected copies.
+        if not doc.file_key:
             return DocumentDownloadResponse(status=doc.status, url=None)
 
         url = minio_client.generate_presigned_url(DOCUMENTS_BUCKET, doc.file_key)
@@ -726,8 +725,15 @@ class DocumentService:
             raise ForbiddenException(
                 "Permission 'document:manage' is required to access this resource"
             )
-        if current_user.role not in (RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN):
-            raise ForbiddenException("Only principal can verify student documents")
+        can_verify = current_user.role in (
+            RoleEnum.PRINCIPAL,
+            RoleEnum.SUPERADMIN,
+            RoleEnum.STAFF_ADMIN,
+        )
+        if not can_verify:
+            raise ForbiddenException(
+                "Only admin roles can verify or reject student documents"
+            )
 
         doc = await self.repo.get_by_id(document_id, school_id)
         if not doc:
@@ -801,8 +807,12 @@ class DocumentService:
         current_user: CurrentUser,
     ) -> DocumentRequirementsResponse:
         school_id = self._ensure_school(current_user)
-        if current_user.role not in (RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN):
-            raise ForbiddenException("Only principal can manage required documents")
+        if current_user.role not in (
+            RoleEnum.PRINCIPAL,
+            RoleEnum.SUPERADMIN,
+            RoleEnum.STAFF_ADMIN,
+        ):
+            raise ForbiddenException("Only admin roles can manage required documents")
         if not self._can_manage_documents(current_user):
             raise ForbiddenException(
                 "Permission 'document:manage' is required to access this resource"

@@ -18,6 +18,9 @@ from app.models.section import Section
 from app.models.student import Student
 from app.models.student_year_mapping import StudentYearMapping
 from app.models.teacher_class_subject import TeacherClassSubject
+from app.models.teacher import Teacher
+from app.models.parent import Parent
+from app.models.user import User
 from app.schemas.enrollment import EnrollmentMappingCreate
 from app.schemas.promotion_workflow import (
     CopyTeacherAssignmentsResponse,
@@ -26,6 +29,7 @@ from app.schemas.promotion_workflow import (
     PromotionPreviewItem,
     PromotionPreviewResponse,
     SingleReenrollResponse,
+    TeacherReenrollResponse,
 )
 from app.services.audit_log import AuditLogService
 from app.services.enrollment import EnrollmentService
@@ -44,6 +48,7 @@ class PromotionWorkflowService:
         target_year_id: uuid.UUID,
         school_id: uuid.UUID,
         standard_id: uuid.UUID | None = None,
+        section_id: uuid.UUID | None = None,
     ):
         source_year, target_year = await self._load_year_pair(
             school_id, source_year_id, target_year_id
@@ -52,6 +57,7 @@ class PromotionWorkflowService:
         target_standards = await self._load_standards_by_year(school_id, target_year_id)
         target_by_level = {s.level: s for s in target_standards}
         max_source_level = max((s.level for s in source_standards), default=0)
+        section_cache: dict[tuple[uuid.UUID, str], tuple[Optional[uuid.UUID], Optional[str]]] = {}
 
         stmt = (
             select(StudentYearMapping)
@@ -72,6 +78,8 @@ class PromotionWorkflowService:
         )
         if standard_id:
             stmt = stmt.where(StudentYearMapping.standard_id == standard_id)
+        if section_id:
+            stmt = stmt.where(StudentYearMapping.section_id == section_id)
 
         rows = await self.db.execute(stmt)
         mappings = rows.scalars().all()
@@ -90,10 +98,25 @@ class PromotionWorkflowService:
             warning_message: Optional[str] = None
             suggested_next_standard_id: Optional[uuid.UUID] = None
             suggested_next_standard_name: Optional[str] = None
+            suggested_next_section_id: Optional[uuid.UUID] = None
+            suggested_next_section_name: Optional[str] = None
 
             if target_std is not None:
                 suggested_next_standard_id = target_std.id
                 suggested_next_standard_name = target_std.name
+                if mapping.section_name:
+                    cache_key = (target_std.id, mapping.section_name)
+                    cached = section_cache.get(cache_key)
+                    if cached is None:
+                        cached = await self._resolve_target_section(
+                            school_id=school_id,
+                            target_year_id=target_year_id,
+                            target_standard_id=target_std.id,
+                            requested_section_id=None,
+                            fallback_section_name=mapping.section_name,
+                        )
+                        section_cache[cache_key] = cached
+                    suggested_next_section_id, suggested_next_section_name = cached
                 promotable_count += 1
             elif current_standard.level >= max_source_level:
                 suggested_decision = PromotionDecision.GRADUATE
@@ -122,6 +145,8 @@ class PromotionWorkflowService:
                     suggested_decision=suggested_decision,
                     suggested_next_standard_id=suggested_next_standard_id,
                     suggested_next_standard_name=suggested_next_standard_name,
+                    suggested_next_section_id=suggested_next_section_id,
+                    suggested_next_section_name=suggested_next_section_name,
                     has_warning=has_warning,
                     warning_message=warning_message,
                 )
@@ -237,6 +262,14 @@ class PromotionWorkflowService:
                         student.roll_number = new_mapping.roll_number
                         student.academic_year_id = new_mapping.academic_year_id
                         await self.db.flush()
+                        await self._mark_user_reenrolled_to_year(
+                            student.user_id,
+                            data.target_year_id,
+                        )
+                        await self._mark_parent_reenrolled_for_student(
+                            student,
+                            data.target_year_id,
+                        )
 
                     await self.audit.log(
                         action=AuditAction.STUDENT_PROMOTED,
@@ -358,6 +391,16 @@ class PromotionWorkflowService:
             current_user,
         )
         student = created.student
+        if student and student.user_id:
+            await self._mark_user_reenrolled_to_year(
+                student.user_id,
+                data.target_year_id,
+            )
+            await self._mark_parent_reenrolled_for_student(
+                student,
+                data.target_year_id,
+            )
+            await self.db.commit()
         return SingleReenrollResponse(
             student_id=created.student_id,
             admission_number=student.admission_number if student else None,
@@ -459,6 +502,158 @@ class PromotionWorkflowService:
             skipped_count=skipped,
             error_count=errors,
         )
+
+    async def reenroll_teacher_assignments(
+        self,
+        teacher_id: uuid.UUID,
+        data,
+        current_user: CurrentUser,
+    ) -> TeacherReenrollResponse:
+        school_id = current_user.school_id
+        if not school_id:
+            raise ValidationException("School context required")
+        await self._load_year_pair(school_id, data.source_year_id, data.target_year_id)
+        teacher_row = await self.db.execute(
+            select(Teacher).where(
+                and_(Teacher.id == teacher_id, Teacher.school_id == school_id)
+            )
+        )
+        teacher = teacher_row.scalar_one_or_none()
+        if not teacher:
+            raise NotFoundException("Teacher not found in this school")
+
+        source_standards = await self._load_standards_by_year(school_id, data.source_year_id)
+        target_standards = await self._load_standards_by_year(school_id, data.target_year_id)
+        source_by_id = {s.id: s for s in source_standards}
+        target_by_level = {s.level: s for s in target_standards}
+
+        rows = await self.db.execute(
+            select(TeacherClassSubject).where(
+                and_(
+                    TeacherClassSubject.teacher_id == teacher_id,
+                    TeacherClassSubject.academic_year_id == data.source_year_id,
+                )
+            )
+        )
+        source_assignments = rows.scalars().all()
+        copied = 0
+        skipped = 0
+        errors = 0
+
+        for assignment in source_assignments:
+            try:
+                src_std = source_by_id.get(assignment.standard_id)
+                if not src_std:
+                    skipped += 1
+                    continue
+                target_std = target_by_level.get(src_std.level)
+                if not target_std:
+                    skipped += 1
+                    continue
+
+                existing_stmt = select(TeacherClassSubject).where(
+                    and_(
+                        TeacherClassSubject.teacher_id == teacher_id,
+                        TeacherClassSubject.academic_year_id == data.target_year_id,
+                        TeacherClassSubject.standard_id == target_std.id,
+                        TeacherClassSubject.section == assignment.section,
+                        TeacherClassSubject.subject_id == assignment.subject_id,
+                    )
+                )
+                existing_rows = await self.db.execute(existing_stmt)
+                existing = existing_rows.scalars().all()
+                if existing and not data.overwrite_existing:
+                    skipped += 1
+                    continue
+                if existing and data.overwrite_existing:
+                    await self.db.execute(
+                        delete(TeacherClassSubject).where(
+                            and_(
+                                TeacherClassSubject.teacher_id == teacher_id,
+                                TeacherClassSubject.academic_year_id == data.target_year_id,
+                                TeacherClassSubject.standard_id == target_std.id,
+                                TeacherClassSubject.section == assignment.section,
+                                TeacherClassSubject.subject_id == assignment.subject_id,
+                            )
+                        )
+                    )
+                self.db.add(
+                    TeacherClassSubject(
+                        teacher_id=teacher_id,
+                        standard_id=target_std.id,
+                        section=assignment.section,
+                        subject_id=assignment.subject_id,
+                        academic_year_id=data.target_year_id,
+                    )
+                )
+                copied += 1
+            except Exception:
+                errors += 1
+
+        await self.audit.log(
+            action=AuditAction.TEACHER_ASSIGNMENT_COPIED,
+            actor_id=current_user.id,
+            target_user_id=teacher.user_id,
+            entity_type="TeacherClassSubject",
+            school_id=school_id,
+            description=(
+                f"Teacher re-enrolled assignments for teacher_id={teacher_id} "
+                f"from {data.source_year_id} to {data.target_year_id}. "
+                f"copied={copied}, skipped={skipped}, errors={errors}"
+            ),
+        )
+        await self.db.commit()
+        await self._mark_user_reenrolled_to_year(teacher.user_id, data.target_year_id)
+        await self.db.commit()
+        return TeacherReenrollResponse(
+            teacher_id=teacher_id,
+            source_year_id=data.source_year_id,
+            target_year_id=data.target_year_id,
+            copied_count=copied,
+            skipped_count=skipped,
+            error_count=errors,
+        )
+
+    async def _mark_user_reenrolled_to_year(
+        self,
+        user_id: Optional[uuid.UUID],
+        academic_year_id: uuid.UUID,
+    ) -> None:
+        if user_id is None:
+            return
+        row = await self.db.execute(select(User).where(User.id == user_id))
+        user = row.scalar_one_or_none()
+        if not user:
+            return
+        submitted = dict(user.submitted_data or {})
+        history = submitted.get("reenrollment_history")
+        if not isinstance(history, list):
+            history = []
+        history.append(
+            {
+                "academic_year_id": str(academic_year_id),
+                "at": date.today().isoformat(),
+            }
+        )
+        submitted["reenrollment_history"] = history[-10:]
+        submitted["academic_year_id"] = str(academic_year_id)
+        user.submitted_data = submitted
+        await self.db.flush()
+
+    async def _mark_parent_reenrolled_for_student(
+        self,
+        student: Optional[Student],
+        academic_year_id: uuid.UUID,
+    ) -> None:
+        if student is None or student.parent_id is None:
+            return
+        parent_row = await self.db.execute(
+            select(Parent).where(Parent.id == student.parent_id)
+        )
+        parent = parent_row.scalar_one_or_none()
+        if not parent:
+            return
+        await self._mark_user_reenrolled_to_year(parent.user_id, academic_year_id)
 
     async def _load_year_pair(
         self, school_id: uuid.UUID, source_year_id: uuid.UUID, target_year_id: uuid.UUID

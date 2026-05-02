@@ -14,6 +14,7 @@ import asyncio
 import json
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
+from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,6 +43,7 @@ from app.models.result import Result
 from app.models.school import School
 from app.models.school_settings import SchoolSetting
 from app.models.student import Student
+from app.models.student_year_mapping import StudentYearMapping
 from app.models.student_behaviour_log import StudentBehaviourLog
 from app.models.student_diary import StudentDiary
 from app.models.submission import Submission
@@ -50,6 +52,7 @@ from app.models.teacher_class_subject import TeacherClassSubject
 from app.models.teacher_leave import TeacherLeave
 from app.models.timetable import Timetable
 from app.models.user import User
+from app.models.section import Section
 from app.utils.enums import (
     AnnouncementType,
     AttendanceStatus,
@@ -70,8 +73,11 @@ from app.utils.enums import (
     NotificationType,
     PaymentMode,
     RelationType,
+    RegistrationSource,
     RoleEnum,
     SubscriptionPlan,
+    UserStatus,
+    EnrollmentStatus,
 )
 from scripts.seed_masters import seed as seed_masters
 from scripts.seed_roles_permissions import seed as seed_roles_permissions
@@ -141,15 +147,20 @@ async def get_or_create_academic_year(db: AsyncSession, school_id) -> AcademicYe
 async def get_or_create_user(
     db: AsyncSession,
     *,
+    full_name: str,
     email: str,
     phone: str,
     role: RoleEnum,
     school_id,
     password: str = DEMO_PASSWORD,
+    hashed_password: Optional[str] = None,
 ) -> User:
     user = await first_or_none(db, select(User).where(User.email == email))
     if user:
         changed = False
+        if user.full_name != full_name:
+            user.full_name = full_name
+            changed = True
         if user.school_id != school_id:
             user.school_id = school_id
             changed = True
@@ -160,18 +171,34 @@ async def get_or_create_user(
             user.role = role
             changed = True
         if not user.hashed_password:
-            user.hashed_password = hash_password(password)
+            user.hashed_password = hashed_password or hash_password(password)
+            changed = True
+        if user.status != UserStatus.ACTIVE:
+            user.status = UserStatus.ACTIVE
+            changed = True
+        if user.registration_source != RegistrationSource.ADMIN_CREATED:
+            user.registration_source = RegistrationSource.ADMIN_CREATED
+            changed = True
+        if not user.is_active:
+            user.is_active = True
+            changed = True
+        if user.approved_at is None:
+            user.approved_at = datetime.now(timezone.utc)
             changed = True
         if changed:
             await db.flush()
         return user
 
     user = User(
+        full_name=full_name,
         email=email,
         phone=phone,
-        hashed_password=hash_password(password),
+        hashed_password=hashed_password or hash_password(password),
         role=role,
         school_id=school_id,
+        status=UserStatus.ACTIVE,
+        registration_source=RegistrationSource.ADMIN_CREATED,
+        approved_at=datetime.now(timezone.utc),
         is_active=True,
     )
     db.add(user)
@@ -261,6 +288,90 @@ async def get_or_create_student(
     return student
 
 
+async def get_or_create_section(
+    db: AsyncSession,
+    *,
+    school_id,
+    standard_id,
+    academic_year_id,
+    name: str,
+    capacity: int = 50,
+) -> Section:
+    section = await first_or_none(
+        db,
+        select(Section).where(
+            Section.school_id == school_id,
+            Section.standard_id == standard_id,
+            Section.academic_year_id == academic_year_id,
+            Section.name == name,
+        ),
+    )
+    if section:
+        if section.capacity != capacity:
+            section.capacity = capacity
+            await db.flush()
+        return section
+    section = Section(
+        school_id=school_id,
+        standard_id=standard_id,
+        academic_year_id=academic_year_id,
+        name=name,
+        capacity=capacity,
+        is_active=True,
+    )
+    db.add(section)
+    await db.flush()
+    return section
+
+
+async def get_or_create_year_mapping(
+    db: AsyncSession,
+    *,
+    student: Student,
+    school_id,
+    academic_year_id,
+    standard_id,
+    section: Section,
+    roll_number: str,
+    actor_id,
+) -> StudentYearMapping:
+    mapping = await first_or_none(
+        db,
+        select(StudentYearMapping).where(
+            StudentYearMapping.student_id == student.id,
+            StudentYearMapping.academic_year_id == academic_year_id,
+        ),
+    )
+    if mapping:
+        mapping.standard_id = standard_id
+        mapping.section_id = section.id
+        mapping.section_name = section.name
+        mapping.roll_number = roll_number
+        mapping.status = EnrollmentStatus.ACTIVE
+        mapping.last_modified_by_id = actor_id
+    else:
+        mapping = StudentYearMapping(
+            student_id=student.id,
+            school_id=school_id,
+            academic_year_id=academic_year_id,
+            standard_id=standard_id,
+            section_id=section.id,
+            section_name=section.name,
+            roll_number=roll_number,
+            status=EnrollmentStatus.ACTIVE,
+            joined_on=date(2025, 6, 10),
+            created_by_id=actor_id,
+            last_modified_by_id=actor_id,
+        )
+        db.add(mapping)
+    student.standard_id = standard_id
+    student.academic_year_id = academic_year_id
+    student.section = section.name
+    student.roll_number = roll_number
+    await db.flush()
+    return mapping
+
+
 async def get_standard_by_level(db: AsyncSession, school_id, academic_year_id, level: int) -> Standard:
     standard = await first_or_none(
         db,
@@ -347,6 +458,7 @@ async def ensure_school_settings(
 
 async def seed_demo(db: AsyncSession) -> dict[str, str]:
     await seed_roles_permissions(db)
+    demo_password_hash = hash_password(DEMO_PASSWORD)
 
     school = await get_or_create_school(db)
     year = await get_or_create_academic_year(db, school.id)
@@ -356,104 +468,132 @@ async def seed_demo(db: AsyncSession) -> dict[str, str]:
 
     principal_user = await get_or_create_user(
         db,
+        full_name="Mrs. Seema Shaikh",
         email="principal@greenfieldacademy.edu",
         phone="+919900000101",
         role=RoleEnum.PRINCIPAL,
         school_id=school.id,
+        hashed_password=demo_password_hash,
     )
     trustee_user = await get_or_create_user(
         db,
+        full_name="Trustee One",
         email="trustee@greenfieldacademy.edu",
         phone="+919900000102",
         role=RoleEnum.TRUSTEE,
         school_id=school.id,
+        hashed_password=demo_password_hash,
     )
     teacher_math_user = await get_or_create_user(
         db,
+        full_name="Ananya Sharma",
         email="ananya.sharma@greenfieldacademy.edu",
         phone="+919900000201",
         role=RoleEnum.TEACHER,
         school_id=school.id,
+        hashed_password=demo_password_hash,
     )
     teacher_science_user = await get_or_create_user(
         db,
+        full_name="Rohit Verma",
         email="rohit.verma@greenfieldacademy.edu",
         phone="+919900000202",
         role=RoleEnum.TEACHER,
         school_id=school.id,
+        hashed_password=demo_password_hash,
     )
     teacher_english_user = await get_or_create_user(
         db,
+        full_name="Neha Dsouza",
         email="neha.dsouza@greenfieldacademy.edu",
         phone="+919900000203",
         role=RoleEnum.TEACHER,
         school_id=school.id,
+        hashed_password=demo_password_hash,
     )
 
     parent_rao_user = await get_or_create_user(
         db,
+        full_name="Meera Rao",
         email="meera.rao.parent@greenfieldacademy.edu",
         phone="+919900000301",
         role=RoleEnum.PARENT,
         school_id=school.id,
+        hashed_password=demo_password_hash,
     )
     parent_khan_user = await get_or_create_user(
         db,
+        full_name="Imran Khan",
         email="imran.khan.parent@greenfieldacademy.edu",
         phone="+919900000302",
         role=RoleEnum.PARENT,
         school_id=school.id,
+        hashed_password=demo_password_hash,
     )
     parent_iyer_user = await get_or_create_user(
         db,
+        full_name="Lakshmi Iyer",
         email="lakshmi.iyer.parent@greenfieldacademy.edu",
         phone="+919900000303",
         role=RoleEnum.PARENT,
         school_id=school.id,
+        hashed_password=demo_password_hash,
     )
 
     student_users = [
         await get_or_create_user(
             db,
+            full_name="Aarav Rao",
             email="aarav.rao@greenfieldacademy.edu",
             phone="+919900000401",
             role=RoleEnum.STUDENT,
             school_id=school.id,
+            hashed_password=demo_password_hash,
         ),
         await get_or_create_user(
             db,
+            full_name="Isha Rao",
             email="isha.rao@greenfieldacademy.edu",
             phone="+919900000402",
             role=RoleEnum.STUDENT,
             school_id=school.id,
+            hashed_password=demo_password_hash,
         ),
         await get_or_create_user(
             db,
+            full_name="Zara Khan",
             email="zara.khan@greenfieldacademy.edu",
             phone="+919900000403",
             role=RoleEnum.STUDENT,
             school_id=school.id,
+            hashed_password=demo_password_hash,
         ),
         await get_or_create_user(
             db,
+            full_name="Reyaan Khan",
             email="reyaan.khan@greenfieldacademy.edu",
             phone="+919900000404",
             role=RoleEnum.STUDENT,
             school_id=school.id,
+            hashed_password=demo_password_hash,
         ),
         await get_or_create_user(
             db,
+            full_name="Diya Iyer",
             email="diya.iyer@greenfieldacademy.edu",
             phone="+919900000405",
             role=RoleEnum.STUDENT,
             school_id=school.id,
+            hashed_password=demo_password_hash,
         ),
         await get_or_create_user(
             db,
+            full_name="Vivaan Iyer",
             email="vivaan.iyer@greenfieldacademy.edu",
             phone="+919900000406",
             role=RoleEnum.STUDENT,
             school_id=school.id,
+            hashed_password=demo_password_hash,
         ),
     ]
 
@@ -531,6 +671,277 @@ async def seed_demo(db: AsyncSession) -> dict[str, str]:
                 admission_date_value=date(2025, 6, 10),
             )
         )
+
+    # ── Scale dataset for full-system realistic testing ───────────────────────
+    # Target (2025-26): Class 1..10, sections A/B, 50 students each section.
+    # Also ensure role coverage: 1 principal, 10 teachers, 3 trustees.
+    extra_trustee_specs = [
+        ("Trustee Two", "trustee2@greenfieldacademy.edu", "+919900000103"),
+        ("Trustee Three", "trustee3@greenfieldacademy.edu", "+919900000104"),
+    ]
+    for name, email, phone in extra_trustee_specs:
+        await get_or_create_user(
+            db,
+            full_name=name,
+            email=email,
+            phone=phone,
+            role=RoleEnum.TRUSTEE,
+            school_id=school.id,
+            hashed_password=demo_password_hash,
+        )
+
+    teacher_specs = [
+        ("Ananya Sharma", "ananya.sharma@greenfieldacademy.edu", "+919900000201", "Mathematics", "TCH-1001"),
+        ("Rohit Verma", "rohit.verma@greenfieldacademy.edu", "+919900000202", "Science", "TCH-1002"),
+        ("Neha Dsouza", "neha.dsouza@greenfieldacademy.edu", "+919900000203", "English", "TCH-1003"),
+        ("Kavita Nair", "kavita.nair@greenfieldacademy.edu", "+919900000204", "Hindi", "TCH-1004"),
+        ("Suresh Patil", "suresh.patil@greenfieldacademy.edu", "+919900000205", "Social Studies", "TCH-1005"),
+        ("Pooja Reddy", "pooja.reddy@greenfieldacademy.edu", "+919900000206", "Mathematics", "TCH-1006"),
+        ("Arjun Menon", "arjun.menon@greenfieldacademy.edu", "+919900000207", "Science", "TCH-1007"),
+        ("Farah Ali", "farah.ali@greenfieldacademy.edu", "+919900000208", "English", "TCH-1008"),
+        ("Nitin Gupta", "nitin.gupta@greenfieldacademy.edu", "+919900000209", "Computer Science", "TCH-1009"),
+        ("Priya Sen", "priya.sen@greenfieldacademy.edu", "+919900000210", "Physical Education", "TCH-1010"),
+    ]
+    teacher_entities: list[Teacher] = []
+    for idx, (name, email, phone, specialization, employee_code) in enumerate(teacher_specs):
+        t_user = await get_or_create_user(
+            db,
+            full_name=name,
+            email=email,
+            phone=phone,
+            role=RoleEnum.TEACHER,
+            school_id=school.id,
+            hashed_password=demo_password_hash,
+        )
+        teacher_entities.append(
+            await get_or_create_teacher(
+                db,
+                user_id=t_user.id,
+                school_id=school.id,
+                academic_year_id=year.id,
+                employee_code=employee_code,
+                specialization=specialization,
+                join_date_value=date(2020 + (idx % 5), 6, 1),
+            )
+        )
+
+    standards_by_level: dict[int, Standard] = {}
+    sections_by_level: dict[int, dict[str, Section]] = {}
+    core_subjects_by_level: dict[int, list[Subject]] = {}
+    for level in range(1, 11):
+        std = await get_standard_by_level(db, school.id, year.id, level)
+        standards_by_level[level] = std
+        sections_by_level[level] = {
+            "A": await get_or_create_section(
+                db,
+                school_id=school.id,
+                standard_id=std.id,
+                academic_year_id=year.id,
+                name="A",
+                capacity=50,
+            ),
+            "B": await get_or_create_section(
+                db,
+                school_id=school.id,
+                standard_id=std.id,
+                academic_year_id=year.id,
+                name="B",
+                capacity=50,
+            ),
+        }
+        subject_codes = [
+            f"ENG{level:02d}",
+            f"MATH{level:02d}",
+            f"SCI{level:02d}",
+            f"HIN{level:02d}",
+            f"SST{level:02d}",
+        ]
+        level_subjects: list[Subject] = []
+        for code in subject_codes:
+            subject = await first_or_none(
+                db,
+                select(Subject).where(Subject.school_id == school.id, Subject.code == code),
+            )
+            if subject:
+                level_subjects.append(subject)
+        core_subjects_by_level[level] = level_subjects
+
+    for level in range(1, 11):
+        std = standards_by_level[level]
+        for section_name in ("A", "B"):
+            section_subjects = core_subjects_by_level[level]
+            for subject_idx, subject in enumerate(section_subjects):
+                assigned_teacher = teacher_entities[(level + subject_idx) % len(teacher_entities)]
+                existing_assignment = await first_or_none(
+                    db,
+                    select(TeacherClassSubject).where(
+                        TeacherClassSubject.teacher_id == assigned_teacher.id,
+                        TeacherClassSubject.standard_id == std.id,
+                        TeacherClassSubject.section == section_name,
+                        TeacherClassSubject.subject_id == subject.id,
+                        TeacherClassSubject.academic_year_id == year.id,
+                    ),
+                )
+                if not existing_assignment:
+                    db.add(
+                        TeacherClassSubject(
+                            teacher_id=assigned_teacher.id,
+                            standard_id=std.id,
+                            section=section_name,
+                            subject_id=subject.id,
+                            academic_year_id=year.id,
+                        )
+                    )
+
+    first_names = [
+        "Aarav", "Vivaan", "Aditya", "Ishaan", "Kabir", "Reyansh", "Arjun", "Atharv",
+        "Aanya", "Diya", "Anaya", "Kiara", "Myra", "Ira", "Sara", "Meher",
+    ]
+    last_names = [
+        "Sharma", "Verma", "Gupta", "Khan", "Patel", "Rao", "Iyer", "Singh",
+        "Nair", "Reddy", "Das", "Joshi", "Mishra", "Kapoor", "Bose", "Mehta",
+    ]
+
+    for level in range(1, 11):
+        std = standards_by_level[level]
+        for section_name in ("A", "B"):
+            section = sections_by_level[level][section_name]
+            existing_rows = await db.execute(
+                select(Student).where(
+                    Student.school_id == school.id,
+                    Student.standard_id == std.id,
+                    Student.academic_year_id == year.id,
+                    Student.section == section_name,
+                )
+            )
+            existing_in_section = list(existing_rows.scalars().all())
+            for existing_student in existing_in_section:
+                await get_or_create_year_mapping(
+                    db,
+                    student=existing_student,
+                    school_id=school.id,
+                    academic_year_id=year.id,
+                    standard_id=std.id,
+                    section=section,
+                    roll_number=existing_student.roll_number
+                    or f"{level:02d}{section_name}00",
+                    actor_id=principal_user.id,
+                )
+                if all(s.id != existing_student.id for s in students):
+                    students.append(existing_student)
+
+            required_new = max(0, 50 - len(existing_in_section))
+            created = 0
+            candidate_roll = 1
+            while created < required_new:
+                roll = candidate_roll
+                candidate_roll += 1
+                admission_number = f"ADM-2025-{level:02d}{section_name}{roll:02d}"
+                student = await first_or_none(
+                    db,
+                    select(Student).where(
+                        Student.school_id == school.id,
+                        Student.admission_number == admission_number,
+                    ),
+                )
+                if student is None:
+                    parent_name = f"Parent {level:02d}{section_name}{roll:02d}"
+                    parent_email = (
+                        f"parent.{level:02d}{section_name}{roll:02d}@greenfieldacademy.edu"
+                    )
+                    parent_phone = (
+                        f"+91991{level:02d}{(1 if section_name == 'A' else 2):01d}{roll:04d}"
+                    )
+                    parent_user = await get_or_create_user(
+                        db,
+                        full_name=parent_name,
+                        email=parent_email,
+                        phone=parent_phone,
+                        role=RoleEnum.PARENT,
+                        school_id=school.id,
+                        hashed_password=demo_password_hash,
+                    )
+                    parent = await get_or_create_parent(
+                        db,
+                        user_id=parent_user.id,
+                        school_id=school.id,
+                        occupation="Professional",
+                        relation=RelationType.GUARDIAN,
+                    )
+
+                    name_seed = (level * 200) + roll + (0 if section_name == "A" else 100)
+                    first = first_names[name_seed % len(first_names)]
+                    last = last_names[(name_seed // 3) % len(last_names)]
+                    student_name = f"{first} {last}"
+                    student_email = (
+                        f"{first.lower()}.{last.lower()}.{level:02d}{section_name}{roll:02d}@greenfieldacademy.edu"
+                    )
+                    student_phone = (
+                        f"+91880{level:02d}{(1 if section_name == 'A' else 2):01d}{roll:04d}"
+                    )
+                    student_user = await get_or_create_user(
+                        db,
+                        full_name=student_name,
+                        email=student_email,
+                        phone=student_phone,
+                        role=RoleEnum.STUDENT,
+                        school_id=school.id,
+                        hashed_password=demo_password_hash,
+                    )
+                    dob_year = 2019 - level
+                    dob_month = ((roll - 1) % 12) + 1
+                    dob_day = ((roll - 1) % 28) + 1
+                    student = await get_or_create_student(
+                        db,
+                        user_id=student_user.id,
+                        school_id=school.id,
+                        parent_id=parent.id,
+                        standard_id=std.id,
+                        academic_year_id=year.id,
+                        section=section_name,
+                        roll_number=f"{level:02d}{section_name}{roll:02d}",
+                        admission_number=admission_number,
+                        date_of_birth_value=date(dob_year, dob_month, dob_day),
+                        admission_date_value=date(2025, 6, 10),
+                    )
+                await get_or_create_year_mapping(
+                    db,
+                    student=student,
+                    school_id=school.id,
+                    academic_year_id=year.id,
+                    standard_id=std.id,
+                    section=section,
+                    roll_number=f"{level:02d}{section_name}{roll:02d}",
+                    actor_id=principal_user.id,
+                )
+                if all(s.id != student.id for s in students):
+                    students.append(student)
+                created += 1
+
+            # Re-number existing section students to a clean 1..50 list.
+            normalized_rows = await db.execute(
+                select(Student).where(
+                    Student.school_id == school.id,
+                    Student.standard_id == std.id,
+                    Student.academic_year_id == year.id,
+                    Student.section == section_name,
+                ).order_by(Student.admission_number.asc())
+            )
+            normalized_students = list(normalized_rows.scalars().all())[:50]
+            for idx, stu in enumerate(normalized_students, start=1):
+                roll_num = f"{level:02d}{section_name}{idx:02d}"
+                stu.roll_number = roll_num
+                await get_or_create_year_mapping(
+                    db,
+                    student=stu,
+                    school_id=school.id,
+                    academic_year_id=year.id,
+                    standard_id=std.id,
+                    section=section,
+                    roll_number=roll_num,
+                    actor_id=principal_user.id,
+                )
+
 
     await ensure_school_settings(
         db,
@@ -1072,34 +1483,86 @@ async def seed_demo(db: AsyncSession) -> dict[str, str]:
                         )
                     )
 
-    exam_definitions = [
-        (
-            "Midterm Examination",
-            class10,
-            ExamType.MIDTERM,
-            date(2025, 9, 16),
-            date(2025, 9, 24),
-            "Class 10 Midterm Series",
+    # Full exam cycle for every class (1..10): Unit Test 1, Semester, Unit Test 2, Finals.
+    exam_definitions = []
+    for level in range(1, 11):
+        std = standards_by_level[level]
+        level_subjects = core_subjects_by_level.get(level, [])
+        schedule_subjects = level_subjects[:3]
+        if not schedule_subjects:
+            continue
+
+        ut1_start = date(2025, 7, 10)
+        semester_start = date(2025, 9, 8)
+        ut2_start = date(2025, 11, 18)
+        finals_start = date(2026, 2, 9)
+        offset_days = level % 5
+
+        def _build_entries(start: date, duration: int, venue_prefix: str):
+            return [
+                (
+                    schedule_subjects[0].id,
+                    start + timedelta(days=offset_days),
+                    time(9, 0),
+                    duration,
+                    f"{venue_prefix} Hall",
+                ),
+                (
+                    schedule_subjects[1].id if len(schedule_subjects) > 1 else schedule_subjects[0].id,
+                    start + timedelta(days=2 + offset_days),
+                    time(9, 0),
+                    duration,
+                    f"{venue_prefix} Block",
+                ),
+                (
+                    schedule_subjects[2].id if len(schedule_subjects) > 2 else schedule_subjects[0].id,
+                    start + timedelta(days=4 + offset_days),
+                    time(9, 0),
+                    duration,
+                    f"{venue_prefix} Room",
+                ),
+            ]
+
+        exam_definitions.extend(
             [
-                (math10.id, date(2025, 9, 16), time(9, 0), 120, "Hall A"),
-                (sci10.id, date(2025, 9, 18), time(9, 0), 120, "Science Lab Block"),
-                (eng10.id, date(2025, 9, 22), time(9, 0), 90, "Hall A"),
-            ],
-        ),
-        (
-            "Unit Test - Cycle 2",
-            class8,
-            ExamType.UNIT,
-            date(2025, 8, 20),
-            date(2025, 8, 26),
-            "Class 8 Unit Test Series",
-            [
-                (math08.id, date(2025, 8, 20), time(9, 30), 60, "Class 8A"),
-                (sci08.id, date(2025, 8, 22), time(9, 30), 60, "Science Lab 1"),
-                (eng08.id, date(2025, 8, 25), time(9, 30), 60, "Class 8A"),
-            ],
-        ),
-    ]
+                (
+                    f"Class {level} Unit Test 1",
+                    std,
+                    ExamType.UNIT_TEST,
+                    ut1_start + timedelta(days=offset_days),
+                    ut1_start + timedelta(days=5 + offset_days),
+                    f"Class {level} UT1 Series",
+                    _build_entries(ut1_start, 60, f"C{level} UT1"),
+                ),
+                (
+                    f"Class {level} Semester",
+                    std,
+                    ExamType.HALF_YEARLY,
+                    semester_start + timedelta(days=offset_days),
+                    semester_start + timedelta(days=6 + offset_days),
+                    f"Class {level} Semester Series",
+                    _build_entries(semester_start, 90, f"C{level} Sem"),
+                ),
+                (
+                    f"Class {level} Unit Test 2",
+                    std,
+                    ExamType.UNIT_TEST,
+                    ut2_start + timedelta(days=offset_days),
+                    ut2_start + timedelta(days=5 + offset_days),
+                    f"Class {level} UT2 Series",
+                    _build_entries(ut2_start, 75, f"C{level} UT2"),
+                ),
+                (
+                    f"Class {level} Finals",
+                    std,
+                    ExamType.FINAL,
+                    finals_start + timedelta(days=offset_days),
+                    finals_start + timedelta(days=7 + offset_days),
+                    f"Class {level} Finals Series",
+                    _build_entries(finals_start, 120, f"C{level} Final"),
+                ),
+            ]
+        )
     exam_by_name: dict[str, Exam] = {}
     for (
         exam_name,
@@ -1177,24 +1640,24 @@ async def seed_demo(db: AsyncSession) -> dict[str, str]:
                 )
 
     result_specs = [
-        ("Midterm Examination", students[3], math10, Decimal("86.00"), teacher_math_user.id),
-        ("Midterm Examination", students[3], sci10, Decimal("78.00"), teacher_science_user.id),
-        ("Midterm Examination", students[3], eng10, Decimal("88.00"), teacher_english_user.id),
-        ("Midterm Examination", students[4], math10, Decimal("92.00"), teacher_math_user.id),
-        ("Midterm Examination", students[4], sci10, Decimal("81.00"), teacher_science_user.id),
-        ("Midterm Examination", students[4], eng10, Decimal("84.00"), teacher_english_user.id),
-        ("Midterm Examination", students[5], math10, Decimal("67.00"), teacher_math_user.id),
-        ("Midterm Examination", students[5], sci10, Decimal("73.00"), teacher_science_user.id),
-        ("Midterm Examination", students[5], eng10, Decimal("70.00"), teacher_english_user.id),
-        ("Unit Test - Cycle 2", students[0], math08, Decimal("79.00"), teacher_math_user.id),
-        ("Unit Test - Cycle 2", students[0], sci08, Decimal("83.00"), teacher_science_user.id),
-        ("Unit Test - Cycle 2", students[0], eng08, Decimal("88.00"), teacher_english_user.id),
-        ("Unit Test - Cycle 2", students[1], math08, Decimal("72.00"), teacher_math_user.id),
-        ("Unit Test - Cycle 2", students[1], sci08, Decimal("69.00"), teacher_science_user.id),
-        ("Unit Test - Cycle 2", students[1], eng08, Decimal("81.00"), teacher_english_user.id),
-        ("Unit Test - Cycle 2", students[2], math08, Decimal("65.00"), teacher_math_user.id),
-        ("Unit Test - Cycle 2", students[2], sci08, Decimal("74.00"), teacher_science_user.id),
-        ("Unit Test - Cycle 2", students[2], eng08, Decimal("71.00"), teacher_english_user.id),
+        ("Class 10 Semester", students[3], math10, Decimal("86.00"), teacher_math_user.id),
+        ("Class 10 Semester", students[3], sci10, Decimal("78.00"), teacher_science_user.id),
+        ("Class 10 Semester", students[3], eng10, Decimal("88.00"), teacher_english_user.id),
+        ("Class 10 Semester", students[4], math10, Decimal("92.00"), teacher_math_user.id),
+        ("Class 10 Semester", students[4], sci10, Decimal("81.00"), teacher_science_user.id),
+        ("Class 10 Semester", students[4], eng10, Decimal("84.00"), teacher_english_user.id),
+        ("Class 10 Semester", students[5], math10, Decimal("67.00"), teacher_math_user.id),
+        ("Class 10 Semester", students[5], sci10, Decimal("73.00"), teacher_science_user.id),
+        ("Class 10 Semester", students[5], eng10, Decimal("70.00"), teacher_english_user.id),
+        ("Class 8 Semester", students[0], math08, Decimal("79.00"), teacher_math_user.id),
+        ("Class 8 Semester", students[0], sci08, Decimal("83.00"), teacher_science_user.id),
+        ("Class 8 Semester", students[0], eng08, Decimal("88.00"), teacher_english_user.id),
+        ("Class 8 Semester", students[1], math08, Decimal("72.00"), teacher_math_user.id),
+        ("Class 8 Semester", students[1], sci08, Decimal("69.00"), teacher_science_user.id),
+        ("Class 8 Semester", students[1], eng08, Decimal("81.00"), teacher_english_user.id),
+        ("Class 8 Semester", students[2], math08, Decimal("65.00"), teacher_math_user.id),
+        ("Class 8 Semester", students[2], sci08, Decimal("74.00"), teacher_science_user.id),
+        ("Class 8 Semester", students[2], eng08, Decimal("71.00"), teacher_english_user.id),
     ]
     for exam_name, student, subject, marks, entered_by in result_specs:
         exam = exam_by_name[exam_name]
@@ -1697,9 +2160,11 @@ async def seed_demo(db: AsyncSession) -> dict[str, str]:
         "academic_year_id": str(year.id),
         "principal_email": principal_user.email or "",
         "principal_password": DEMO_PASSWORD,
-        "teacher_email": teacher_science_user.email or "",
+        "teacher_email": "ananya.sharma@greenfieldacademy.edu",
+        "trustee_email": "trustee@greenfieldacademy.edu",
         "parent_email": parent_rao_user.email or "",
         "student_email": student_users[0].email or "",
+        "dataset_scope": "2025-2026, class 1-10, section A/B, 50 students per section",
     }
 
 
@@ -1712,8 +2177,10 @@ async def main() -> None:
     print(f"School: {summary['school_name']}")
     print(f"School ID: {summary['school_id']}")
     print(f"Academic Year ID: {summary['academic_year_id']}")
+    print(f"Dataset: {summary['dataset_scope']}")
     print(f"Principal login: {summary['principal_email']} / {summary['principal_password']}")
     print(f"Teacher login: {summary['teacher_email']} / {summary['principal_password']}")
+    print(f"Trustee login: {summary['trustee_email']} / {summary['principal_password']}")
     print(f"Parent login: {summary['parent_email']} / {summary['principal_password']}")
     print(f"Student login: {summary['student_email']} / {summary['principal_password']}")
 

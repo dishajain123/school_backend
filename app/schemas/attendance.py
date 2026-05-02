@@ -18,7 +18,6 @@ class MarkAttendanceRequest(BaseModel):
     subject_id: uuid.UUID
     academic_year_id: uuid.UUID
     date: date
-    lecture_number: int = Field(1, ge=1, le=12)
     records: list[AttendanceRecord] = Field(..., min_length=1)
 
     model_config = {"str_strip_whitespace": True}
@@ -34,7 +33,6 @@ class AttendanceResponse(BaseModel):
     section: str
     subject_id: uuid.UUID
     academic_year_id: uuid.UUID
-    lecture_number: int
     date: date
     status: AttendanceStatus
     created_at: datetime
@@ -74,7 +72,6 @@ class LectureAttendanceResponse(BaseModel):
     subject_id: uuid.UUID
     academic_year_id: uuid.UUID
     date: date
-    lecture_number: int
     total_students: int
     present_count: int
     absent_count: int

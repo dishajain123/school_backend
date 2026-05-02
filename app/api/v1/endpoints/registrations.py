@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import CurrentUser, require_permission
 from app.db.session import get_db
+from app.schemas.academic_year import AcademicYearListResponse
 from app.schemas.registration import RegistrationCreateRequest, RegistrationResponse
 from app.services.registration import RegistrationService
 from app.utils.enums import RegistrationSource
@@ -28,6 +29,15 @@ async def create_self_registration(
         registration_source=user.registration_source,
         created_at=user.created_at,
     )
+
+
+@router.get("/active-academic-years", response_model=AcademicYearListResponse)
+async def list_active_academic_years_for_registration(
+    db: AsyncSession = Depends(get_db),
+):
+    service = RegistrationService(db)
+    years = await service.list_active_academic_years()
+    return AcademicYearListResponse(items=years, total=len(years))
 
 
 @router.post("/admin", response_model=RegistrationResponse, status_code=201)

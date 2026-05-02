@@ -66,6 +66,7 @@ class ChatService:
     def _display_name_from_fields(
         cls,
         *,
+        full_name: Optional[str],
         email: Optional[str],
         phone: Optional[str],
         role,
@@ -73,7 +74,7 @@ class ChatService:
         pseudo_user = type(
             "_ChatDisplayUser",
             (),
-            {"email": email, "phone": phone, "role": role},
+            {"full_name": full_name, "email": email, "phone": phone, "role": role},
         )()
         return cls._user_display_name(pseudo_user)
 
@@ -412,7 +413,7 @@ class ChatService:
                 )
             )
 
-        stmt = select(User.id, User.role, User.email, User.phone).where(and_(*filters))
+        stmt = select(User.id, User.role, User.full_name, User.email, User.phone).where(and_(*filters))
 
         normalized_section = (section or "").strip().upper()
 
@@ -497,6 +498,7 @@ class ChatService:
                         id=row.id,
                         role=row.role.value if hasattr(row.role, "value") else str(row.role),
                         display_name=self._display_name_from_fields(
+                            full_name=row.full_name,
                             email=row.email,
                             phone=row.phone,
                             role=row.role,
@@ -540,6 +542,7 @@ class ChatService:
                         id=row.id,
                         role=row.role.value if hasattr(row.role, "value") else str(row.role),
                         display_name=self._display_name_from_fields(
+                            full_name=row.full_name,
                             email=row.email,
                             phone=row.phone,
                             role=row.role,
@@ -622,6 +625,7 @@ class ChatService:
                 id=row.id,
                 role=row.role.value if hasattr(row.role, "value") else str(row.role),
                 display_name=self._display_name_from_fields(
+                    full_name=row.full_name,
                     email=row.email,
                     phone=row.phone,
                     role=row.role,

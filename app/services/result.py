@@ -114,6 +114,29 @@ class ResultService:
         return current_user.school_id
 
     @staticmethod
+    def _infer_exam_type(name: str) -> ExamType:
+        label = (name or "").strip().lower()
+        if "final" in label:
+            return ExamType.FINAL
+        if "semester" in label or "half yearly" in label or "half-yearly" in label:
+            return ExamType.HALF_YEARLY
+        if "mid term" in label or "midterm" in label:
+            return ExamType.MID_TERM
+        if "annual" in label:
+            return ExamType.ANNUAL
+        if "quarter" in label:
+            return ExamType.QUARTERLY
+        if "mock" in label or "pre board" in label or "pre-board" in label:
+            return ExamType.MOCK
+        if "unit test 2" in label or "ut2" in label:
+            return ExamType.UNIT_TEST
+        if "unit test 1" in label or "ut1" in label:
+            return ExamType.UNIT_TEST
+        if "unit test" in label:
+            return ExamType.UNIT_TEST
+        return ExamType.UNIT_TEST
+
+    @staticmethod
     def _uploaded_report_card_key(
         school_id: uuid.UUID, student_id: uuid.UUID, exam_id: uuid.UUID
     ) -> str:
@@ -271,8 +294,7 @@ class ResultService:
         exam = await self.repo.create_exam(
             {
                 "name": body.name,
-                # exam_type is kept internal for DB compatibility; API is name-driven.
-                "exam_type": ExamType.UNIT,
+                "exam_type": self._infer_exam_type(body.name),
                 "standard_id": body.standard_id,
                 "academic_year_id": academic_year_id,
                 "start_date": body.start_date,
@@ -352,8 +374,7 @@ class ResultService:
             exam = await self.repo.create_exam(
                 {
                     "name": body.name,
-                    # exam_type is kept internal for DB compatibility; API is name-driven.
-                    "exam_type": ExamType.UNIT,
+                    "exam_type": self._infer_exam_type(body.name),
                     "standard_id": standard_id,
                     "academic_year_id": academic_year_id,
                     "start_date": body.start_date,
@@ -623,6 +644,22 @@ class ResultService:
             exam.name,
         )
         return updated_count
+
+    async def delete_exam(
+        self,
+        exam_id: uuid.UUID,
+        current_user: CurrentUser,
+    ) -> None:
+        school_id = self._ensure_school(current_user)
+        if current_user.role not in (RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN):
+            raise ForbiddenException("Only principal or superadmin can delete exams")
+
+        exam = await self.repo.get_exam_by_id(exam_id, school_id)
+        if not exam:
+            raise NotFoundException("Exam")
+
+        await self.repo.delete_exam(exam)
+        await self.db.commit()
 
     async def list_results(
         self,

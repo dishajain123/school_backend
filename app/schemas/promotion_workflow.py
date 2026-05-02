@@ -36,6 +36,8 @@ class PromotionPreviewItem(BaseModel):
     suggested_decision: PromotionDecision
     suggested_next_standard_id: Optional[uuid.UUID]
     suggested_next_standard_name: Optional[str]
+    suggested_next_section_id: Optional[uuid.UUID] = None
+    suggested_next_section_name: Optional[str] = None
 
     # Warning if next class does not exist in target year
     has_warning: bool = False
@@ -135,6 +137,23 @@ class CopyTeacherAssignmentsRequest(BaseModel):
 
 
 class CopyTeacherAssignmentsResponse(BaseModel):
+    source_year_id: uuid.UUID
+    target_year_id: uuid.UUID
+    copied_count: int
+    skipped_count: int
+    error_count: int
+
+
+class TeacherReenrollRequest(BaseModel):
+    source_year_id: uuid.UUID
+    target_year_id: uuid.UUID
+    overwrite_existing: bool = False
+
+    model_config = {"str_strip_whitespace": True}
+
+
+class TeacherReenrollResponse(BaseModel):
+    teacher_id: uuid.UUID
     source_year_id: uuid.UUID
     target_year_id: uuid.UUID
     copied_count: int

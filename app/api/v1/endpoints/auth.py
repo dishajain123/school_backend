@@ -24,6 +24,7 @@ from app.core.dependencies import get_current_user, CurrentUser
 from app.core.security import decode_token, extract_bearer_token
 from app.core.exceptions import UnauthorizedException
 from app.models.parent import Parent
+from app.models.academic_year import AcademicYear
 from app.models.student import Student
 from app.models.student_year_mapping import StudentYearMapping
 from app.models.teacher import Teacher
@@ -128,6 +129,8 @@ async def get_me(
     enrollment_completed = False
     onboarding_message = None
     active_year_id: Optional[uuid.UUID] = None
+    selected_year_id: Optional[uuid.UUID] = None
+    selected_year_name: Optional[str] = None
     if current_user.school_id is not None:
         try:
             active_year_id = (await get_active_year(current_user.school_id, db)).id
@@ -141,11 +144,16 @@ async def get_me(
         student_id = student_row.scalar_one_or_none()
         profile_created = student_id is not None
         if student_id:
-            mapping_row = await db.execute(
-                select(func.count(StudentYearMapping.id)).where(
-                    StudentYearMapping.student_id == student_id,
-                    StudentYearMapping.status == EnrollmentStatus.ACTIVE,
+            student_filters = [
+                StudentYearMapping.student_id == student_id,
+                StudentYearMapping.status == EnrollmentStatus.ACTIVE,
+            ]
+            if active_year_id is not None:
+                student_filters.append(
+                    StudentYearMapping.academic_year_id == active_year_id
                 )
+            mapping_row = await db.execute(
+                select(func.count(StudentYearMapping.id)).where(*student_filters)
             )
             enrollment_completed = (mapping_row.scalar_one() or 0) > 0
         if not profile_created:
@@ -189,8 +197,19 @@ async def get_me(
         parent_id = parent_row.scalar_one_or_none()
         profile_created = parent_id is not None
         if parent_id:
+            parent_filters = [Student.parent_id == parent_id]
+            if active_year_id is not None:
+                parent_filters.append(
+                    Student.id.in_(
+                        select(StudentYearMapping.student_id).where(
+                            StudentYearMapping.school_id == current_user.school_id,
+                            StudentYearMapping.status == EnrollmentStatus.ACTIVE,
+                            StudentYearMapping.academic_year_id == active_year_id,
+                        )
+                    )
+                )
             child_row = await db.execute(
-                select(func.count(Student.id)).where(Student.parent_id == parent_id)
+                select(func.count(Student.id)).where(*parent_filters)
             )
             enrollment_completed = (child_row.scalar_one() or 0) > 0
         if not profile_created:
@@ -201,9 +220,40 @@ async def get_me(
             onboarding_message = (
                 "Enrollment pending: child linking is not completed yet."
             )
+    elif role in (RoleEnum.PRINCIPAL, RoleEnum.TRUSTEE):
+        profile_created = True
+        selected_year = None
+        submitted = user.submitted_data if user else None
+        if isinstance(submitted, dict):
+            raw = submitted.get("academic_year_id")
+            if isinstance(raw, str) and raw.strip():
+                try:
+                    selected_year = uuid.UUID(raw.strip())
+                except ValueError:
+                    selected_year = None
+        selected_year_id = selected_year
+        enrollment_completed = True
+        onboarding_message = None
     else:
         profile_created = True
         enrollment_completed = True
+
+    if selected_year_id is None:
+        submitted = user.submitted_data if user and isinstance(user.submitted_data, dict) else {}
+        raw = submitted.get("academic_year_id")
+        if isinstance(raw, str) and raw.strip():
+            try:
+                selected_year_id = uuid.UUID(raw.strip())
+            except ValueError:
+                selected_year_id = None
+
+    if selected_year_id is not None:
+        year_row = await db.execute(
+            select(AcademicYear).where(AcademicYear.id == selected_year_id)
+        )
+        selected_year_obj = year_row.scalar_one_or_none()
+        if selected_year_obj:
+            selected_year_name = selected_year_obj.name
 
     enrollment_pending = not enrollment_completed
 
@@ -222,4 +272,6 @@ async def get_me(
         enrollment_completed=enrollment_completed,
         enrollment_pending=enrollment_pending,
         onboarding_message=onboarding_message,
+        academic_year_id=selected_year_id,
+        academic_year_name=selected_year_name,
     )

@@ -86,6 +86,8 @@ class PaymentMode(str, Enum):
     CASH = "CASH"
     CHEQUE = "CHEQUE"
     ONLINE = "ONLINE"
+    CARD = "CARD"
+    BANK_TRANSFER = "BANK_TRANSFER"
     DD = "DD"
     NEFT = "NEFT"
     RTGS = "RTGS"

@@ -155,10 +155,13 @@ class OnboardingQueueItem(BaseModel):
     status: UserStatus
     school_id: Optional[uuid.UUID]
     profile_created: bool
+    reenrollment_completed: bool = False
     enrollment_completed: bool
     enrollment_pending: bool
     pending_reason: Optional[str] = None
     suggested_identifier: Optional[str] = None
+    requested_student_admission_number: Optional[str] = None
+    requested_child_admission_numbers: list[str] = Field(default_factory=list)
     academic_year_id: Optional[uuid.UUID] = None
     academic_year_name: Optional[str] = None
     approved_at: Optional[datetime] = None
@@ -168,3 +171,14 @@ class OnboardingQueueItem(BaseModel):
 class OnboardingQueueResponse(BaseModel):
     items: list[OnboardingQueueItem]
     total: int
+
+
+class AnnualReenrollRequest(BaseModel):
+    academic_year_id: uuid.UUID
+
+
+class AnnualReenrollResponse(BaseModel):
+    user_id: uuid.UUID
+    role: RoleEnum
+    academic_year_id: uuid.UUID
+    updated: bool

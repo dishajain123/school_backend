@@ -4,7 +4,7 @@ import uuid
 from datetime import date
 from typing import Optional
 
-from sqlalchemy import select, and_, update, func, distinct
+from sqlalchemy import select, and_, update, func, distinct, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -121,6 +121,35 @@ class FeeRepository:
             )
         )
         return int(result.scalar_one() or 0)
+
+    async def count_payments_for_structure(
+        self, structure_id: uuid.UUID, school_id: uuid.UUID
+    ) -> int:
+        result = await self.db.execute(
+            select(func.count(Payment.id))
+            .select_from(Payment)
+            .join(FeeLedger, FeeLedger.id == Payment.fee_ledger_id)
+            .where(
+                and_(
+                    FeeLedger.fee_structure_id == structure_id,
+                    Payment.school_id == school_id,
+                )
+            )
+        )
+        return int(result.scalar_one() or 0)
+
+    async def delete_ledgers_for_structure(
+        self, structure_id: uuid.UUID, school_id: uuid.UUID
+    ) -> int:
+        result = await self.db.execute(
+            delete(FeeLedger).where(
+                and_(
+                    FeeLedger.fee_structure_id == structure_id,
+                    FeeLedger.school_id == school_id,
+                )
+            )
+        )
+        return result.rowcount or 0
 
     # ------------------------------------------------------------------
     # Fee Ledger

@@ -24,6 +24,8 @@ from app.schemas.promotion_workflow import (
     PromotionExecuteResponse,
     SingleReenrollRequest,
     SingleReenrollResponse,
+    TeacherReenrollRequest,
+    TeacherReenrollResponse,
     CopyTeacherAssignmentsRequest,
     CopyTeacherAssignmentsResponse,
 )
@@ -46,6 +48,9 @@ async def preview_promotion(
     standard_id: Optional[uuid.UUID] = Query(
         None, description="Filter preview to one class"
     ),
+    section_id: Optional[uuid.UUID] = Query(
+        None, description="Filter preview to one section in the selected class"
+    ),
     current_user: CurrentUser = Depends(
         require_any_permission("enrollment:read", "student:promote", "user:manage")
     ),
@@ -64,6 +69,7 @@ async def preview_promotion(
         target_year_id=target_year_id,
         school_id=current_user.school_id,
         standard_id=standard_id,
+        section_id=section_id,
     )
 
 
@@ -142,3 +148,20 @@ async def copy_teacher_assignments(
     if not current_user.school_id:
         raise ForbiddenException("School context required")
     return await service.copy_teacher_assignments(data, current_user)
+
+
+@router.post("/reenroll-teacher/{teacher_id}", response_model=TeacherReenrollResponse)
+async def reenroll_teacher(
+    teacher_id: uuid.UUID,
+    data: TeacherReenrollRequest,
+    current_user: CurrentUser = Depends(require_permission("teacher_assignment:manage")),
+    service: PromotionWorkflowService = Depends(get_service),
+):
+    """
+    Re-enroll a single teacher's assignments from source academic year to target
+    academic year. Existing target-year assignments are preserved by default and
+    can be replaced with overwrite_existing=true.
+    """
+    if not current_user.school_id:
+        raise ForbiddenException("School context required")
+    return await service.reenroll_teacher_assignments(teacher_id, data, current_user)

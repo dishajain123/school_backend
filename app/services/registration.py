@@ -6,6 +6,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictException, ValidationException
+from app.models.academic_year import AcademicYear
 from app.models.school import School
 from app.models.student import Student
 from app.models.teacher import Teacher
@@ -212,6 +213,35 @@ class RegistrationService:
 
         return None
 
+    async def list_active_academic_years(
+        self,
+        school_id: Optional[uuid.UUID] = None,
+    ) -> list[AcademicYear]:
+        resolved_school_id = school_id
+        if resolved_school_id is None:
+            active_rows = await self.db.execute(
+                select(School.id).where(School.is_active.is_(True))
+            )
+            active_school_ids = active_rows.scalars().all()
+            if len(active_school_ids) == 1:
+                resolved_school_id = active_school_ids[0]
+            else:
+                raise ValidationException(
+                    "Unable to resolve school. Please provide school_id."
+                )
+
+        rows = await self.db.execute(
+            select(AcademicYear)
+            .where(
+                and_(
+                    AcademicYear.school_id == resolved_school_id,
+                    AcademicYear.is_active.is_(True),
+                )
+            )
+            .order_by(AcademicYear.start_date.desc())
+        )
+        return rows.scalars().all()
+
     async def create_registration(
         self,
         payload: RegistrationCreateRequest,
@@ -234,6 +264,33 @@ class RegistrationService:
                 "Unable to determine school from provided identifiers. Please contact admin."
             )
 
+        submitted_data = dict(payload.submitted_data or {})
+        if payload.role != RoleEnum.SUPERADMIN:
+            academic_year_raw = submitted_data.get("academic_year_id")
+            if not isinstance(academic_year_raw, str) or not academic_year_raw.strip():
+                raise ValidationException(
+                    "Academic year is required for registration."
+                )
+            try:
+                academic_year_id = uuid.UUID(academic_year_raw.strip())
+            except ValueError as exc:
+                raise ValidationException("Invalid academic year.") from exc
+
+            year_row = await self.db.execute(
+                select(AcademicYear.id).where(
+                    and_(
+                        AcademicYear.id == academic_year_id,
+                        AcademicYear.school_id == resolved_school_id,
+                        AcademicYear.is_active.is_(True),
+                    )
+                )
+            )
+            if year_row.scalar_one_or_none() is None:
+                raise ValidationException(
+                    "Selected academic year is not active for this school."
+                )
+            submitted_data["academic_year_id"] = str(academic_year_id)
+
         user = await self.user_repo.create(
             {
                 "full_name": payload.full_name.strip() if payload.full_name else None,
@@ -245,7 +302,7 @@ class RegistrationService:
                 "status": UserStatus.PENDING_APPROVAL,
                 "registration_source": source,
                 "is_active": False,
-                "submitted_data": payload.submitted_data,
+                "submitted_data": submitted_data,
             }
         )
         await self.db.flush()
@@ -259,7 +316,7 @@ class RegistrationService:
             full_name=user.full_name or "",
             email=normalized_email,
             phone=normalized_phone,
-            submitted_data=payload.submitted_data,
+            submitted_data=submitted_data,
             has_duplicates=False,
             duplicate_details=None,
             data_complete=True,

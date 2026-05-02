@@ -53,7 +53,6 @@ class AttendanceRepository:
         month: Optional[int] = None,
         year: Optional[int] = None,
         subject_id: Optional[uuid.UUID] = None,
-        lecture_number: Optional[int] = None,
     ) -> tuple[list[Attendance], int]:
         stmt = (
             select(Attendance)
@@ -70,9 +69,6 @@ class AttendanceRepository:
             stmt = stmt.where(func.extract("year", Attendance.date) == year)
         if subject_id is not None:
             stmt = stmt.where(Attendance.subject_id == subject_id)
-        if lecture_number is not None:
-            stmt = stmt.where(Attendance.lecture_number == lecture_number)
-
         count_q = select(func.count()).select_from(stmt.subquery())
         total = (await self.db.execute(count_q)).scalar_one()
 
@@ -91,7 +87,6 @@ class AttendanceRepository:
         record_date: date,
         academic_year_id: Optional[uuid.UUID] = None,
         subject_id: Optional[uuid.UUID] = None,
-        lecture_number: Optional[int] = None,
     ) -> list[Attendance]:
         stmt = (
             select(Attendance)
@@ -108,9 +103,6 @@ class AttendanceRepository:
             stmt = stmt.where(Attendance.academic_year_id == academic_year_id)
         if subject_id is not None:
             stmt = stmt.where(Attendance.subject_id == subject_id)
-        if lecture_number is not None:
-            stmt = stmt.where(Attendance.lecture_number == lecture_number)
-
         rows = await self.db.execute(stmt)
         return list(rows.scalars().all())
 
@@ -124,7 +116,6 @@ class AttendanceRepository:
         academic_year_id: uuid.UUID,
         school_id: uuid.UUID,
         record_date: date,
-        lecture_number: int,
     ) -> list[dict]:
         """
         Returns one row per student in the class-section.
@@ -145,7 +136,7 @@ class AttendanceRepository:
                 ON  a.student_id     = s.id
                 AND a.subject_id     = :subject_id
                 AND a.date           = :record_date
-                AND a.lecture_number = :lecture_number
+                AND a.lecture_number = 1
                 AND a.academic_year_id = :academic_year_id
             WHERE
                 s.standard_id      = :standard_id
@@ -161,7 +152,6 @@ class AttendanceRepository:
             "academic_year_id": academic_year_id,
             "school_id": school_id,
             "record_date": record_date,
-            "lecture_number": lecture_number,
         })
         return [dict(row._mapping) for row in result.all()]
 

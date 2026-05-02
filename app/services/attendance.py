@@ -122,7 +122,8 @@ class AttendanceService:
                 "section": payload.section,
                 "subject_id": payload.subject_id,
                 "academic_year_id": payload.academic_year_id,
-                "lecture_number": payload.lecture_number,
+                # Date-based attendance model: one record per subject/date.
+                "lecture_number": 1,
                 "date": payload.date,
                 "status": r.status,
             }
@@ -212,7 +213,6 @@ class AttendanceService:
         month: Optional[int],
         year: Optional[int],
         subject_id: Optional[uuid.UUID],
-        lecture_number: Optional[int],
     ):
         school_id = self._require_school(current_user)
 
@@ -237,7 +237,6 @@ class AttendanceService:
                 month=month,
                 year=year,
                 subject_id=subject_id,
-                lecture_number=lecture_number,
             )
             return {"items": items, "total": total}
 
@@ -270,7 +269,6 @@ class AttendanceService:
             record_date=record_date,
             academic_year_id=academic_year_id,
             subject_id=subject_id,
-            lecture_number=lecture_number,
         )
         return {"items": items, "total": len(items)}
 
@@ -283,7 +281,6 @@ class AttendanceService:
         subject_id: uuid.UUID,
         academic_year_id: uuid.UUID,
         record_date: date,
-        lecture_number: int,
         current_user: CurrentUser,
     ) -> LectureAttendanceResponse:
         school_id = self._require_school(current_user)
@@ -308,7 +305,6 @@ class AttendanceService:
             academic_year_id=academic_year_id,
             school_id=school_id,
             record_date=record_date,
-            lecture_number=lecture_number,
         )
 
         entries: list[LectureStudentEntry] = []
@@ -343,7 +339,6 @@ class AttendanceService:
             subject_id=subject_id,
             academic_year_id=academic_year_id,
             date=record_date,
-            lecture_number=lecture_number,
             total_students=len(entries),
             present_count=present_count,
             absent_count=absent_count,

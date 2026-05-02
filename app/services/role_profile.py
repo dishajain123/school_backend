@@ -49,6 +49,74 @@ class RoleProfileService:
             return user.phone.strip()
         return "Unknown"
 
+    @staticmethod
+    def _normalize_admission_values(submitted_data: Optional[dict[str, Any]]) -> list[str]:
+        if not submitted_data:
+            return []
+        values: list[str] = []
+        first = (
+            submitted_data.get("student_admission_number")
+            or submitted_data.get("admission_number")
+            or submitted_data.get("child_admission_number")
+        )
+        if isinstance(first, str) and first.strip():
+            values.append(first.strip())
+        extra = submitted_data.get("child_admission_numbers")
+        if isinstance(extra, list):
+            values.extend([str(v).strip() for v in extra if str(v).strip()])
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            key = value.upper()
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(value)
+        return deduped
+
+    async def _auto_link_parent_children_from_submission(
+        self,
+        *,
+        parent: Parent,
+        user: User,
+        school_id: uuid.UUID,
+    ) -> None:
+        admissions = self._normalize_admission_values(
+            user.submitted_data if isinstance(user.submitted_data, dict) else None
+        )
+        if not admissions:
+            return
+        admissions_upper = [a.strip().upper() for a in admissions if a.strip()]
+        if not admissions_upper:
+            return
+        rows = await self.db.execute(
+            select(Student)
+            .where(
+                Student.school_id == school_id,
+                func.upper(func.trim(Student.admission_number)).in_(admissions_upper),
+            )
+        )
+        students = list(rows.scalars().all())
+        if not students:
+            return
+        student_ids = [s.id for s in students]
+        active_rows = await self.db.execute(
+            select(StudentYearMapping.student_id)
+            .where(
+                StudentYearMapping.school_id == school_id,
+                StudentYearMapping.student_id.in_(student_ids),
+                StudentYearMapping.status == EnrollmentStatus.ACTIVE,
+            )
+            .group_by(StudentYearMapping.student_id)
+        )
+        active_student_ids = set(active_rows.scalars().all())
+        if not active_student_ids:
+            return
+        for student in students:
+            if student.id in active_student_ids:
+                student.parent_id = parent.id
+        await self.db.flush()
+
     async def create_student_profile(
         self,
         data: StudentProfileCreate,
@@ -149,7 +217,7 @@ class RoleProfileService:
         data: ParentProfileCreate,
         current_user: CurrentUser,
     ) -> ParentProfileResponse:
-        school_id, _ = await self._get_target_user(
+        school_id, user = await self._get_target_user(
             user_id=data.user_id,
             expected_role=RoleEnum.PARENT,
             current_user=current_user,
@@ -167,6 +235,14 @@ class RoleProfileService:
             submitted_data=payload,
             actor=current_user,
             custom_parent_code=data.custom_parent_code,
+        )
+
+        # Auto-link children from parent registration submission (admission numbers),
+        # so admin only verifies and proceeds with enrollment.
+        await self._auto_link_parent_children_from_submission(
+            parent=parent,
+            user=user,
+            school_id=school_id,
         )
 
         await self.db.commit()
@@ -198,8 +274,10 @@ class RoleProfileService:
             raise ValidationException("school_id is required for listing role profiles")
 
         role_norm = (role or "STUDENT").upper()
-        if role_norm not in {"STUDENT", "TEACHER", "PARENT"}:
-            raise ValidationException("role must be one of STUDENT, TEACHER, PARENT")
+        if role_norm not in {"STUDENT", "TEACHER", "PARENT", "PRINCIPAL", "TRUSTEE"}:
+            raise ValidationException(
+                "role must be one of STUDENT, TEACHER, PARENT, PRINCIPAL, TRUSTEE"
+            )
 
         if role_norm == "STUDENT":
             items, total = await self._list_student_profiles(
@@ -218,6 +296,22 @@ class RoleProfileService:
                 page_size=page_size,
                 search=search,
                 academic_year_id=academic_year_id,
+            )
+        elif role_norm == "PRINCIPAL":
+            items, total = await self._list_user_role_profiles(
+                school_id=school_id,
+                role=RoleEnum.PRINCIPAL,
+                page=page,
+                page_size=page_size,
+                search=search,
+            )
+        elif role_norm == "TRUSTEE":
+            items, total = await self._list_user_role_profiles(
+                school_id=school_id,
+                role=RoleEnum.TRUSTEE,
+                page=page,
+                page_size=page_size,
+                search=search,
             )
         else:
             items, total = await self._list_parent_profiles(
@@ -773,5 +867,57 @@ class RoleProfileService:
                 "created_at": parent.created_at,
             }
             for parent, user in rows
+        ]
+        return items, total
+
+    async def _list_user_role_profiles(
+        self,
+        school_id: uuid.UUID,
+        role: RoleEnum,
+        page: int,
+        page_size: int,
+        search: Optional[str],
+    ) -> tuple[list[dict[str, Any]], int]:
+        filters = [
+            User.school_id == school_id,
+            User.role == role,
+            User.status == UserStatus.ACTIVE,
+            User.is_active.is_(True),
+        ]
+        if search:
+            q = f"%{search.strip().lower()}%"
+            filters.append(
+                or_(
+                    func.lower(func.coalesce(User.full_name, "")).like(q),
+                    func.lower(func.coalesce(User.email, "")).like(q),
+                    func.lower(func.coalesce(User.phone, "")).like(q),
+                )
+            )
+
+        stmt = (
+            select(User)
+            .where(and_(*filters))
+            .order_by(User.created_at.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+        count_stmt = select(func.count(User.id)).where(and_(*filters))
+
+        users = (await self.db.execute(stmt)).scalars().all()
+        total = (await self.db.execute(count_stmt)).scalar_one()
+        role_value = role.value
+        items = [
+            {
+                "role": role_value,
+                "user_id": str(user.id),
+                "full_name": self._display_name(user),
+                "email": user.email,
+                "phone": user.phone,
+                "identifier": user.email or user.phone or str(user.id),
+                "created_at": user.created_at,
+                "profile_created": True,
+                "enrollment_completed": True,
+            }
+            for user in users
         ]
         return items, total
