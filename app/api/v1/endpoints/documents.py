@@ -17,9 +17,32 @@ from app.schemas.document import (
     DocumentRequirementStatusResponse,
 )
 from app.services.document import DocumentService
-from app.utils.enums import DocumentType, DocumentWorkflowFilter
+from app.utils.enums import DocumentType, DocumentStatus
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
+
+
+def _legacy_status_filter_to_status(value: Optional[str]) -> Optional[DocumentStatus]:
+    """Map deprecated status_filter query values to DocumentStatus."""
+    if value is None:
+        return None
+    key = value.strip().lower()
+    if key in {"", "all"}:
+        return None
+    mapping = {
+        "not_uploaded": DocumentStatus.NOT_UPLOADED,
+        "requested": DocumentStatus.REQUESTED,
+        "pending": DocumentStatus.PENDING,
+        "approved": DocumentStatus.APPROVED,
+        "rejected": DocumentStatus.REJECTED,
+    }
+    mapped = mapping.get(key)
+    if mapped is not None:
+        return mapped
+    try:
+        return DocumentStatus[value.upper()]
+    except KeyError:
+        return None
 
 
 def _parse_optional_uuid_param(value: Optional[str]) -> Optional[uuid.UUID]:
@@ -52,23 +75,25 @@ async def list_documents(
     academic_year_id: Optional[str] = Query(None),
     standard_id: Optional[str] = Query(None),
     section: Optional[str] = Query(None),
-    status_filter: DocumentWorkflowFilter = Query(
-        DocumentWorkflowFilter.ALL,
-        description=(
-            "Workflow bucket: all | requested (no file yet) | pending (uploaded, "
-            "awaiting verification) | approved | rejected"
-        ),
+    status: Optional[DocumentStatus] = Query(
+        None,
+        description="Filter by DocumentStatus (e.g. PENDING, NOT_UPLOADED). Omit for all.",
+    ),
+    status_filter: Optional[str] = Query(
+        None,
+        description="Deprecated — use status=NOT_UPLOADED|PENDING|…",
     ),
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    resolved = status or _legacy_status_filter_to_status(status_filter)
     return await DocumentService(db).list_documents(
         _parse_optional_uuid_param(student_id),
         current_user,
         academic_year_id=_parse_optional_uuid_param(academic_year_id),
         standard_id=_parse_optional_uuid_param(standard_id),
         section=section,
-        status_filter=status_filter,
+        status=resolved,
     )
 
 
@@ -124,6 +149,7 @@ async def upload_document(
     student_id: uuid.UUID = Form(...),
     document_type: DocumentType = Form(...),
     note: Optional[str] = Form(None),
+    academic_year_id: Optional[uuid.UUID] = Form(None),
     file: UploadFile = File(...),
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -134,6 +160,7 @@ async def upload_document(
         file=file,
         note=note,
         current_user=current_user,
+        academic_year_id=academic_year_id,
     )
 
 

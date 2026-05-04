@@ -6,9 +6,9 @@ from pydantic import BaseModel, field_validator
 
 
 class ExamSeriesCreate(BaseModel):
+    exam_id: uuid.UUID
     name: str
-    standard_id: uuid.UUID
-    academic_year_id: Optional[uuid.UUID] = None
+    section: Optional[str] = None
 
     @field_validator("name")
     @classmethod
@@ -18,11 +18,20 @@ class ExamSeriesCreate(BaseModel):
             raise ValueError("Name cannot be empty")
         return v
 
+    @field_validator("section")
+    @classmethod
+    def normalize_section(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return ""
+        return v.strip().upper()
+
 
 class ExamSeriesResponse(BaseModel):
     id: uuid.UUID
+    exam_id: Optional[uuid.UUID] = None
     name: str
     standard_id: uuid.UUID
+    section: str
     academic_year_id: uuid.UUID
     is_published: bool
     created_by: Optional[uuid.UUID] = None

@@ -20,7 +20,7 @@ async def upload_timetable(
     section: Optional[str] = Form(None, description="Section (e.g. A, B). Leave blank for all sections."),
     file: UploadFile = File(..., description="Timetable file (PDF or image)"),
     current_user: CurrentUser = Depends(
-        require_roles(RoleEnum.PRINCIPAL, RoleEnum.TEACHER)
+        require_roles(RoleEnum.PRINCIPAL, RoleEnum.TEACHER, RoleEnum.STAFF_ADMIN)
     ),
     db: AsyncSession = Depends(get_db),
 ):
@@ -42,7 +42,7 @@ async def list_timetable_sections_compat(
     standard_id: uuid.UUID = Query(...),
     academic_year_id: Optional[uuid.UUID] = Query(None),
     current_user: CurrentUser = Depends(
-        require_roles(RoleEnum.PRINCIPAL, RoleEnum.TEACHER)
+        require_roles(RoleEnum.PRINCIPAL, RoleEnum.TEACHER, RoleEnum.STAFF_ADMIN)
     ),
     db: AsyncSession = Depends(get_db),
 ):
@@ -84,7 +84,7 @@ async def delete_timetable(
     academic_year_id: Optional[uuid.UUID] = Query(None),
     section: Optional[str] = Query(None, description="Section filter"),
     current_user: CurrentUser = Depends(
-        require_roles(RoleEnum.PRINCIPAL, RoleEnum.TEACHER)
+        require_roles(RoleEnum.PRINCIPAL, RoleEnum.TEACHER, RoleEnum.STAFF_ADMIN)
     ),
     db: AsyncSession = Depends(get_db),
 ):
@@ -104,7 +104,7 @@ async def list_timetable_sections(
     standard_id: uuid.UUID,
     academic_year_id: Optional[uuid.UUID] = Query(None),
     current_user: CurrentUser = Depends(
-        require_roles(RoleEnum.PRINCIPAL, RoleEnum.TEACHER)
+        require_roles(RoleEnum.PRINCIPAL, RoleEnum.TEACHER, RoleEnum.STAFF_ADMIN)
     ),
     db: AsyncSession = Depends(get_db),
 ):

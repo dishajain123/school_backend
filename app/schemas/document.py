@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.utils.enums import DocumentType, DocumentStatus
 
@@ -18,10 +18,17 @@ class DocumentResponse(BaseModel):
     id: uuid.UUID
     student_id: uuid.UUID
     document_type: DocumentType
+    document_type_id: Optional[str] = None
     file_key: Optional[str] = None
+    file_url: Optional[str] = None
+    is_synthetic: bool = Field(
+        default=False,
+        description="True when this row is not persisted — admin list filler for missing slots.",
+    )
     status: DocumentStatus
     requested_at: datetime
     generated_at: Optional[datetime] = None
+    admin_comment: Optional[str] = None
     review_note: Optional[str] = None
     reviewed_at: Optional[datetime] = None
     reviewed_by: Optional[uuid.UUID] = None
@@ -51,7 +58,14 @@ class DocumentDownloadResponse(BaseModel):
 
 class DocumentVerifyRequest(BaseModel):
     approve: bool = True
-    reason: Optional[str] = Field(None, max_length=500)
+    reason: Optional[str] = Field(None, max_length=2000)
+
+    @model_validator(mode="after")
+    def reject_requires_comment(self) -> "DocumentVerifyRequest":
+        if not self.approve:
+            if not (self.reason or "").strip():
+                raise ValueError("Rejection requires a comment (reason)")
+        return self
 
 
 class DocumentRequirementItem(BaseModel):

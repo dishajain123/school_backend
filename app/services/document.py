@@ -1,7 +1,7 @@
 import uuid
 import json
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, Iterable
 
 from fastapi import BackgroundTasks, UploadFile
 from sqlalchemy import select, and_
@@ -32,7 +32,6 @@ from app.utils.enums import (
     RoleEnum,
     DocumentStatus,
     DocumentType,
-    DocumentWorkflowFilter,
     NotificationType,
     NotificationPriority,
     AuditAction,
@@ -67,7 +66,7 @@ async def _generate_document(
             else str(document_type)
         )
 
-        await repo.update(doc, {"status": DocumentStatus.PROCESSING})
+        await repo.update(doc, {"status": DocumentStatus.PENDING})
         await db.commit()
 
         html = f"""
@@ -97,7 +96,7 @@ async def _generate_document(
                     doc,
                     {
                         "file_key": file_key,
-                        "status": DocumentStatus.READY,
+                        "status": DocumentStatus.APPROVED,
                         "generated_at": datetime.now(timezone.utc),
                     },
                 )
@@ -108,7 +107,7 @@ async def _generate_document(
                 await repo.update(
                     doc,
                     {
-                        "status": DocumentStatus.FAILED,
+                        "status": DocumentStatus.REJECTED,
                         "generated_at": None,
                     },
                 )
@@ -116,6 +115,16 @@ async def _generate_document(
 
 
 class DocumentService:
+    """Synthetic UUID namespace for admin-only virtual NOT_UPLOADED rows (never stored)."""
+
+    _SYNTHETIC_DOC_UUID_NS = uuid.UUID("018e66d2-e153-723d-ae99-0568dc192c50")
+    _DEFAULT_ADMIN_DOCUMENT_GRID_TYPES = (
+        DocumentType.ID_CARD,
+        DocumentType.REPORT_CARD,
+        DocumentType.BONAFIDE,
+        DocumentType.LEAVING_CERT,
+    )
+
     def __init__(self, db: AsyncSession):
         self.db = db
         self.repo = DocumentRepository(db)
@@ -146,30 +155,6 @@ class DocumentService:
     @staticmethod
     def _can_manage_documents(current_user: CurrentUser) -> bool:
         return "document:manage" in current_user.permissions
-
-    @staticmethod
-    def _document_matches_workflow_filter(
-        doc,
-        workflow: DocumentWorkflowFilter,
-    ) -> bool:
-        """Aligns with UI buckets: requested / pending / approved / rejected."""
-        if workflow == DocumentWorkflowFilter.ALL:
-            return True
-        fk = (doc.file_key or "").strip()
-        st = doc.status
-        if workflow == DocumentWorkflowFilter.REQUESTED:
-            return st == DocumentStatus.PENDING and not fk
-        if workflow == DocumentWorkflowFilter.PENDING:
-            if st == DocumentStatus.PROCESSING and bool(fk):
-                return True
-            if st == DocumentStatus.PENDING and bool(fk):
-                return True
-            return False
-        if workflow == DocumentWorkflowFilter.APPROVED:
-            return st in (DocumentStatus.READY, DocumentStatus.VERIFIED)
-        if workflow == DocumentWorkflowFilter.REJECTED:
-            return st in (DocumentStatus.FAILED, DocumentStatus.REJECTED)
-        return True
 
     async def _load_json_setting(self, school_id: uuid.UUID, key: str) -> dict:
         setting = await self.settings_repo.get_by_key(school_id, key)
@@ -255,7 +240,6 @@ class DocumentService:
         return {
             DocumentType[row["document_type"]]
             for row in items
-            if row.get("is_mandatory", True)
         }
 
     async def _get_review_meta_map(self, school_id: uuid.UUID) -> dict[str, dict]:
@@ -466,10 +450,22 @@ class DocumentService:
         doc,
         review_meta_map: Optional[dict[str, dict]] = None,
         student_meta: Optional[dict[uuid.UUID, dict]] = None,
+        *,
+        file_url: Optional[str] = None,
     ) -> DocumentResponse:
         payload = DocumentResponse.model_validate(doc).model_dump()
         meta = (review_meta_map or {}).get(str(doc.id), {})
-        payload["review_note"] = meta.get("review_note")
+        if not isinstance(meta, dict):
+            meta = {}
+        meta_note = meta.get("review_note")
+        admin_note = (getattr(doc, "admin_comment", None) or "").strip() or None
+        combined_note = admin_note or (
+            meta_note.strip() if isinstance(meta_note, str) and meta_note.strip() else None
+        )
+        payload["document_type_id"] = doc.document_type.value
+        payload["admin_comment"] = admin_note
+        payload["review_note"] = combined_note
+        payload["file_url"] = file_url
         payload["reviewed_by"] = self._parse_optional_uuid(meta.get("reviewed_by"))
         payload["reviewed_at"] = self._parse_optional_datetime(meta.get("reviewed_at"))
         s_meta = (student_meta or {}).get(doc.student_id, {})
@@ -477,6 +473,210 @@ class DocumentService:
         payload["student_admission_number"] = s_meta.get("admission_number")
         payload["parent_name"] = s_meta.get("parent_name")
         return DocumentResponse(**payload)
+
+    async def _build_student_meta_map(
+        self,
+        school_id: uuid.UUID,
+        student_ids: Iterable[uuid.UUID],
+    ) -> dict[uuid.UUID, dict]:
+        ids = {sid for sid in student_ids if sid}
+        if not ids:
+            return {}
+        from app.models.student import Student
+        from app.models.parent import Parent
+        from app.models.user import User
+
+        rows = await self.db.execute(
+            select(
+                Student.id,
+                Student.admission_number,
+                User.email,
+                Parent.user_id,
+            )
+            .select_from(Student)
+            .join(User, User.id == Student.user_id, isouter=True)
+            .join(Parent, Parent.id == Student.parent_id, isouter=True)
+            .where(
+                and_(
+                    Student.id.in_(ids),
+                    Student.school_id == school_id,
+                )
+            )
+        )
+        student_meta: dict[uuid.UUID, dict] = {}
+        parent_user_ids: list[uuid.UUID] = []
+        parent_user_by_student: dict[uuid.UUID, uuid.UUID] = {}
+        for sid, admission, student_email, parent_user_id in rows.all():
+            student_meta[sid] = {
+                "admission_number": admission,
+                "student_name": student_email,
+                "parent_name": None,
+            }
+            if parent_user_id:
+                parent_user_ids.append(parent_user_id)
+                parent_user_by_student[sid] = parent_user_id
+
+        parent_name_map: dict[uuid.UUID, str] = {}
+        if parent_user_ids:
+            parent_rows = await self.db.execute(
+                select(User.id, User.email).where(User.id.in_(parent_user_ids))
+            )
+            for uid, email in parent_rows.all():
+                if uid and email:
+                    parent_name_map[uid] = email
+
+        for sid, p_uid in parent_user_by_student.items():
+            if sid in student_meta:
+                student_meta[sid]["parent_name"] = parent_name_map.get(p_uid)
+
+        return student_meta
+
+    async def _document_slots_for_admin_grid(
+        self,
+        school_id: uuid.UUID,
+        *,
+        student_year: Optional[uuid.UUID],
+        student_standard: Optional[uuid.UUID],
+    ) -> list[DocumentType]:
+        items = await self._get_requirement_items(
+            school_id,
+            academic_year_id=student_year,
+            standard_id=student_standard,
+            include_global=True,
+        )
+        types: list[DocumentType] = []
+        for item in items:
+            dt = DocumentType[item["document_type"]]
+            if dt == DocumentType.OTHER:
+                continue
+            if dt not in types:
+                types.append(dt)
+        if types:
+            return types
+        return list(self._DEFAULT_ADMIN_DOCUMENT_GRID_TYPES)
+
+    @classmethod
+    def _synthetic_document_id(
+        cls,
+        *,
+        student_id: uuid.UUID,
+        academic_year_id: uuid.UUID,
+        document_type: DocumentType,
+    ) -> uuid.UUID:
+        return uuid.uuid5(
+            cls._SYNTHETIC_DOC_UUID_NS,
+            f"{student_id}|{academic_year_id}|{document_type.value}",
+        )
+
+    def _synthetic_document_response(
+        self,
+        *,
+        student_id: uuid.UUID,
+        document_type: DocumentType,
+        academic_year_id: uuid.UUID,
+        school_id: uuid.UUID,
+        student_meta: dict[uuid.UUID, dict],
+    ) -> DocumentResponse:
+        sid = self._synthetic_document_id(
+            student_id=student_id,
+            academic_year_id=academic_year_id,
+            document_type=document_type,
+        )
+        now = datetime.now(timezone.utc)
+        m = student_meta.get(student_id, {})
+        return DocumentResponse(
+            id=sid,
+            student_id=student_id,
+            document_type=document_type,
+            document_type_id=document_type.value,
+            file_key=None,
+            file_url=None,
+            is_synthetic=True,
+            status=DocumentStatus.NOT_UPLOADED,
+            requested_at=now,
+            generated_at=None,
+            admin_comment=None,
+            review_note=None,
+            reviewed_at=None,
+            reviewed_by=None,
+            student_name=m.get("student_name"),
+            student_admission_number=m.get("admission_number"),
+            parent_name=m.get("parent_name"),
+            academic_year_id=academic_year_id,
+            school_id=school_id,
+            created_at=now,
+            updated_at=now,
+        )
+
+    async def _admin_expand_missing_not_uploaded(
+        self,
+        *,
+        school_id: uuid.UUID,
+        academic_year_id: Optional[uuid.UUID],
+        standard_id: Optional[uuid.UUID],
+        section: Optional[str],
+        existing_docs: list,
+    ) -> tuple[list[DocumentResponse], set[uuid.UUID]]:
+        from app.models.student import Student
+
+        stmt = select(Student.id, Student.academic_year_id, Student.standard_id).where(
+            Student.school_id == school_id
+        )
+        if academic_year_id is not None:
+            stmt = stmt.where(Student.academic_year_id == academic_year_id)
+        if standard_id is not None:
+            stmt = stmt.where(Student.standard_id == standard_id)
+        if section is not None:
+            stmt = stmt.where(Student.section == section)
+        res = await self.db.execute(stmt)
+        student_rows = list(res.all())
+        if not student_rows:
+            return [], set()
+
+        covered: set[tuple[uuid.UUID, uuid.UUID, DocumentType]] = set()
+        for d in existing_docs:
+            if d.document_type == DocumentType.OTHER:
+                continue
+            covered.add((d.student_id, d.academic_year_id, d.document_type))
+
+        active_year = await get_active_year(school_id, self.db)
+        extra_ids = {row[0] for row in student_rows}
+        student_meta = await self._build_student_meta_map(school_id, extra_ids)
+
+        type_cache: dict[tuple[Optional[uuid.UUID], Optional[uuid.UUID]], list[DocumentType]] = {}
+
+        async def slots_for(st_year: Optional[uuid.UUID], st_std: Optional[uuid.UUID]) -> list[DocumentType]:
+            cache_key = (st_year, st_std)
+            if cache_key not in type_cache:
+                lookup_year = st_year or academic_year_id
+                type_cache[cache_key] = await self._document_slots_for_admin_grid(
+                    school_id,
+                    student_year=lookup_year,
+                    student_standard=st_std,
+                )
+            return type_cache[cache_key]
+
+        out: list[DocumentResponse] = []
+        for st_id, st_year, st_std in student_rows:
+            doc_types = await slots_for(st_year, st_std)
+            year_for_doc = st_year or academic_year_id
+            if year_for_doc is None:
+                year_for_doc = active_year.id
+            for doc_type in doc_types:
+                key = (st_id, year_for_doc, doc_type)
+                if key in covered:
+                    continue
+                covered.add(key)
+                out.append(
+                    self._synthetic_document_response(
+                        student_id=st_id,
+                        document_type=doc_type,
+                        academic_year_id=year_for_doc,
+                        school_id=school_id,
+                        student_meta=student_meta,
+                    )
+                )
+        return out, extra_ids
 
     async def request_document(
         self,
@@ -500,17 +700,44 @@ class DocumentService:
         # (ID card, report card, etc.). Upload restrictions use required-doc rules only
         # in upload_document(), not here.
 
-        doc = await self.repo.create(
-            {
-                "student_id": body.student_id,
-                "document_type": body.document_type,
-                "file_key": None,
-                "status": DocumentStatus.PENDING,
-                "generated_at": None,
-                "academic_year_id": academic_year_id,
-                "school_id": school_id,
-            }
+        existing = await self.repo.get_by_student_type_year(
+            student_id=body.student_id,
+            school_id=school_id,
+            academic_year_id=academic_year_id,
+            document_type=body.document_type,
         )
+        if existing:
+            if existing.status == DocumentStatus.NOT_UPLOADED:
+                doc = await self.repo.update(
+                    existing,
+                    {"status": DocumentStatus.REQUESTED, "generated_at": None},
+                )
+            elif existing.status == DocumentStatus.REQUESTED:
+                raise ValidationException("This document has already been requested")
+            elif existing.status == DocumentStatus.PENDING:
+                raise ValidationException(
+                    "A file is already waiting for review for this document"
+                )
+            elif existing.status == DocumentStatus.APPROVED:
+                raise ValidationException("This document is already approved")
+            elif existing.status == DocumentStatus.REJECTED:
+                raise ValidationException(
+                    "This document was rejected — please re-upload the file instead"
+                )
+            else:
+                raise ValidationException("Cannot request this document in its current state")
+        else:
+            doc = await self.repo.create(
+                {
+                    "student_id": body.student_id,
+                    "document_type": body.document_type,
+                    "file_key": None,
+                    "status": DocumentStatus.REQUESTED,
+                    "generated_at": None,
+                    "academic_year_id": academic_year_id,
+                    "school_id": school_id,
+                }
+            )
         if body.document_type == DocumentType.OTHER and (body.note or "").strip():
             await self._save_request_note_for_document(
                 school_id=school_id,
@@ -529,6 +756,7 @@ class DocumentService:
         file: UploadFile,
         note: Optional[str],
         current_user: CurrentUser,
+        academic_year_id: Optional[uuid.UUID] = None,
     ) -> DocumentResponse:
         school_id = self._ensure_school(current_user)
         if not self._can_access_documents(current_user):
@@ -572,23 +800,48 @@ class DocumentService:
             content_type=file.content_type or "application/octet-stream",
         )
 
-        # Upload and verification are separate steps.
-        # Admin verifies explicitly from console; students/parents see updated status in app.
-        status = DocumentStatus.PROCESSING
+        is_family = current_user.role in (RoleEnum.STUDENT, RoleEnum.PARENT)
+        staff_issuer = current_user.role in (
+            RoleEnum.PRINCIPAL,
+            RoleEnum.STAFF_ADMIN,
+        )
+        direct_issue = staff_issuer or (
+            "document:manage" in current_user.permissions
+            and current_user.role not in (RoleEnum.STUDENT, RoleEnum.PARENT, RoleEnum.TEACHER)
+        )
+        post_status = (
+            DocumentStatus.APPROVED if direct_issue else DocumentStatus.PENDING
+        )
+        issued_at = datetime.now(timezone.utc) if post_status == DocumentStatus.APPROVED else None
 
-        existing_request = await self.repo.get_latest_pending_request(
+        # Family uploads always bind to the active academic year. Staff may pass
+        # the row's year so a REQUESTED document from a prior year is updated
+        # instead of creating a duplicate under the active year only.
+        lookup_year_id = active_year.id
+        if not is_family and academic_year_id is not None:
+            lookup_year_id = academic_year_id
+
+        row = await self.repo.get_by_student_type_year(
             student_id=student_id,
             school_id=school_id,
-            academic_year_id=active_year.id,
+            academic_year_id=lookup_year_id,
             document_type=document_type,
         )
-        if existing_request is not None:
+        if is_family:
+            if row and row.status == DocumentStatus.APPROVED:
+                raise ValidationException("This document is already approved")
+            if row and row.status == DocumentStatus.PENDING and (row.file_key or "").strip():
+                raise ValidationException(
+                    "This document is already under review — please wait for admin"
+                )
+        if row is not None:
             doc = await self.repo.update(
-                existing_request,
+                row,
                 {
                     "file_key": file_key,
-                    "status": status,
-                    "generated_at": None,
+                    "status": post_status,
+                    "generated_at": issued_at,
+                    "admin_comment": None,
                 },
             )
         else:
@@ -597,9 +850,9 @@ class DocumentService:
                     "student_id": student_id,
                     "document_type": document_type,
                     "file_key": file_key,
-                    "status": status,
-                    "generated_at": None,
-                    "academic_year_id": active_year.id,
+                    "status": post_status,
+                    "generated_at": issued_at,
+                    "academic_year_id": lookup_year_id,
                     "school_id": school_id,
                 }
             )
@@ -629,7 +882,7 @@ class DocumentService:
         academic_year_id: Optional[uuid.UUID] = None,
         standard_id: Optional[uuid.UUID] = None,
         section: Optional[str] = None,
-        status_filter: DocumentWorkflowFilter = DocumentWorkflowFilter.ALL,
+        status: Optional[DocumentStatus] = None,
     ) -> DocumentListResponse:
         school_id = self._ensure_school(current_user)
         if not self._can_access_documents(current_user):
@@ -640,24 +893,25 @@ class DocumentService:
         if student_id is None and not is_admin:
             raise ValidationException("student_id is required")
 
+        normalized_section = (section or "").strip() or None
+        admin_scope_all_statuses: list = []
         if student_id is not None:
             await self._assert_student_scope(current_user, school_id, student_id)
-            docs = await self.repo.list_for_student(student_id, school_id)
+            docs = await self.repo.list_for_student(
+                student_id, school_id, status=status
+            )
         else:
-            normalized_section = (section or "").strip() or None
-            docs = await self.repo.list_for_school(
+            admin_scope_all_statuses = await self.repo.list_for_school(
                 school_id,
                 academic_year_id=academic_year_id,
                 standard_id=standard_id,
                 section=normalized_section,
+                status=None,
             )
-
-        if status_filter != DocumentWorkflowFilter.ALL:
-            docs = [
-                d
-                for d in docs
-                if self._document_matches_workflow_filter(d, status_filter)
-            ]
+            if status is not None:
+                docs = [d for d in admin_scope_all_statuses if d.status == status]
+            else:
+                docs = admin_scope_all_statuses
 
         review_meta_map = await self._get_review_meta_map(school_id)
         required = (
@@ -668,61 +922,42 @@ class DocumentService:
             if student_id is not None
             else []
         )
-        student_meta: dict[uuid.UUID, dict] = {}
-        if student_id is None and docs:
-            from app.models.student import Student
-            from app.models.parent import Parent
-            from app.models.user import User
 
-            student_ids = list({d.student_id for d in docs})
-            rows = await self.db.execute(
-                select(
-                    Student.id,
-                    Student.admission_number,
-                    User.email,
-                    Parent.user_id,
-                )
-                .select_from(Student)
-                .join(User, User.id == Student.user_id, isouter=True)
-                .join(Parent, Parent.id == Student.parent_id, isouter=True)
-                .where(
-                    and_(
-                        Student.id.in_(student_ids),
-                        Student.school_id == school_id,
-                    )
-                )
+        synthetic_responses: list[DocumentResponse] = []
+        extra_student_ids: set[uuid.UUID] = set()
+        if student_id is None and is_admin and (
+            status is None or status == DocumentStatus.NOT_UPLOADED
+        ):
+            synthetic_responses, extra_student_ids = await self._admin_expand_missing_not_uploaded(
+                school_id=school_id,
+                academic_year_id=academic_year_id,
+                standard_id=standard_id,
+                section=normalized_section,
+                existing_docs=admin_scope_all_statuses,
             )
-            parent_user_ids: list[uuid.UUID] = []
-            parent_user_by_student: dict[uuid.UUID, uuid.UUID] = {}
-            for sid, admission, student_email, parent_user_id in rows.all():
-                student_meta[sid] = {
-                    "admission_number": admission,
-                    "student_name": student_email,
-                    "parent_name": None,
-                }
-                if parent_user_id:
-                    parent_user_ids.append(parent_user_id)
-                    parent_user_by_student[sid] = parent_user_id
 
-            parent_name_map: dict[uuid.UUID, str] = {}
-            if parent_user_ids:
-                parent_rows = await self.db.execute(
-                    select(User.id, User.email).where(User.id.in_(parent_user_ids))
-                )
-                for uid, email in parent_rows.all():
-                    if uid and email:
-                        parent_name_map[uid] = email
+        student_meta: dict[uuid.UUID, dict] = {}
+        if student_id is None:
+            all_ids = {d.student_id for d in docs} | extra_student_ids
+            if all_ids:
+                student_meta = await self._build_student_meta_map(school_id, all_ids)
 
-            for sid, p_uid in parent_user_by_student.items():
-                if sid in student_meta:
-                    student_meta[sid]["parent_name"] = parent_name_map.get(p_uid)
+        real_items = [
+            self._serialize_document_response(d, review_meta_map, student_meta)
+            for d in docs
+        ]
+        merged = real_items + synthetic_responses
+        merged.sort(
+            key=lambda r: (
+                (r.student_admission_number or "").lower(),
+                r.document_type.value,
+                str(r.id),
+            )
+        )
 
         return DocumentListResponse(
-            items=[
-                self._serialize_document_response(d, review_meta_map, student_meta)
-                for d in docs
-            ],
-            total=len(docs),
+            items=merged,
+            total=len(merged),
             required_documents=required,
         )
 
@@ -764,7 +999,7 @@ class DocumentService:
         can_verify = current_user.role in (
             RoleEnum.PRINCIPAL,
             RoleEnum.STAFF_ADMIN,
-            RoleEnum.STAFF_ADMIN,
+            RoleEnum.TRUSTEE,
         )
         if not can_verify:
             raise ForbiddenException(
@@ -774,28 +1009,37 @@ class DocumentService:
         doc = await self.repo.get_by_id(document_id, school_id)
         if not doc:
             raise NotFoundException("Document")
-        if body.approve and not doc.file_key:
+        if doc.status != DocumentStatus.PENDING or not (doc.file_key or "").strip():
             raise ValidationException(
-                "Cannot verify document before upload completes"
+                "Only uploaded documents that are pending review can be verified"
             )
-
         old_status = doc.status
-        status = DocumentStatus.READY if body.approve else DocumentStatus.FAILED
-        reviewed_at = datetime.now(timezone.utc)
         reason = (body.reason or "").strip() or None
-        await self.repo.update(
-            doc,
-            {
-                "status": status,
-                "generated_at": reviewed_at
-                if body.approve
-                else None,
-            },
-        )
+        reviewed_at = datetime.now(timezone.utc)
+        if body.approve:
+            status = DocumentStatus.APPROVED
+            await self.repo.update(
+                doc,
+                {
+                    "status": status,
+                    "generated_at": reviewed_at,
+                    "admin_comment": None,
+                },
+            )
+        else:
+            status = DocumentStatus.REJECTED
+            await self.repo.update(
+                doc,
+                {
+                    "status": status,
+                    "generated_at": None,
+                    "admin_comment": reason,
+                },
+            )
         await self._save_review_meta_for_document(
             school_id=school_id,
             document_id=doc.id,
-            review_note=reason,
+            review_note=None if body.approve else reason,
             reviewed_by=current_user.id,
             reviewed_at=reviewed_at,
             updated_by=current_user.id,
@@ -836,6 +1080,54 @@ class DocumentService:
         review_meta_map = await self._get_review_meta_map(school_id)
         return self._serialize_document_response(doc, review_meta_map)
 
+    async def _sync_placeholders_for_requirements(
+        self,
+        school_id: uuid.UUID,
+        items: list[dict],
+    ) -> None:
+        """Create NOT_UPLOADED rows for mandatory types (non-OTHER) when missing."""
+        from app.models.student import Student
+
+        for item in items:
+            doc_type_str = str(item.get("document_type") or "").strip().upper()
+            if doc_type_str not in DocumentType.__members__:
+                continue
+            if doc_type_str == DocumentType.OTHER.value:
+                continue
+            doc_type = DocumentType[doc_type_str]
+            row_year = self._parse_optional_uuid(item.get("academic_year_id"))
+            row_standard = self._parse_optional_uuid(item.get("standard_id"))
+            stmt = select(Student).where(Student.school_id == school_id)
+            if row_year is not None:
+                stmt = stmt.where(Student.academic_year_id == row_year)
+            if row_standard is not None:
+                stmt = stmt.where(Student.standard_id == row_standard)
+            res = await self.db.execute(stmt)
+            students = list(res.scalars().all())
+            for st in students:
+                year_for_doc = st.academic_year_id or row_year
+                if year_for_doc is None:
+                    ay = await get_active_year(school_id, self.db)
+                    year_for_doc = ay.id
+                existing = await self.repo.get_by_student_type_year(
+                    student_id=st.id,
+                    school_id=school_id,
+                    academic_year_id=year_for_doc,
+                    document_type=doc_type,
+                )
+                if existing is None:
+                    await self.repo.create(
+                        {
+                            "student_id": st.id,
+                            "document_type": doc_type,
+                            "file_key": None,
+                            "status": DocumentStatus.NOT_UPLOADED,
+                            "generated_at": None,
+                            "academic_year_id": year_for_doc,
+                            "school_id": school_id,
+                        }
+                    )
+
     async def upsert_required_documents(
         self,
         body: DocumentRequirementsUpsertRequest,
@@ -844,7 +1136,6 @@ class DocumentService:
         school_id = self._ensure_school(current_user)
         if current_user.role not in (
             RoleEnum.PRINCIPAL,
-            RoleEnum.STAFF_ADMIN,
             RoleEnum.STAFF_ADMIN,
         ):
             raise ForbiddenException("Only admin roles can manage required documents")
@@ -864,7 +1155,7 @@ class DocumentService:
             standard_key = str(item.standard_id) if item.standard_id else None
             row = {
                 "document_type": item.document_type.value.upper(),
-                "is_mandatory": bool(item.is_mandatory),
+                "is_mandatory": True,
                 "note": note,
                 "academic_year_id": year_key,
                 "standard_id": standard_key,
@@ -888,11 +1179,12 @@ class DocumentService:
             payload=payload,
             updated_by=current_user.id,
         )
+        await self._sync_placeholders_for_requirements(school_id, payload["items"])
         return DocumentRequirementsResponse(
             items=[
                 DocumentRequirementResponse(
                     document_type=DocumentType[row["document_type"]],
-                    is_mandatory=bool(row.get("is_mandatory", True)),
+                    is_mandatory=True,
                     note=row.get("note"),
                     academic_year_id=self._parse_optional_uuid(row.get("academic_year_id")),
                     standard_id=self._parse_optional_uuid(row.get("standard_id")),
@@ -923,7 +1215,7 @@ class DocumentService:
             items=[
                 DocumentRequirementResponse(
                     document_type=DocumentType[row["document_type"]],
-                    is_mandatory=bool(row.get("is_mandatory", True)),
+                    is_mandatory=True,
                     note=row.get("note"),
                     academic_year_id=self._parse_optional_uuid(row.get("academic_year_id")),
                     standard_id=self._parse_optional_uuid(row.get("standard_id")),
@@ -992,17 +1284,23 @@ class DocumentService:
                 latest_doc = latest_other_by_key.get(self._requirement_key(item))
             meta = review_meta_map.get(str(latest_doc.id), {}) if latest_doc else {}
             latest_status = latest_doc.status if latest_doc else None
-            needs_reupload = latest_status == DocumentStatus.FAILED
-            is_completed = latest_status == DocumentStatus.READY
+            needs_reupload = latest_status == DocumentStatus.REJECTED
+            is_completed = latest_status == DocumentStatus.APPROVED
+            meta_note = meta.get("review_note") if isinstance(meta, dict) else None
+            raw_admin = getattr(latest_doc, "admin_comment", None) if latest_doc else None
+            admin_note = raw_admin.strip() if isinstance(raw_admin, str) and raw_admin.strip() else None
+            combined_note = admin_note or (
+                meta_note.strip() if isinstance(meta_note, str) and meta_note.strip() else None
+            )
             statuses.append(
                 DocumentRequirementStatusResponse(
                     document_type=doc_type,
-                    is_mandatory=bool(item.get("is_mandatory", True)),
+                    is_mandatory=True,
                     note=item.get("note"),
                     latest_document_id=latest_doc.id if latest_doc else None,
                     latest_status=latest_status,
                     uploaded_at=latest_doc.requested_at if latest_doc else None,
-                    review_note=meta.get("review_note"),
+                    review_note=combined_note,
                     reviewed_by=self._parse_optional_uuid(meta.get("reviewed_by")),
                     reviewed_at=self._parse_optional_datetime(meta.get("reviewed_at")),
                     needs_reupload=needs_reupload,

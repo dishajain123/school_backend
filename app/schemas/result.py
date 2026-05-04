@@ -111,6 +111,33 @@ class ResultEntryResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ResultEntryTableItem(BaseModel):
+    id: uuid.UUID
+    exam_id: uuid.UUID
+    exam_name: str
+    academic_year_id: uuid.UUID
+    standard_id: uuid.UUID
+    student_id: uuid.UUID
+    student_name: str
+    admission_number: str
+    section: Optional[str] = None
+    subject_id: uuid.UUID
+    subject_name: str
+    marks_obtained: float
+    max_marks: float
+    percentage: float
+    is_published: bool
+    entered_by: Optional[uuid.UUID] = None
+    entered_by_name: Optional[str] = None
+    entered_at: datetime
+    updated_at: datetime
+
+
+class ResultEntryTableResponse(BaseModel):
+    items: list[ResultEntryTableItem]
+    total: int
+
+
 class ResultListResponse(BaseModel):
     items: list[ResultEntryResponse]
     total: int
@@ -126,6 +153,7 @@ class ResultDistributionSubjectItem(BaseModel):
     percentage: float
     grade_letter: Optional[str] = None
     is_published: bool
+    entered_by_name: Optional[str] = None
 
 
 class ResultDistributionStudentItem(BaseModel):

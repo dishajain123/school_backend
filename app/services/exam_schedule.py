@@ -12,6 +12,7 @@ from app.core.exceptions import (
     NotFoundException,
     ValidationException,
 )
+from app.models.exam import Exam
 from app.repositories.exam_schedule import ExamScheduleRepository
 from app.repositories.notification import NotificationRepository
 from app.schemas.exam_schedule import (
@@ -81,6 +82,10 @@ async def _notify_exam_schedule_published(
 
 
 class ExamScheduleService:
+    @staticmethod
+    def _normalize_section(section: Optional[str]) -> str:
+        return (section or "").strip().upper()
+
     def __init__(self, db: AsyncSession):
         self.db = db
         self.repo = ExamScheduleRepository(db)
@@ -133,35 +138,49 @@ class ExamScheduleService:
         current_user: CurrentUser,
     ) -> ExamSeriesResponse:
         school_id = self._ensure_school(current_user)
-        academic_year_id = body.academic_year_id
-        if not academic_year_id:
-            academic_year_id = (await get_active_year(school_id, self.db)).id
+        normalized_section = self._normalize_section(body.section)
+
+        exam_row = await self.db.execute(
+            select(Exam).where(
+                and_(
+                    Exam.id == body.exam_id,
+                    Exam.school_id == school_id,
+                )
+            )
+        )
+        exam = exam_row.scalar_one_or_none()
+        if not exam:
+            raise NotFoundException("Exam")
 
         if current_user.role == RoleEnum.TEACHER:
             await self._assert_teacher_assigned_standard(
                 school_id=school_id,
                 current_user=current_user,
-                standard_id=body.standard_id,
-                academic_year_id=academic_year_id,
+                standard_id=exam.standard_id,
+                academic_year_id=exam.academic_year_id,
             )
 
-        existing = await self.repo.get_series_duplicate(
+        existing = await self.repo.get_series_duplicate_by_exam_section(
             school_id=school_id,
-            standard_id=body.standard_id,
-            academic_year_id=academic_year_id,
-            name=body.name,
+            exam_id=body.exam_id,
+            section=normalized_section,
         )
         if existing:
-            raise ConflictException("Exam series already exists for this class and year")
+            uploader = "Unknown user"
+            if existing.creator and existing.creator.full_name:
+                uploader = existing.creator.full_name
+            raise ConflictException(f"Already uploaded by {uploader}")
 
         series = await self.repo.create_series(
             {
                 "name": body.name,
-                "standard_id": body.standard_id,
-                "academic_year_id": academic_year_id,
+                "exam_id": exam.id,
+                "standard_id": exam.standard_id,
+                "academic_year_id": exam.academic_year_id,
                 "is_published": False,
                 "created_by": current_user.id,
                 "school_id": school_id,
+                "section": normalized_section,
             }
         )
         await self.db.refresh(series)
@@ -265,28 +284,36 @@ class ExamScheduleService:
         self,
         standard_id: uuid.UUID,
         series_id: Optional[uuid.UUID],
+        exam_id: Optional[uuid.UUID],
+        section: Optional[str],
         current_user: CurrentUser,
     ) -> ExamScheduleTable:
         school_id = self._ensure_school(current_user)
+        normalized_section = self._normalize_section(section)
 
         from app.models.student import Student
 
         if current_user.role == RoleEnum.STUDENT:
             result = await self.db.execute(
-                select(Student.standard_id).where(
+                select(Student.standard_id, Student.section).where(
                     and_(
                         Student.user_id == current_user.id,
                         Student.school_id == school_id,
                     )
                 )
             )
-            own_standard_id = result.scalar_one_or_none()
+            own_row = result.one_or_none()
+            own_standard_id = own_row[0] if own_row else None
+            own_section = self._normalize_section(own_row[1] if own_row else None)
             if not own_standard_id or own_standard_id != standard_id:
                 raise ForbiddenException("You can only view your own class exam schedule")
+            if normalized_section and normalized_section != own_section:
+                raise ForbiddenException("You can only view your own section exam schedule")
+            normalized_section = own_section
 
         elif current_user.role == RoleEnum.PARENT:
             result = await self.db.execute(
-                select(Student.id).where(
+                select(Student.id, Student.section).where(
                     and_(
                         Student.standard_id == standard_id,
                         Student.parent_id == current_user.parent_id,
@@ -294,8 +321,15 @@ class ExamScheduleService:
                     )
                 )
             )
-            if not result.scalar_one_or_none():
+            parent_rows = result.all()
+            if not parent_rows:
                 raise ForbiddenException("You do not have a child in this class")
+            if normalized_section:
+                has_section = any(
+                    self._normalize_section(row[1]) == normalized_section for row in parent_rows
+                )
+                if not has_section:
+                    raise ForbiddenException("You do not have a child in this section")
 
         elif current_user.role == RoleEnum.TEACHER:
             active_year_id = (await get_active_year(school_id, self.db)).id
@@ -310,6 +344,8 @@ class ExamScheduleService:
             visible_series = await self.repo.list_series(
                 school_id=school_id,
                 standard_id=standard_id,
+                exam_id=exam_id,
+                section=normalized_section if normalized_section else None,
                 published_only=current_user.role in (RoleEnum.PARENT, RoleEnum.STUDENT),
             )
             if not visible_series:
@@ -331,9 +367,12 @@ class ExamScheduleService:
         *,
         standard_id: uuid.UUID,
         academic_year_id: Optional[uuid.UUID],
+        exam_id: Optional[uuid.UUID],
+        section: Optional[str],
         current_user: CurrentUser,
     ) -> list[ExamSeriesResponse]:
         school_id = self._ensure_school(current_user)
+        normalized_section = self._normalize_section(section)
         from app.models.student import Student
 
         if current_user.role == RoleEnum.STUDENT:
@@ -373,6 +412,8 @@ class ExamScheduleService:
         series = await self.repo.list_series(
             school_id=school_id,
             standard_id=standard_id,
+            exam_id=exam_id,
+            section=normalized_section if normalized_section else None,
             academic_year_id=academic_year_id,
             published_only=published_only,
         )

@@ -165,32 +165,13 @@ class DocumentType(str, Enum):
 
 
 class DocumentStatus(str, Enum):
-    # Current workflow statuses (used by services and admin UI)
+    """Single lifecycle enum for student documents (source of truth for API + DB)."""
+
+    NOT_UPLOADED = "NOT_UPLOADED"
     PENDING = "PENDING"
-    PROCESSING = "PROCESSING"
-    READY = "READY"
-    FAILED = "FAILED"
-
-    # Legacy statuses kept for compatibility with historical rows
-    VERIFIED = "VERIFIED"
+    APPROVED = "APPROVED"
     REJECTED = "REJECTED"
-
-
-class DocumentWorkflowFilter(str, Enum):
-    """Buckets for GET /documents list filtering (UI: All / Requested / Pending / Approved / Rejected).
-
-    Mapping (single source of truth with DocumentService._document_matches_workflow_filter):
-    - REQUESTED: status PENDING and no file uploaded yet (family/admin requested issuance).
-    - PENDING: file present, awaiting principal verification (PROCESSING, or legacy PENDING+file).
-    - APPROVED: READY or legacy VERIFIED.
-    - REJECTED: FAILED or legacy REJECTED.
-    """
-
-    ALL = "all"
-    REQUESTED = "requested"
-    PENDING = "pending"
-    APPROVED = "approved"
-    REJECTED = "rejected"
+    REQUESTED = "REQUESTED"
 
 
 class AnnouncementType(str, Enum):

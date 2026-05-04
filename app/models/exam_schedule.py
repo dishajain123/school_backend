@@ -4,13 +4,14 @@ import uuid
 from datetime import date, time
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import String, Boolean, Date, Time, Integer, ForeignKey, UniqueConstraint
+from sqlalchemy import String, Boolean, Date, Time, Integer, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import BaseModel
 
 if TYPE_CHECKING:
+    from app.models.exam import Exam
     from app.models.masters import Standard, Subject
     from app.models.academic_year import AcademicYear
     from app.models.school import School
@@ -19,17 +20,14 @@ if TYPE_CHECKING:
 
 class ExamSeries(BaseModel):
     __tablename__ = "exam_series"
-    __table_args__ = (
-        UniqueConstraint(
-            "school_id",
-            "standard_id",
-            "academic_year_id",
-            "name",
-            name="uq_exam_series_name_standard_year_school",
-        ),
-    )
 
     name: Mapped[str] = mapped_column(String(150), nullable=False)
+    exam_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("exams.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     standard_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("standards.id", ondelete="CASCADE"),
@@ -57,7 +55,16 @@ class ExamSeries(BaseModel):
         nullable=False,
         index=True,
     )
+    section: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        default="",
+        server_default="",
+    )
 
+    exam: Mapped[Optional["Exam"]] = relationship(
+        "Exam", foreign_keys=[exam_id], lazy="select"
+    )
     standard: Mapped["Standard"] = relationship(
         "Standard", foreign_keys=[standard_id], lazy="select"
     )

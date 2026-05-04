@@ -10,8 +10,10 @@ from app.models.exam_schedule import ExamSeries, ExamScheduleEntry
 
 def _series_with_relations(stmt):
     return stmt.options(
+        selectinload(ExamSeries.exam),
         selectinload(ExamSeries.standard),
         selectinload(ExamSeries.academic_year),
+        selectinload(ExamSeries.creator),
     )
 
 
@@ -50,6 +52,8 @@ class ExamScheduleRepository:
         *,
         school_id: uuid.UUID,
         standard_id: uuid.UUID,
+        exam_id: Optional[uuid.UUID] = None,
+        section: Optional[str] = None,
         academic_year_id: Optional[uuid.UUID] = None,
         published_only: bool = False,
     ) -> list[ExamSeries]:
@@ -66,13 +70,22 @@ class ExamScheduleRepository:
         )
         if academic_year_id is not None:
             stmt = stmt.where(ExamSeries.academic_year_id == academic_year_id)
+        if exam_id is not None:
+            stmt = stmt.where(ExamSeries.exam_id == exam_id)
+        if section is not None:
+            normalized = section.strip().upper()
+            stmt = stmt.where(ExamSeries.section == normalized)
         if published_only:
             stmt = stmt.where(ExamSeries.is_published.is_(True))
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
     async def get_series_duplicate(
-        self, school_id: uuid.UUID, standard_id: uuid.UUID, academic_year_id: uuid.UUID, name: str
+        self,
+        school_id: uuid.UUID,
+        standard_id: uuid.UUID,
+        academic_year_id: uuid.UUID,
+        name: str,
     ) -> Optional[ExamSeries]:
         result = await self.db.execute(
             select(ExamSeries).where(
@@ -81,6 +94,26 @@ class ExamScheduleRepository:
                     ExamSeries.standard_id == standard_id,
                     ExamSeries.academic_year_id == academic_year_id,
                     ExamSeries.name == name,
+                )
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_series_duplicate_by_exam_section(
+        self,
+        *,
+        school_id: uuid.UUID,
+        exam_id: uuid.UUID,
+        section: str,
+    ) -> Optional[ExamSeries]:
+        result = await self.db.execute(
+            _series_with_relations(
+                select(ExamSeries).where(
+                    and_(
+                        ExamSeries.school_id == school_id,
+                        ExamSeries.exam_id == exam_id,
+                        ExamSeries.section == section.strip().upper(),
+                    )
                 )
             )
         )

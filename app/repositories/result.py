@@ -22,6 +22,8 @@ def _result_with_relations(stmt):
         selectinload(Result.student).selectinload(Student.user),
         selectinload(Result.subject),
         selectinload(Result.grade),
+        selectinload(Result.enterer),
+        selectinload(Result.exam),
     )
 
 
@@ -219,6 +221,40 @@ class ResultRepository:
         )
         if entered_by is not None:
             stmt = stmt.where(Result.entered_by == entered_by)
+        result = await self.db.execute(_result_with_relations(stmt))
+        return list(result.scalars().all())
+
+    async def list_results_filtered(
+        self,
+        *,
+        school_id: uuid.UUID,
+        academic_year_id: Optional[uuid.UUID] = None,
+        standard_id: Optional[uuid.UUID] = None,
+        section: Optional[str] = None,
+        exam_id: Optional[uuid.UUID] = None,
+    ) -> list[Result]:
+        stmt = (
+            select(Result)
+            .join(
+                Exam,
+                and_(
+                    Exam.id == Result.exam_id,
+                    Exam.school_id == school_id,
+                ),
+            )
+            .join(Student, Student.id == Result.student_id)
+            .where(Result.school_id == school_id)
+            .order_by(Result.updated_at.desc())
+        )
+        if academic_year_id is not None:
+            stmt = stmt.where(Exam.academic_year_id == academic_year_id)
+        if standard_id is not None:
+            stmt = stmt.where(Exam.standard_id == standard_id)
+        if exam_id is not None:
+            stmt = stmt.where(Result.exam_id == exam_id)
+        if section is not None and section.strip():
+            stmt = stmt.where(func.trim(Student.section) == section.strip())
+
         result = await self.db.execute(_result_with_relations(stmt))
         return list(result.scalars().all())
 

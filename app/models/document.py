@@ -31,11 +31,12 @@ class Document(BaseModel):
         nullable=False,
     )
     file_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    admin_comment: Mapped[Optional[str]] = mapped_column(String(2000), nullable=True)
     status: Mapped[DocumentStatus] = mapped_column(
-        Enum(DocumentStatus, name="document_status_enum"),
+        Enum(DocumentStatus, native_enum=False, length=32),
         nullable=False,
-        default=DocumentStatus.PENDING,
-        server_default=DocumentStatus.PENDING.value,
+        default=DocumentStatus.NOT_UPLOADED,
+        server_default=DocumentStatus.NOT_UPLOADED.value,
     )
     requested_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

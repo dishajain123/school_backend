@@ -13,6 +13,7 @@ from app.schemas.result import (
     ExamResponse,
     ResultBulkCreate,
     ResultListResponse,
+    ResultEntryTableResponse,
     ResultDistributionResponse,
     ReportCardResponse,
     ReportCardUploadResponse,
@@ -63,6 +64,24 @@ async def bulk_enter_results(
     db: AsyncSession = Depends(get_db),
 ):
     return await ResultService(db).bulk_enter_results(payload, current_user)
+
+
+@router.get("/entries", response_model=ResultEntryTableResponse)
+async def list_result_entries(
+    academic_year_id: Optional[uuid.UUID] = Query(None),
+    standard_id: Optional[uuid.UUID] = Query(None),
+    section: Optional[str] = Query(None),
+    exam_id: Optional[uuid.UUID] = Query(None),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await ResultService(db).list_result_entries(
+        current_user=current_user,
+        academic_year_id=academic_year_id,
+        standard_id=standard_id,
+        section=section,
+        exam_id=exam_id,
+    )
 
 
 @router.patch("/exams/{exam_id}/publish")

@@ -32,16 +32,21 @@ class DocumentRepository:
         return result.scalar_one_or_none()
 
     async def list_for_student(
-        self, student_id: uuid.UUID, school_id: uuid.UUID
+        self,
+        student_id: uuid.UUID,
+        school_id: uuid.UUID,
+        *,
+        status: Optional[DocumentStatus] = None,
     ) -> list[Document]:
-        result = await self.db.execute(
-            select(Document).where(
-                and_(
-                    Document.student_id == student_id,
-                    Document.school_id == school_id,
-                )
-            ).order_by(Document.requested_at.desc())
+        stmt = select(Document).where(
+            and_(
+                Document.student_id == student_id,
+                Document.school_id == school_id,
+            )
         )
+        if status is not None:
+            stmt = stmt.where(Document.status == status)
+        result = await self.db.execute(stmt.order_by(Document.updated_at.desc()))
         return list(result.scalars().all())
 
     async def list_for_school(
@@ -51,6 +56,7 @@ class DocumentRepository:
         academic_year_id: Optional[uuid.UUID] = None,
         standard_id: Optional[uuid.UUID] = None,
         section: Optional[str] = None,
+        status: Optional[DocumentStatus] = None,
     ) -> list[Document]:
         stmt = (
             select(Document)
@@ -68,7 +74,9 @@ class DocumentRepository:
             stmt = stmt.where(Student.standard_id == standard_id)
         if section is not None:
             stmt = stmt.where(Student.section == section)
-        result = await self.db.execute(stmt.order_by(Document.requested_at.desc()))
+        if status is not None:
+            stmt = stmt.where(Document.status == status)
+        result = await self.db.execute(stmt.order_by(Document.updated_at.desc()))
         return list(result.scalars().all())
 
     async def list_for_students(
@@ -95,7 +103,7 @@ class DocumentRepository:
         await self.db.refresh(doc)
         return doc
 
-    async def get_latest_pending_request(
+    async def get_by_student_type_year(
         self,
         *,
         student_id: uuid.UUID,
@@ -104,15 +112,15 @@ class DocumentRepository:
         document_type: DocumentType,
     ) -> Optional[Document]:
         result = await self.db.execute(
-            select(Document).where(
+            select(Document)
+            .where(
                 and_(
                     Document.student_id == student_id,
                     Document.school_id == school_id,
                     Document.academic_year_id == academic_year_id,
                     Document.document_type == document_type,
-                    Document.status == DocumentStatus.PENDING,
-                    Document.file_key.is_(None),
                 )
-            ).order_by(Document.requested_at.desc())
+            )
+            .order_by(Document.updated_at.desc())
         )
         return result.scalars().first()

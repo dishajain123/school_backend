@@ -62,12 +62,16 @@ async def cancel_entry(
 async def get_schedule(
     standard_id: uuid.UUID = Query(...),
     series_id: Optional[uuid.UUID] = Query(None),
+    exam_id: Optional[uuid.UUID] = Query(None),
+    section: Optional[str] = Query(None),
     current_user: CurrentUser = Depends(require_permission("exam_schedule:read")),
     db: AsyncSession = Depends(get_db),
 ):
     return await ExamScheduleService(db).get_schedule(
         standard_id=standard_id,
         series_id=series_id,
+        exam_id=exam_id,
+        section=section,
         current_user=current_user,
     )
 
@@ -76,11 +80,15 @@ async def get_schedule(
 async def list_series(
     standard_id: uuid.UUID = Query(...),
     academic_year_id: Optional[uuid.UUID] = Query(None),
+    exam_id: Optional[uuid.UUID] = Query(None),
+    section: Optional[str] = Query(None),
     current_user: CurrentUser = Depends(require_permission("exam_schedule:read")),
     db: AsyncSession = Depends(get_db),
 ):
     return await ExamScheduleService(db).list_series(
         standard_id=standard_id,
         academic_year_id=academic_year_id,
+        exam_id=exam_id,
+        section=section,
         current_user=current_user,
     )

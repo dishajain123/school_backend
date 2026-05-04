@@ -16,7 +16,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import hash_password
@@ -89,6 +89,50 @@ DEMO_PASSWORD = "Demo@123"
 async def first_or_none(db: AsyncSession, stmt):
     result = await db.execute(stmt)
     return result.scalar_one_or_none()
+
+
+async def _documents_status_is_varchar(db: AsyncSession) -> bool:
+    """True when ``documents.status`` is plain varchar (post document-status migrations)."""
+
+    def _check(sync_session) -> bool:
+        row = sync_session.execute(
+            text(
+                """
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema()
+                  AND table_name = 'documents'
+                  AND column_name = 'status'
+                  AND data_type = 'character varying'
+                """
+            )
+        ).first()
+        return row is not None
+
+    return await db.run_sync(_check)
+
+
+async def _normalize_legacy_document_status_strings(db: AsyncSession) -> None:
+    """Align old DB status values with DocumentStatus before any Document ORM loads.
+
+    After the document lifecycle refactor, rows may still store READY, PROCESSING,
+    FAILED, etc. SQLAlchemy will raise LookupError when hydrating Document.status.
+
+    If ``status`` is still PostgreSQL ``document_status_enum``, assigning ``APPROVED``
+    etc. fails at the database. Run ``alembic upgrade head`` (including repair
+    ``0a1b2c3d4e6``) first; then ``status`` is VARCHAR and these updates are safe.
+    """
+    if not await _documents_status_is_varchar(db):
+        return
+    for sql in (
+        "UPDATE documents SET status = 'APPROVED' WHERE UPPER(TRIM(status::text)) IN ('READY', 'VERIFIED')",
+        "UPDATE documents SET status = 'REJECTED' WHERE UPPER(TRIM(status::text)) IN ('FAILED')",
+        "UPDATE documents SET status = 'PENDING' WHERE UPPER(TRIM(status::text)) = 'PROCESSING'",
+        """UPDATE documents SET status = 'REQUESTED'
+            WHERE UPPER(TRIM(status::text)) = 'PENDING'
+              AND (file_key IS NULL OR TRIM(COALESCE(file_key, '')) = '')""",
+    ):
+        await db.execute(text(sql))
+    await db.flush()
 
 
 async def get_or_create_school(db: AsyncSession) -> School:
@@ -1609,11 +1653,13 @@ async def seed_demo(db: AsyncSession) -> dict[str, str]:
         if not exam_series:
             exam_series = ExamSeries(
                 name=series_name,
+                exam_id=exam.id,
                 standard_id=standard.id,
                 academic_year_id=year.id,
                 is_published=True,
                 created_by=principal_user.id,
                 school_id=school.id,
+                section="",
             )
             db.add(exam_series)
             await db.flush()
@@ -1925,44 +1971,50 @@ async def seed_demo(db: AsyncSession) -> dict[str, str]:
                 )
             )
 
-    # Status semantics (aligned with DocumentService):
-    # - READY: issued/verified file available
-    # - PROCESSING: file uploaded, awaiting admin verification (must have file_key)
-    # - PENDING: requested by family or admin, no file yet
+    await _normalize_legacy_document_status_strings(db)
+
+    # Status semantics: NOT_UPLOADED, REQUESTED, PENDING, APPROVED, REJECTED
     document_rows = [
         (
             students[3],
             DocumentType.REPORT_CARD,
             f"demo/documents/{students[3].admission_number.lower()}-report-card.pdf",
-            DocumentStatus.READY,
+            DocumentStatus.APPROVED,
             datetime.now(timezone.utc) - timedelta(days=3),
         ),
         (
             students[4],
             DocumentType.REPORT_CARD,
             f"demo/documents/{students[4].admission_number.lower()}-report-card.pdf",
-            DocumentStatus.READY,
+            DocumentStatus.APPROVED,
             datetime.now(timezone.utc) - timedelta(days=4),
         ),
         (
             students[1],
             DocumentType.BONAFIDE,
             f"demo/documents/{students[1].admission_number.lower()}-bonafide-upload.pdf",
-            DocumentStatus.PROCESSING,
+            DocumentStatus.PENDING,
             None,
         ),
         (
             students[2],
             DocumentType.ID_CARD,
             None,
-            DocumentStatus.PENDING,
+            DocumentStatus.REQUESTED,
             None,
         ),
         (
             students[0],
             DocumentType.ID_PROOF,
             f"demo/documents/{students[0].admission_number.lower()}-id-proof-rejected.pdf",
-            DocumentStatus.FAILED,
+            DocumentStatus.REJECTED,
+            None,
+        ),
+        (
+            students[3],
+            DocumentType.ADDRESS_PROOF,
+            None,
+            DocumentStatus.NOT_UPLOADED,
             None,
         ),
     ]
@@ -1985,6 +2037,11 @@ async def seed_demo(db: AsyncSession) -> dict[str, str]:
                     generated_at=generated_at,
                     academic_year_id=year.id,
                     school_id=school.id,
+                    admin_comment=(
+                        "Please upload a clearer scan."
+                        if status == DocumentStatus.REJECTED
+                        else None
+                    ),
                 )
             )
 
