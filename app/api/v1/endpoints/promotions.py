@@ -7,7 +7,7 @@ not new User. Previous year mappings are NEVER overwritten; they become
 PROMOTED / REPEATED / COMPLETED terminal states.
 
 Permission map:
-  student:promote  → Academic Admin (PRINCIPAL), Superadmin
+  student:promote  → Academic Admin (PRINCIPAL), Staff Admin
   enrollment:read  → Staff Admin (preview only)
 """
 import uuid
@@ -94,7 +94,7 @@ async def execute_promotion(
     CRITICAL: Previous year mappings are NOT deleted. They become read-only
     historical records. All audit actions are logged.
 
-    Only Academic Admin (PRINCIPAL) and Superadmin may execute.
+    Only Academic Admin (PRINCIPAL) and Staff Admin may execute.
     """
     if not current_user.school_id:
         raise ForbiddenException("School context required")
@@ -143,7 +143,7 @@ async def copy_teacher_assignments(
     assignments can always be created manually. Existing assignments in the
     target year are skipped (not overwritten) unless overwrite_existing=true.
 
-    Only Academic Admin / Principal / Superadmin may run this.
+    Only Academic Admin / Principal / Staff Admin may run this.
     """
     if not current_user.school_id:
         raise ForbiddenException("School context required")

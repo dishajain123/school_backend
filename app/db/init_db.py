@@ -11,6 +11,32 @@ async def init_db() -> None:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
 
+            # Legacy single-school: former SUPERADMIN accounts become STAFF_ADMIN.
+            await conn.execute(
+                text(
+                    """
+                    DO $$
+                    BEGIN
+                        IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'roleenum')
+                           AND EXISTS (
+                               SELECT 1 FROM pg_enum e
+                               JOIN pg_type t ON e.enumtypid = t.oid
+                               WHERE t.typname = 'roleenum' AND e.enumlabel = 'SUPERADMIN'
+                           )
+                           AND EXISTS (
+                               SELECT 1 FROM pg_enum e
+                               JOIN pg_type t ON e.enumtypid = t.oid
+                               WHERE t.typname = 'roleenum' AND e.enumlabel = 'STAFF_ADMIN'
+                           )
+                        THEN
+                            UPDATE users SET role = 'STAFF_ADMIN'::roleenum
+                            WHERE users.role::text = 'SUPERADMIN';
+                        END IF;
+                    END $$;
+                    """
+                )
+            )
+
             # ── Attendance: section + lecture_number columns ───────────────────
             await conn.execute(
                 text(

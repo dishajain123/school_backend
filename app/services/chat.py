@@ -162,7 +162,7 @@ class ChatService:
             return (RoleEnum.TEACHER, RoleEnum.PRINCIPAL)
         if role == RoleEnum.STUDENT:
             return (RoleEnum.TEACHER, RoleEnum.PRINCIPAL)
-        if role == RoleEnum.SUPERADMIN:
+        if role == RoleEnum.STAFF_ADMIN:
             return (
                 RoleEnum.PRINCIPAL,
                 RoleEnum.TRUSTEE,

@@ -425,7 +425,7 @@ class TimetableService:
                     raise ForbiddenException(
                         "Please select your child's section to view timetable"
                     )
-        elif current_user.role in (RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN):
+        elif current_user.role in (RoleEnum.PRINCIPAL, RoleEnum.STAFF_ADMIN):
             pass
         else:
             raise ForbiddenException(

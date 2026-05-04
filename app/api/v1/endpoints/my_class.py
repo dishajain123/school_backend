@@ -11,7 +11,7 @@ Role-access summary:
   STUDENT    : read-only for their enrolled class/section/year
                attempt quizzes (current year only)
   PARENT     : same as student but scoped to child via ?child_id= (decision #4)
-  PRINCIPAL / SUPERADMIN : read-only everything
+  PRINCIPAL / staff admin : read-only everything
   ADMIN      : read-only
 
 All responses are auto-wrapped in the existing envelope:

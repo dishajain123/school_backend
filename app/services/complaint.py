@@ -82,7 +82,7 @@ class ComplaintService:
         return (
             "complaint:read" in current_user.permissions
             and current_user.role
-            in (RoleEnum.PRINCIPAL, RoleEnum.TRUSTEE, RoleEnum.SUPERADMIN)
+            in (RoleEnum.PRINCIPAL, RoleEnum.TRUSTEE, RoleEnum.STAFF_ADMIN)
         )
 
     def _build_response(
@@ -170,11 +170,7 @@ class ComplaintService:
             submitted_by = current_user.id
 
         role_filter = submitted_by_role
-        if role_filter == RoleEnum.PRINCIPAL:
-            role_filter = None
-        if role_filter == RoleEnum.TRUSTEE:
-            role_filter = None
-        if role_filter == RoleEnum.SUPERADMIN:
+        if role_filter in (RoleEnum.PRINCIPAL, RoleEnum.TRUSTEE, RoleEnum.STAFF_ADMIN):
             role_filter = None
 
         complaints = await self.repo.list_complaints(
@@ -202,7 +198,7 @@ class ComplaintService:
         school_id = self._ensure_school(current_user)
         if not self._can_manage_status(current_user):
             raise ForbiddenException(
-                "Only principal, trustee, or superadmin can update complaint status"
+                "Only principal, trustee, or staff admin can update complaint status"
             )
         complaint = await self.repo.get_complaint_by_id(complaint_id, school_id)
         if not complaint:

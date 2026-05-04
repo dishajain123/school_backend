@@ -957,7 +957,7 @@ class MyClassService:
             )
         elif current_user.role not in (
             RoleEnum.PRINCIPAL,
-            RoleEnum.SUPERADMIN,
+            RoleEnum.STAFF_ADMIN,
             RoleEnum.TRUSTEE,
             RoleEnum.STAFF_ADMIN,
         ):
@@ -966,7 +966,7 @@ class MyClassService:
         include_answers = current_user.role in (
             RoleEnum.TEACHER,
             RoleEnum.PRINCIPAL,
-            RoleEnum.SUPERADMIN,
+            RoleEnum.STAFF_ADMIN,
             RoleEnum.TRUSTEE,
             RoleEnum.STAFF_ADMIN,
         )
@@ -1217,7 +1217,7 @@ class MyClassService:
             )
         elif current_user.role not in (
             RoleEnum.PRINCIPAL,
-            RoleEnum.SUPERADMIN,
+            RoleEnum.STAFF_ADMIN,
             RoleEnum.TRUSTEE,
             RoleEnum.STAFF_ADMIN,
         ):

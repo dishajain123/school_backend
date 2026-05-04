@@ -22,7 +22,7 @@ async def get_principal_overview(
     academic_year_id: Optional[uuid.UUID] = Query(None),
     report_date: Optional[date] = Query(None),
     current_user: CurrentUser = Depends(
-        require_roles(RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN, RoleEnum.TRUSTEE)
+        require_roles(RoleEnum.PRINCIPAL, RoleEnum.STAFF_ADMIN, RoleEnum.TRUSTEE)
     ),
     db: AsyncSession = Depends(get_db),
 ):
@@ -47,7 +47,7 @@ async def get_principal_details(
     teacher_id: Optional[uuid.UUID] = Query(None),
     subject_id: Optional[uuid.UUID] = Query(None),
     current_user: CurrentUser = Depends(
-        require_roles(RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN, RoleEnum.TRUSTEE)
+        require_roles(RoleEnum.PRINCIPAL, RoleEnum.STAFF_ADMIN, RoleEnum.TRUSTEE)
     ),
     db: AsyncSession = Depends(get_db),
 ):

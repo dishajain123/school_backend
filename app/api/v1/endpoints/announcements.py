@@ -20,7 +20,7 @@ router = APIRouter(prefix="/announcements", tags=["Announcements"])
 
 
 def _can_manage_announcements(user: CurrentUser) -> bool:
-    if user.role in (RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN):
+    if user.role in (RoleEnum.PRINCIPAL, RoleEnum.STAFF_ADMIN):
         return True
     return "announcement:create" in user.permissions
 

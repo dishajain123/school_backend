@@ -11,8 +11,11 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import AsyncSessionLocal
+from app.models.role import Role
+from app.models.role_permission import RolePermission
 from app.repositories.rbac import RbacRepository
 from app.utils.enums import RoleEnum
 
@@ -56,14 +59,14 @@ ALL_PERMISSIONS: list[tuple[str, str]] = [
     ("complaint:read",            "View and manage complaints"),
     ("behaviour_log:create",      "Log student behaviour incidents"),
     ("behaviour_log:read",        "View student behaviour logs"),
-    ("school:manage",             "Create and manage schools (superadmin only)"),
+    ("school:manage",             "Create and manage school record (staff admin)"),
     ("approval:review",           "Review pending registrations and validation findings"),
     ("approval:decide",           "Approve, reject, or hold registrations"),
 ]
 
 ROLE_DEFINITIONS: dict[str, str] = {
-    RoleEnum.SUPERADMIN.value: "Full system access including multi-school management",
-    RoleEnum.PRINCIPAL.value:  "Full operational control of a school",
+    RoleEnum.STAFF_ADMIN.value: "School administrator — web console operations (single school)",
+    RoleEnum.PRINCIPAL.value:  "Full operational control of a school (mobile)",
     RoleEnum.TRUSTEE.value:    "Read-only oversight and financial reporting",
     RoleEnum.TEACHER.value:    "Academic operations scoped to assigned classes",
     RoleEnum.STUDENT.value:    "Access to own academic data and submissions",
@@ -71,7 +74,8 @@ ROLE_DEFINITIONS: dict[str, str] = {
 }
 
 ROLE_PERMISSIONS: dict[str, list[str]] = {
-    RoleEnum.SUPERADMIN.value: [code for code, _ in ALL_PERMISSIONS],
+    # Staff admin: all permissions including single-school settings (school:manage).
+    RoleEnum.STAFF_ADMIN.value: [code for code, _ in ALL_PERMISSIONS],
 
     RoleEnum.PRINCIPAL.value: [
         code for code, _ in ALL_PERMISSIONS
@@ -185,6 +189,12 @@ async def seed(db: AsyncSession) -> None:
                 await repo.assign_permission_to_role(role.id, perm.id)
                 total_assignments += 1
     print(f"  ✓ {total_assignments} role-permission assignments ready")
+
+    legacy = await repo.get_role_by_name("SUPERADMIN")
+    if legacy:
+        await db.execute(delete(RolePermission).where(RolePermission.role_id == legacy.id))
+        await db.execute(delete(Role).where(Role.id == legacy.id))
+        print("  ✓ Removed legacy SUPERADMIN RBAC role (users migrated at app startup)")
 
     await db.commit()
     print("\n✅ Seed completed successfully")

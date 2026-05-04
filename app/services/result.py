@@ -272,8 +272,8 @@ class ResultService:
         current_user: CurrentUser,
     ) -> ExamResponse:
         school_id = self._ensure_school(current_user)
-        if current_user.role not in (RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN):
-            raise ForbiddenException("Only principal or superadmin can define exams")
+        if current_user.role not in (RoleEnum.PRINCIPAL, RoleEnum.STAFF_ADMIN):
+            raise ForbiddenException("Only principal or staff admin can define exams")
 
         academic_year_id = body.academic_year_id
         if not academic_year_id:
@@ -312,8 +312,8 @@ class ResultService:
         current_user: CurrentUser,
     ) -> ExamBulkCreateResponse:
         school_id = self._ensure_school(current_user)
-        if current_user.role not in (RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN):
-            raise ForbiddenException("Only principal or superadmin can define exams")
+        if current_user.role not in (RoleEnum.PRINCIPAL, RoleEnum.STAFF_ADMIN):
+            raise ForbiddenException("Only principal or staff admin can define exams")
 
         if body.end_date < body.start_date:
             raise ValidationException("end_date must be on or after start_date")
@@ -622,8 +622,8 @@ class ResultService:
         background_tasks: BackgroundTasks,
     ) -> int:
         school_id = self._ensure_school(current_user)
-        if current_user.role not in (RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN):
-            raise ForbiddenException("Only principal or superadmin can publish results")
+        if current_user.role not in (RoleEnum.PRINCIPAL, RoleEnum.STAFF_ADMIN):
+            raise ForbiddenException("Only principal or staff admin can publish results")
 
         exam = await self.repo.get_exam_by_id(exam_id, school_id)
         if not exam:
@@ -646,8 +646,8 @@ class ResultService:
         current_user: CurrentUser,
     ) -> None:
         school_id = self._ensure_school(current_user)
-        if current_user.role not in (RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN):
-            raise ForbiddenException("Only principal or superadmin can delete exams")
+        if current_user.role not in (RoleEnum.PRINCIPAL, RoleEnum.STAFF_ADMIN):
+            raise ForbiddenException("Only principal or staff admin can delete exams")
 
         exam = await self.repo.get_exam_by_id(exam_id, school_id)
         if not exam:
@@ -801,7 +801,7 @@ class ResultService:
         if current_user.role not in (
             RoleEnum.TEACHER,
             RoleEnum.PRINCIPAL,
-            RoleEnum.SUPERADMIN,
+            RoleEnum.STAFF_ADMIN,
         ):
             raise ForbiddenException("Only teacher/principal can upload report cards")
 
@@ -901,7 +901,7 @@ class ResultService:
         elif current_user.role not in (
             RoleEnum.PRINCIPAL,
             RoleEnum.TRUSTEE,
-            RoleEnum.SUPERADMIN,
+            RoleEnum.STAFF_ADMIN,
         ):
             raise ForbiddenException("Only management or assigned teachers can view exam distribution")
 

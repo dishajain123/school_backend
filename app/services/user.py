@@ -159,7 +159,7 @@ class UserService:
         current_user: CurrentUser,
     ) -> dict:
         is_own_profile = current_user.id == user_id
-        is_manager = current_user.role in (RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN)
+        is_manager = current_user.role in (RoleEnum.PRINCIPAL, RoleEnum.STAFF_ADMIN)
 
         if not is_own_profile and not is_manager:
             raise ForbiddenException("You can only upload your own profile photo")

@@ -8,8 +8,7 @@ promotions, fee events — written by AuditLogService.log() across services.
 This endpoint exposes the logs as a filterable, paginated read-only API.
 
 Permission:
-  SUPERADMIN : full cross-school access
-  PRINCIPAL  : school-scoped access
+  PRINCIPAL / STAFF_ADMIN : school-scoped access (single-tenant)
 """
 import uuid
 import math
@@ -43,7 +42,7 @@ async def list_audit_logs(
     date_to: Optional[date] = Query(None, description="Filter to date (inclusive)"),
     q: Optional[str] = Query(None, description="Search in description"),
     current_user: CurrentUser = Depends(
-        require_roles(RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN)
+        require_roles(RoleEnum.PRINCIPAL, RoleEnum.STAFF_ADMIN)
     ),
     db: AsyncSession = Depends(get_db),
 ):
@@ -58,16 +57,14 @@ async def list_audit_logs(
     - Document verifications
     - Any other action logged via AuditLogService.log()
 
-    SUPERADMIN sees all schools. PRINCIPAL sees their school only.
-    Records are immutable — never updated or deleted.
+    Callers are restricted to their school_id. Records are immutable.
     """
     filters = []
 
-    # School scope
-    if current_user.role != RoleEnum.SUPERADMIN:
-        if not current_user.school_id:
-            raise ForbiddenException("School context required")
-        filters.append(AuditLog.school_id == current_user.school_id)
+    # School scope (single-school deployment)
+    if not current_user.school_id:
+        raise ForbiddenException("School context required")
+    filters.append(AuditLog.school_id == current_user.school_id)
 
     if action is not None:
         filters.append(AuditLog.action == action)
@@ -151,7 +148,7 @@ async def list_audit_logs(
 @router.get("/actions", response_model=list[str])
 async def list_audit_actions(
     current_user: CurrentUser = Depends(
-        require_roles(RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN)
+        require_roles(RoleEnum.PRINCIPAL, RoleEnum.STAFF_ADMIN)
     ),
 ):
     """Return all possible AuditAction enum values for filter dropdowns."""
@@ -161,13 +158,13 @@ async def list_audit_actions(
 @router.get("/entity-types", response_model=list[str])
 async def list_entity_types(
     current_user: CurrentUser = Depends(
-        require_roles(RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN)
+        require_roles(RoleEnum.PRINCIPAL, RoleEnum.STAFF_ADMIN)
     ),
     db: AsyncSession = Depends(get_db),
 ):
     """Return distinct entity_type values present in the audit log."""
     scope_filter = []
-    if current_user.role != RoleEnum.SUPERADMIN and current_user.school_id:
+    if current_user.school_id:
         scope_filter = [AuditLog.school_id == current_user.school_id]
 
     stmt = (

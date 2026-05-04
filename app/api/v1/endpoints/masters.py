@@ -35,7 +35,7 @@ async def _resolve_school_scope(
     # Single-school mode: always resolve to current user's school when available.
     if current_user.school_id is not None:
         return current_user.school_id
-    # Fallback for superadmin/system users without school context:
+    # Fallback when resolving school scope from the active school row:
     # use the first active school in the system.
     row = await db.execute(select(School.id).where(School.is_active.is_(True)).order_by(School.created_at.asc()))
     school_id_row = row.scalar_one_or_none()
@@ -45,7 +45,7 @@ async def _resolve_school_scope(
 
 
 def _require_admin_for_structure(current_user: CurrentUser) -> None:
-    if current_user.role not in (RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN):
+    if current_user.role not in (RoleEnum.PRINCIPAL, RoleEnum.STAFF_ADMIN):
         raise ForbiddenException(
             "Only Admin/Principal or Super Admin can manage classes and sections"
         )
@@ -53,7 +53,7 @@ def _require_admin_for_structure(current_user: CurrentUser) -> None:
 
 def _require_staff_admin_for_subjects(current_user: CurrentUser) -> None:
     # Staff-admin function is represented by delegated manage permissions.
-    if current_user.role in (RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN):
+    if current_user.role in (RoleEnum.PRINCIPAL, RoleEnum.STAFF_ADMIN):
         return
     if "user:manage" not in current_user.permissions and "settings:manage" not in current_user.permissions:
         raise ForbiddenException(

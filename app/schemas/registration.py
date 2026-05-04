@@ -20,6 +20,10 @@ class RegistrationCreateRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_parent_registration(self):
+        if self.role == RoleEnum.STAFF_ADMIN:
+            raise ValueError(
+                "Staff Admin accounts are created by the school; self-registration is not available."
+            )
         if self.role == RoleEnum.PARENT:
             data = self.submitted_data or {}
             admission = (
@@ -31,13 +35,12 @@ class RegistrationCreateRequest(BaseModel):
                 raise ValueError(
                     "For parent registration, submitted_data.student_admission_number is required"
                 )
-        if self.role != RoleEnum.SUPERADMIN:
-            data = self.submitted_data or {}
-            academic_year_id = data.get("academic_year_id")
-            if not isinstance(academic_year_id, str) or not academic_year_id.strip():
-                raise ValueError(
-                    "submitted_data.academic_year_id is required for registration"
-                )
+        data = self.submitted_data or {}
+        academic_year_id = data.get("academic_year_id")
+        if not isinstance(academic_year_id, str) or not academic_year_id.strip():
+            raise ValueError(
+                "submitted_data.academic_year_id is required for registration"
+            )
         return self
 
 

@@ -1958,6 +1958,13 @@ async def seed_demo(db: AsyncSession) -> dict[str, str]:
             DocumentStatus.PENDING,
             None,
         ),
+        (
+            students[0],
+            DocumentType.ID_PROOF,
+            f"demo/documents/{students[0].admission_number.lower()}-id-proof-rejected.pdf",
+            DocumentStatus.FAILED,
+            None,
+        ),
     ]
     for student, doc_type, file_key, status, generated_at in document_rows:
         existing = await first_or_none(

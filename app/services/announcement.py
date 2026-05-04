@@ -405,7 +405,7 @@ class AnnouncementService:
         announcements = await self.repo.list_for_school(
             school_id=school_id,
             include_inactive=include_inactive
-            and current_user.role in (RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN),
+            and current_user.role in (RoleEnum.PRINCIPAL, RoleEnum.STAFF_ADMIN),
             target_role=target_role,
             target_standard_id=target_standard_id,
             target_section=normalized_query_section,
@@ -413,15 +413,15 @@ class AnnouncementService:
 
         filtered = []
         for a in announcements:
-            # Admin views (principal/superadmin) must see all school announcements,
+            # Admin views (principal/staff admin) must see all school announcements,
             # including role-targeted/class-targeted ones.
-            if current_user.role not in (RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN):
+            if current_user.role not in (RoleEnum.PRINCIPAL, RoleEnum.STAFF_ADMIN):
                 if a.target_role and a.target_role != current_user.role:
                     continue
 
             if a.target_standard_id and current_user.role not in (
                 RoleEnum.PRINCIPAL,
-                RoleEnum.SUPERADMIN,
+                RoleEnum.STAFF_ADMIN,
             ):
                 if current_user.role in (RoleEnum.STUDENT, RoleEnum.PARENT, RoleEnum.TEACHER):
                     if not standard_ids:
@@ -431,7 +431,7 @@ class AnnouncementService:
             if (
                 a.target_section
                 and current_user.role
-                not in (RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN)
+                not in (RoleEnum.PRINCIPAL, RoleEnum.STAFF_ADMIN)
             ):
                 if not a.target_standard_id:
                     continue
@@ -519,7 +519,7 @@ class AnnouncementService:
         obj = await self.repo.get_by_id(announcement_id, school_id)
         if not obj:
             raise NotFoundException("Announcement")
-        if not obj.is_active and current_user.role not in (RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN):
+        if not obj.is_active and current_user.role not in (RoleEnum.PRINCIPAL, RoleEnum.STAFF_ADMIN):
             raise NotFoundException("Announcement")
         return self._build_response(obj)
 

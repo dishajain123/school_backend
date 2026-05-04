@@ -2,7 +2,8 @@ from enum import Enum
 
 
 class RoleEnum(str, Enum):
-    SUPERADMIN = "SUPERADMIN"
+    """Single-school deployment: staff admin is the school operator role (web console)."""
+
     PRINCIPAL = "PRINCIPAL"
     TEACHER = "TEACHER"
     STUDENT = "STUDENT"
@@ -173,6 +174,23 @@ class DocumentStatus(str, Enum):
     # Legacy statuses kept for compatibility with historical rows
     VERIFIED = "VERIFIED"
     REJECTED = "REJECTED"
+
+
+class DocumentWorkflowFilter(str, Enum):
+    """Buckets for GET /documents list filtering (UI: All / Requested / Pending / Approved / Rejected).
+
+    Mapping (single source of truth with DocumentService._document_matches_workflow_filter):
+    - REQUESTED: status PENDING and no file uploaded yet (family/admin requested issuance).
+    - PENDING: file present, awaiting principal verification (PROCESSING, or legacy PENDING+file).
+    - APPROVED: READY or legacy VERIFIED.
+    - REJECTED: FAILED or legacy REJECTED.
+    """
+
+    ALL = "all"
+    REQUESTED = "requested"
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
 
 
 class AnnouncementType(str, Enum):

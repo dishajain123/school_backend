@@ -253,6 +253,11 @@ class RegistrationService:
         if not normalized_email and not normalized_phone:
             raise ValidationException("Email or phone is required")
 
+        if payload.role == RoleEnum.STAFF_ADMIN:
+            raise ValidationException(
+                "Staff Admin accounts cannot be created through public registration."
+            )
+
         if normalized_phone and not _PHONE_PATTERN.match(normalized_phone):
             raise ValidationException("Invalid phone number format")
 
@@ -265,31 +270,30 @@ class RegistrationService:
             )
 
         submitted_data = dict(payload.submitted_data or {})
-        if payload.role != RoleEnum.SUPERADMIN:
-            academic_year_raw = submitted_data.get("academic_year_id")
-            if not isinstance(academic_year_raw, str) or not academic_year_raw.strip():
-                raise ValidationException(
-                    "Academic year is required for registration."
-                )
-            try:
-                academic_year_id = uuid.UUID(academic_year_raw.strip())
-            except ValueError as exc:
-                raise ValidationException("Invalid academic year.") from exc
+        academic_year_raw = submitted_data.get("academic_year_id")
+        if not isinstance(academic_year_raw, str) or not academic_year_raw.strip():
+            raise ValidationException(
+                "Academic year is required for registration."
+            )
+        try:
+            academic_year_id = uuid.UUID(academic_year_raw.strip())
+        except ValueError as exc:
+            raise ValidationException("Invalid academic year.") from exc
 
-            year_row = await self.db.execute(
-                select(AcademicYear.id).where(
-                    and_(
-                        AcademicYear.id == academic_year_id,
-                        AcademicYear.school_id == resolved_school_id,
-                        AcademicYear.is_active.is_(True),
-                    )
+        year_row = await self.db.execute(
+            select(AcademicYear.id).where(
+                and_(
+                    AcademicYear.id == academic_year_id,
+                    AcademicYear.school_id == resolved_school_id,
+                    AcademicYear.is_active.is_(True),
                 )
             )
-            if year_row.scalar_one_or_none() is None:
-                raise ValidationException(
-                    "Selected academic year is not active for this school."
-                )
-            submitted_data["academic_year_id"] = str(academic_year_id)
+        )
+        if year_row.scalar_one_or_none() is None:
+            raise ValidationException(
+                "Selected academic year is not active for this school."
+            )
+        submitted_data["academic_year_id"] = str(academic_year_id)
 
         user = await self.user_repo.create(
             {

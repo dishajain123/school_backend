@@ -1,14 +1,12 @@
 import uuid
 import math
 from typing import Optional
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
 from app.schemas.school import SchoolCreate, SchoolUpdate, SchoolResponse, SchoolListResponse
 from app.services.school import SchoolService
 from app.core.dependencies import CurrentUser, require_permission
-from app.core.exceptions import ForbiddenException
-from app.utils.enums import RoleEnum
 
 router = APIRouter(prefix="/schools", tags=["Schools"])
 
@@ -23,8 +21,6 @@ async def create_school(
     current_user: CurrentUser = Depends(require_permission("school:manage")),
     service: SchoolService = Depends(get_school_service),
 ):
-    if current_user.role != RoleEnum.SUPERADMIN:
-        raise ForbiddenException("Only superadmin can manage schools")
     return await service.create_school(data)
 
 
@@ -36,8 +32,6 @@ async def list_schools(
     current_user: CurrentUser = Depends(require_permission("school:manage")),
     service: SchoolService = Depends(get_school_service),
 ):
-    if current_user.role != RoleEnum.SUPERADMIN:
-        raise ForbiddenException("Only superadmin can manage schools")
     schools, total = await service.list_schools(page=page, page_size=page_size, is_active=is_active)
     total_pages = math.ceil(total / page_size) if total > 0 else 1
     return SchoolListResponse(
@@ -55,8 +49,6 @@ async def get_school(
     current_user: CurrentUser = Depends(require_permission("school:manage")),
     service: SchoolService = Depends(get_school_service),
 ):
-    if current_user.role != RoleEnum.SUPERADMIN:
-        raise ForbiddenException("Only superadmin can manage schools")
     return await service.get_school(school_id)
 
 
@@ -67,8 +59,6 @@ async def update_school(
     current_user: CurrentUser = Depends(require_permission("school:manage")),
     service: SchoolService = Depends(get_school_service),
 ):
-    if current_user.role != RoleEnum.SUPERADMIN:
-        raise ForbiddenException("Only superadmin can manage schools")
     return await service.update_school(school_id, data)
 
 
@@ -78,6 +68,4 @@ async def deactivate_school(
     current_user: CurrentUser = Depends(require_permission("school:manage")),
     service: SchoolService = Depends(get_school_service),
 ):
-    if current_user.role != RoleEnum.SUPERADMIN:
-        raise ForbiddenException("Only superadmin can manage schools")
     return await service.deactivate_school(school_id)

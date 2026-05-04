@@ -47,7 +47,7 @@ async def _resolve_school_scope(
 
 def _can_view_profiles(current_user: CurrentUser) -> bool:
     if current_user.role in (
-        RoleEnum.SUPERADMIN,
+        RoleEnum.STAFF_ADMIN,
         RoleEnum.PRINCIPAL,
         RoleEnum.TRUSTEE,
         RoleEnum.STAFF_ADMIN,

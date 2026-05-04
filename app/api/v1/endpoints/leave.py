@@ -107,13 +107,13 @@ async def set_teacher_balance(
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    is_role_allowed = current_user.role in (RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN)
+    is_role_allowed = current_user.role in (RoleEnum.PRINCIPAL, RoleEnum.STAFF_ADMIN)
     has_manage_perm = "teacher_assignment:manage" in current_user.permissions
     if not is_role_allowed and not has_manage_perm:
         raise ForbiddenException(
             detail=(
                 "Permission 'teacher_assignment:manage' is required "
-                "or user must be PRINCIPAL/SUPERADMIN"
+                "or user must be Principal or Staff Admin"
             )
         )
     return await LeaveService(db).set_teacher_balance(

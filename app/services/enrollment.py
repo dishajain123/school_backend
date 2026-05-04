@@ -109,7 +109,7 @@ class EnrollmentService:
         except Exception:
             active_year = None
 
-        admin_override_roles = {RoleEnum.SUPERADMIN, RoleEnum.STAFF_ADMIN}
+        admin_override_roles = {RoleEnum.STAFF_ADMIN, RoleEnum.PRINCIPAL}
         if (
             actor.role not in admin_override_roles
             and active_year is not None

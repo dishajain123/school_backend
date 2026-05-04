@@ -257,7 +257,7 @@ class GalleryService:
         current_user: CurrentUser,
     ) -> None:
         school_id = self._ensure_school(current_user)
-        if current_user.role not in (RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN):
+        if current_user.role not in (RoleEnum.PRINCIPAL, RoleEnum.STAFF_ADMIN):
             raise ForbiddenException("Only principal can delete gallery albums")
 
         album = await self.repo.get_album_by_id(album_id, school_id)

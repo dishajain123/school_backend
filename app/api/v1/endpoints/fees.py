@@ -57,14 +57,14 @@ def _assert_fee_read(current_user: CurrentUser) -> None:
 
 
 def _assert_analytics_access(current_user: CurrentUser) -> None:
-    allowed = (RoleEnum.PRINCIPAL, RoleEnum.TRUSTEE, RoleEnum.SUPERADMIN)
+    allowed = (RoleEnum.PRINCIPAL, RoleEnum.TRUSTEE, RoleEnum.STAFF_ADMIN)
     has_fee_access = (
         "fee:read" in current_user.permissions
         or "fee:create" in current_user.permissions
     )
     if current_user.role not in allowed and not has_fee_access:
         raise ForbiddenException(
-            detail="Fee analytics access requires Principal/Trustee/Superadmin role or fee permissions"
+            detail="Fee analytics access requires Principal/Trustee/staff admin role or fee permissions"
         )
 
 
@@ -360,7 +360,7 @@ async def get_receipt_fallback(
 
 
 # ---------------------------------------------------------------------------
-# Defaulters — Principal / Trustee / Superadmin only
+# Defaulters — Principal / Trustee / staff admin only
 # ---------------------------------------------------------------------------
 
 @router.get("/defaulters", response_model=DefaulterListResponse)
@@ -388,7 +388,7 @@ async def get_defaulters(
 
 
 # ---------------------------------------------------------------------------
-# Overdue refresh — Principal / Trustee / Superadmin only
+# Overdue refresh — Principal / Trustee / staff admin only
 # ---------------------------------------------------------------------------
 
 @router.post("/ledger/refresh-overdue")
@@ -409,7 +409,7 @@ async def refresh_overdue(
 
 
 # ---------------------------------------------------------------------------
-# Analytics — Principal / Trustee / Superadmin only
+# Analytics — Principal / Trustee / staff admin only
 # ---------------------------------------------------------------------------
 
 @router.get("/analytics", response_model=FeeAnalyticsResponse)

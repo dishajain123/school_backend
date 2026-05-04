@@ -58,7 +58,7 @@
 | `POST` | `/api/v1/exam-schedule/{series_id}/entries` | Active | Permissions: exam_schedule:create | Yes | Yes (general 60/min) |
 | `PATCH` | `/api/v1/exam-schedule/{series_id}/publish` | Active | Permissions: exam_schedule:create | Yes | Yes (general 60/min) |
 | `GET` | `/api/v1/fees` | Active | Authenticated users | Yes | Yes (general 60/min) |
-| `GET` | `/api/v1/fees/analytics` | Active | Roles: PRINCIPAL, SUPERADMIN, TRUSTEE | Yes | Yes (general 60/min) |
+| `GET` | `/api/v1/fees/analytics` | Active | Roles: PRINCIPAL, STAFF_ADMIN, TRUSTEE | Yes | Yes (general 60/min) |
 | `POST` | `/api/v1/fees/ledger/generate` | Active | Permissions: fee:create | Yes | Yes (general 60/min) |
 | `GET` | `/api/v1/fees/payments` | Active | Authenticated users | Yes | Yes (general 60/min) |
 | `POST` | `/api/v1/fees/payments` | Active | Permissions: fee:create | Yes | Yes (general 60/min) |
@@ -113,8 +113,8 @@
 | `PATCH` | `/api/v1/parents/{parent_id}` | Active | Permissions: user:manage | Yes | Yes (general 60/min) |
 | `GET` | `/api/v1/parents/{parent_id}/children` | Active | Authenticated users | Yes | Yes (general 60/min) |
 | `PATCH` | `/api/v1/parents/{parent_id}/children` | Active | Permissions: user:manage | Yes | Yes (general 60/min) |
-| `GET` | `/api/v1/principal-reports/details` | Active | Roles: PRINCIPAL, SUPERADMIN, TRUSTEE | Yes | Yes (general 60/min) |
-| `GET` | `/api/v1/principal-reports/overview` | Active | Roles: PRINCIPAL, SUPERADMIN, TRUSTEE | Yes | Yes (general 60/min) |
+| `GET` | `/api/v1/principal-reports/details` | Active | Roles: PRINCIPAL, STAFF_ADMIN, TRUSTEE | Yes | Yes (general 60/min) |
+| `GET` | `/api/v1/principal-reports/overview` | Active | Roles: PRINCIPAL, STAFF_ADMIN, TRUSTEE | Yes | Yes (general 60/min) |
 | `GET` | `/api/v1/results` | Active | Authenticated users | Yes | Yes (general 60/min) |
 | `POST` | `/api/v1/results/entries` | Active | Permissions: result:create | Yes | Yes (general 60/min) |
 | `GET` | `/api/v1/results/exams` | Active | Authenticated users | Yes | Yes (general 60/min) |

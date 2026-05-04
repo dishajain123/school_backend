@@ -25,7 +25,7 @@ class ApprovalService:
 
     @staticmethod
     def _can_decide(user: CurrentUser) -> bool:
-        return user.role in (RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN)
+        return user.role in (RoleEnum.PRINCIPAL, RoleEnum.STAFF_ADMIN)
 
     @staticmethod
     def _is_actionable_status(status: UserStatus) -> bool:
@@ -37,7 +37,7 @@ class ApprovalService:
 
     async def _get_user_in_scope(self, user_id: uuid.UUID, current_user: CurrentUser) -> User:
         stmt = select(User).where(User.id == user_id)
-        if current_user.role != RoleEnum.SUPERADMIN:
+        if current_user.school_id is not None:
             stmt = stmt.where(User.school_id == current_user.school_id)
         result = await self.db.execute(stmt)
         user = result.scalar_one_or_none()
@@ -56,7 +56,7 @@ class ApprovalService:
         q: Optional[str] = None,
     ) -> tuple[list[User], int, int]:
         filters = []
-        if current_user.role != RoleEnum.SUPERADMIN:
+        if current_user.school_id is not None:
             filters.append(User.school_id == current_user.school_id)
 
         if status is not None:
@@ -120,7 +120,7 @@ class ApprovalService:
         current_user: CurrentUser,
     ) -> tuple[User, list[dict], list[dict], datetime]:
         if not self._can_decide(current_user):
-            raise ForbiddenException("Only Principal or Superadmin can approve/reject requests")
+            raise ForbiddenException("Only Principal or Staff Admin can approve/reject requests")
 
         user = await self._get_user_in_scope(user_id, current_user)
         now = datetime.now(timezone.utc)
@@ -136,14 +136,14 @@ class ApprovalService:
         if (
             data.action == ApprovalAction.APPROVE
             and blocking_findings
-            and not (data.override_validation and current_user.role == RoleEnum.SUPERADMIN)
+            and not (data.override_validation and current_user.role == RoleEnum.STAFF_ADMIN)
         ):
             raise ValidationException(
-                "Approval blocked due to validation issues/duplicates. Superadmin may override."
+                "Approval blocked due to validation issues/duplicates. Staff Admin may override."
             )
 
-        if data.override_validation and current_user.role != RoleEnum.SUPERADMIN:
-            raise ForbiddenException("Only Superadmin can use override_validation")
+        if data.override_validation and current_user.role != RoleEnum.STAFF_ADMIN:
+            raise ForbiddenException("Only Staff Admin can use override_validation")
 
         if data.action == ApprovalAction.APPROVE:
             user.status = UserStatus.ACTIVE
@@ -227,7 +227,7 @@ class ApprovalService:
         stmt = select(UserApprovalAudit)
         count_stmt = select(func.count(UserApprovalAudit.id))
 
-        if current_user.role != RoleEnum.SUPERADMIN:
+        if current_user.school_id is not None:
             stmt = stmt.join(User, User.id == UserApprovalAudit.user_id).where(
                 User.school_id == current_user.school_id
             )

@@ -48,7 +48,7 @@ async def create_academic_year(
     current_user: CurrentUser = Depends(require_permission("academic_year:manage")),
     service: AcademicYearService = Depends(get_service),
 ):
-    if current_user.role not in (RoleEnum.SUPERADMIN, RoleEnum.PRINCIPAL):
+    if current_user.role not in (RoleEnum.STAFF_ADMIN, RoleEnum.PRINCIPAL):
         raise ForbiddenException("Only Admin/Principal or Super Admin can create academic years")
     resolved_school_id = await _resolve_school_scope(current_user, school_id, service.db)
     return await service.create_academic_year(data, resolved_school_id)
@@ -84,7 +84,7 @@ async def activate_academic_year(
     current_user: CurrentUser = Depends(require_permission("academic_year:manage")),
     service: AcademicYearService = Depends(get_service),
 ):
-    if current_user.role not in (RoleEnum.SUPERADMIN, RoleEnum.PRINCIPAL):
+    if current_user.role not in (RoleEnum.STAFF_ADMIN, RoleEnum.PRINCIPAL):
         raise ForbiddenException("Only Admin/Principal or Super Admin can activate academic years")
     resolved_school_id = await _resolve_school_scope(current_user, school_id, service.db)
     return await service.activate_academic_year(year_id, resolved_school_id)

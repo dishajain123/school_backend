@@ -5,10 +5,10 @@ Phase 14/15 — Section/Class Transfer added.
 All routes require school context from the JWT.
 
 Permission map:
-  enrollment:create   → Admissions Staff, Admin, Superadmin
-  enrollment:update   → Admissions Staff, Admin, Superadmin
-  enrollment:read     → Teacher, Parent, Student (own), Admin, Superadmin
-  student:promote     → Academic Admin, Principal, Superadmin
+  enrollment:create   → Admissions Staff, Admin, Staff Admin
+  enrollment:update   → Admissions Staff, Admin, Staff Admin
+  enrollment:read     → Teacher, Parent, Student (own), Admin, Staff Admin
+  student:promote     → Academic Admin, Principal, Staff Admin
 """
 import uuid
 from typing import Optional

@@ -17,7 +17,7 @@ from app.schemas.document import (
     DocumentRequirementStatusResponse,
 )
 from app.services.document import DocumentService
-from app.utils.enums import DocumentType
+from app.utils.enums import DocumentType, DocumentWorkflowFilter
 
 router = APIRouter(prefix="/documents", tags=["Documents"])
 
@@ -52,6 +52,13 @@ async def list_documents(
     academic_year_id: Optional[str] = Query(None),
     standard_id: Optional[str] = Query(None),
     section: Optional[str] = Query(None),
+    status_filter: DocumentWorkflowFilter = Query(
+        DocumentWorkflowFilter.ALL,
+        description=(
+            "Workflow bucket: all | requested (no file yet) | pending (uploaded, "
+            "awaiting verification) | approved | rejected"
+        ),
+    ),
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -61,6 +68,7 @@ async def list_documents(
         academic_year_id=_parse_optional_uuid_param(academic_year_id),
         standard_id=_parse_optional_uuid_param(standard_id),
         section=section,
+        status_filter=status_filter,
     )
 
 

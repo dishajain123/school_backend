@@ -40,7 +40,7 @@ async def _resolve_school_scope(current_user: CurrentUser, db: AsyncSession) -> 
 def _can_manage_assignments(current_user: CurrentUser) -> bool:
     if "teacher_assignment:manage" in current_user.permissions:
         return True
-    return current_user.role in (RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN)
+    return current_user.role in (RoleEnum.PRINCIPAL, RoleEnum.STAFF_ADMIN)
 
 
 async def _resolve_or_create_section_id(obj, db: AsyncSession) -> Optional[uuid.UUID]:
@@ -113,7 +113,7 @@ async def create_assignment(
 ):
     if not _can_manage_assignments(current_user):
         raise ForbiddenException(
-            detail="Only principal/superadmin or users with 'teacher_assignment:manage' can assign teachers"
+            detail="Only principal/staff admin or users with 'teacher_assignment:manage' can assign teachers"
         )
     school_id = await _resolve_school_scope(current_user, db)
     service = TeacherClassSubjectService(db)
@@ -152,7 +152,7 @@ async def delete_assignment(
 ):
     if not _can_manage_assignments(current_user):
         raise ForbiddenException(
-            detail="Only principal/superadmin or users with 'teacher_assignment:manage' can remove assignments"
+            detail="Only principal/staff admin or users with 'teacher_assignment:manage' can remove assignments"
         )
     school_id = await _resolve_school_scope(current_user, db)
     service = TeacherClassSubjectService(db)
@@ -168,7 +168,7 @@ async def update_assignment(
 ):
     if not _can_manage_assignments(current_user):
         raise ForbiddenException(
-            detail="Only principal/superadmin or users with 'teacher_assignment:manage' can update assignments"
+            detail="Only principal/staff admin or users with 'teacher_assignment:manage' can update assignments"
         )
     school_id = await _resolve_school_scope(current_user, db)
     service = TeacherClassSubjectService(db)

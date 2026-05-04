@@ -32,6 +32,7 @@ from app.utils.enums import (
     RoleEnum,
     DocumentStatus,
     DocumentType,
+    DocumentWorkflowFilter,
     NotificationType,
     NotificationPriority,
     AuditAction,
@@ -131,7 +132,7 @@ class DocumentService:
     def _can_access_documents(current_user: CurrentUser) -> bool:
         if current_user.role in (
             RoleEnum.PRINCIPAL,
-            RoleEnum.SUPERADMIN,
+            RoleEnum.STAFF_ADMIN,
             RoleEnum.TEACHER,
             RoleEnum.STUDENT,
             RoleEnum.PARENT,
@@ -145,6 +146,30 @@ class DocumentService:
     @staticmethod
     def _can_manage_documents(current_user: CurrentUser) -> bool:
         return "document:manage" in current_user.permissions
+
+    @staticmethod
+    def _document_matches_workflow_filter(
+        doc,
+        workflow: DocumentWorkflowFilter,
+    ) -> bool:
+        """Aligns with UI buckets: requested / pending / approved / rejected."""
+        if workflow == DocumentWorkflowFilter.ALL:
+            return True
+        fk = (doc.file_key or "").strip()
+        st = doc.status
+        if workflow == DocumentWorkflowFilter.REQUESTED:
+            return st == DocumentStatus.PENDING and not fk
+        if workflow == DocumentWorkflowFilter.PENDING:
+            if st == DocumentStatus.PROCESSING and bool(fk):
+                return True
+            if st == DocumentStatus.PENDING and bool(fk):
+                return True
+            return False
+        if workflow == DocumentWorkflowFilter.APPROVED:
+            return st in (DocumentStatus.READY, DocumentStatus.VERIFIED)
+        if workflow == DocumentWorkflowFilter.REJECTED:
+            return st in (DocumentStatus.FAILED, DocumentStatus.REJECTED)
+        return True
 
     async def _load_json_setting(self, school_id: uuid.UUID, key: str) -> dict:
         setting = await self.settings_repo.get_by_key(school_id, key)
@@ -604,13 +629,14 @@ class DocumentService:
         academic_year_id: Optional[uuid.UUID] = None,
         standard_id: Optional[uuid.UUID] = None,
         section: Optional[str] = None,
+        status_filter: DocumentWorkflowFilter = DocumentWorkflowFilter.ALL,
     ) -> DocumentListResponse:
         school_id = self._ensure_school(current_user)
         if not self._can_access_documents(current_user):
             raise ForbiddenException(
                 "Permission 'document:generate' is required to access this resource"
             )
-        is_admin = current_user.role in (RoleEnum.PRINCIPAL, RoleEnum.SUPERADMIN)
+        is_admin = current_user.role in (RoleEnum.PRINCIPAL, RoleEnum.STAFF_ADMIN)
         if student_id is None and not is_admin:
             raise ValidationException("student_id is required")
 
@@ -625,6 +651,13 @@ class DocumentService:
                 standard_id=standard_id,
                 section=normalized_section,
             )
+
+        if status_filter != DocumentWorkflowFilter.ALL:
+            docs = [
+                d
+                for d in docs
+                if self._document_matches_workflow_filter(d, status_filter)
+            ]
 
         review_meta_map = await self._get_review_meta_map(school_id)
         required = (
@@ -730,7 +763,7 @@ class DocumentService:
             )
         can_verify = current_user.role in (
             RoleEnum.PRINCIPAL,
-            RoleEnum.SUPERADMIN,
+            RoleEnum.STAFF_ADMIN,
             RoleEnum.STAFF_ADMIN,
         )
         if not can_verify:
@@ -811,7 +844,7 @@ class DocumentService:
         school_id = self._ensure_school(current_user)
         if current_user.role not in (
             RoleEnum.PRINCIPAL,
-            RoleEnum.SUPERADMIN,
+            RoleEnum.STAFF_ADMIN,
             RoleEnum.STAFF_ADMIN,
         ):
             raise ForbiddenException("Only admin roles can manage required documents")

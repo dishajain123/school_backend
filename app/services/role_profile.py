@@ -561,9 +561,8 @@ class RoleProfileService:
         if user.role != expected_role:
             raise ValidationException(f"User role mismatch. Expected {expected_role.value}")
 
-        if current_user.role != RoleEnum.SUPERADMIN:
-            if current_user.school_id is None or user.school_id != current_user.school_id:
-                raise ForbiddenException("User is outside your school scope")
+        if current_user.school_id is None or user.school_id != current_user.school_id:
+            raise ForbiddenException("User is outside your school scope")
 
         if user.school_id is None:
             raise ValidationException("Target user has no school assigned")
