@@ -195,6 +195,10 @@ class UserService:
             raise NotFoundException("User")
         return await self._enrich_with_photo_url(user)
 
+    async def user_to_response_dict(self, user: User) -> dict:
+        """Serialize a [User] row for [UserResponse] (includes presigned photo URL)."""
+        return await self._enrich_with_photo_url(user)
+
     async def update_me(
         self,
         current_user: CurrentUser,

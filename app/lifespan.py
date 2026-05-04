@@ -1,7 +1,12 @@
 from contextlib import asynccontextmanager
 import asyncio
-from datetime import datetime, timezone
+import uuid
+from typing import Optional
+
 from fastapi import FastAPI
+from sqlalchemy import func, select, update
+from sqlalchemy.exc import IntegrityError
+
 from app.db.init_db import init_db
 from app.integrations.minio_client import ensure_buckets_exist
 from app.core.logging import get_logger
@@ -10,10 +15,10 @@ from app.core.api_usage_tracker import (
     UNUSED_CANDIDATE_APIS,
     api_usage_tracker,
 )
-from sqlalchemy import func, select
 
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal
+from app.models.school import School
 from app.models.user import User
 from app.repositories.otp_store import OtpStoreRepository
 from app.repositories.jti_blocklist import JtiBlocklistRepository
@@ -23,17 +28,53 @@ logger = get_logger(__name__)
 
 
 async def _assert_users_have_school_id() -> None:
-    """Single-school invariant: no NULL users.school_id (strict except local dev + DEBUG)."""
+    """Ensure users.school_id is set: optional startup backfill, then strict check."""
     async with AsyncSessionLocal() as db:
         result = await db.execute(
             select(func.count()).select_from(User).where(User.school_id.is_(None))
         )
         n = int(result.scalar_one())
-    if n == 0:
-        return
+        if n == 0:
+            return
+
+        backfill_school_id: Optional[uuid.UUID] = None
+        if settings.DEFAULT_SCHOOL_ID:
+            backfill_school_id = uuid.UUID(str(settings.DEFAULT_SCHOOL_ID).strip())
+        elif settings.is_development_environment:
+            school_rows = await db.execute(select(School.id))
+            ids = list(school_rows.scalars().all())
+            if len(ids) == 1:
+                backfill_school_id = ids[0]
+                logger.warning(
+                    "Development: assigning NULL users.school_id to the only school row %s.",
+                    backfill_school_id,
+                )
+
+        if backfill_school_id is not None:
+            try:
+                await db.execute(
+                    update(User)
+                    .where(User.school_id.is_(None))
+                    .values(school_id=backfill_school_id)
+                )
+                await db.commit()
+            except IntegrityError as e:
+                await db.rollback()
+                raise RuntimeError(
+                    "Backfill of users.school_id failed (invalid DEFAULT_SCHOOL_ID or FK). "
+                    "Ensure DEFAULT_SCHOOL_ID matches an existing schools.id row."
+                ) from e
+            result = await db.execute(
+                select(func.count()).select_from(User).where(User.school_id.is_(None))
+            )
+            n = int(result.scalar_one())
+            if n == 0:
+                return
+
     msg = (
-        f"{n} user(s) have NULL school_id. Set DEFAULT_SCHOOL_ID, run Alembic migration "
-        "e8f4a2c91d00 (backfill + NOT NULL), then restart."
+        f"{n} user(s) have NULL school_id. Set DEFAULT_SCHOOL_ID in .env to your schools.id "
+        "UUID, or use ENVIRONMENT=local with exactly one school row for auto backfill. "
+        "For production, run the Alembic migration that backfills school_id before NOT NULL."
     )
     if settings.DEBUG and settings.is_development_environment:
         logger.warning(
