@@ -303,7 +303,6 @@ class ResultService:
                 "school_id": school_id,
             }
         )
-        await self.db.commit()
         await self.db.refresh(exam)
         return ExamResponse.model_validate(exam)
 
@@ -384,8 +383,6 @@ class ResultService:
                 }
             )
             created.append(ExamResponse.model_validate(exam))
-
-        await self.db.commit()
 
         return ExamBulkCreateResponse(
             created=created,
@@ -616,7 +613,6 @@ class ResultService:
                 )
             results.append(ResultEntryResponse.model_validate(result))
 
-        await self.db.commit()
         return ResultListResponse(items=results, total=len(results))
 
     async def publish_exam(
@@ -634,7 +630,6 @@ class ResultService:
             raise NotFoundException("Exam")
 
         updated_count = await self.repo.publish_exam_results(exam_id, school_id)
-        await self.db.commit()
 
         background_tasks.add_task(
             _notify_results_published,
@@ -659,7 +654,6 @@ class ResultService:
             raise NotFoundException("Exam")
 
         await self.repo.delete_exam(exam)
-        await self.db.commit()
 
     async def list_results(
         self,
@@ -791,7 +785,6 @@ class ResultService:
             school_id=school_id,
         )
         self.db.add(doc)
-        await self.db.commit()
 
         url = minio_client.generate_presigned_url(DOCUMENTS_BUCKET, file_key)
         return ReportCardResponse(url=url)
@@ -852,7 +845,6 @@ class ResultService:
             school_id=school_id,
         )
         self.db.add(doc)
-        await self.db.commit()
 
         return ReportCardUploadResponse(
             url=minio_client.generate_presigned_url(DOCUMENTS_BUCKET, file_key),

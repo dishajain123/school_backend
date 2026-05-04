@@ -266,7 +266,6 @@ class SubmissionService:
                 "school_id": current_user.school_id,
             }
         )
-        await self.db.commit()
         await self.db.refresh(submission)
         submission_with_relations = await self.repo.get_by_id(
             submission.id, current_user.school_id
@@ -328,7 +327,6 @@ class SubmissionService:
             submission,
             update_data,
         )
-        await self.db.commit()
         await self.db.refresh(updated)
 
         background_tasks.add_task(

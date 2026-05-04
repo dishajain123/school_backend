@@ -480,7 +480,6 @@ class StudentService:
                     is_active=True,
                 )
             )
-        await self.db.commit()
 
         sections = await self.list_sections(
             school_id=school_id,
@@ -496,8 +495,6 @@ class StudentService:
         school_id: uuid.UUID,
         data: StudentPromotionUpdate,
         current_user: CurrentUser,
-        *,
-        commit: bool = True,
     ) -> Student:
         student = await self.repo.get_by_id(student_id, school_id)
         if not student:
@@ -600,8 +597,6 @@ class StudentService:
                         "school_id": school_id,
                     }
                 )
-        if commit:
-            await self.db.commit()
 
         updated = await self.repo.get_by_id(student_id, school_id)
         return updated
@@ -630,11 +625,9 @@ class StudentService:
                     school_id=school_id,
                     data=data,
                     current_user=current_user,
-                    commit=False,
                 )
                 if updated:
                     updated_items.append(updated)
-            await self.db.commit()
             return updated_items
         except Exception:
             await self.db.rollback()

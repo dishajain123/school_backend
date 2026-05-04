@@ -49,7 +49,7 @@ class NotificationService:
                 "reference_id": reference_id,
             }
         )
-        # Intentional: invoked from BackgroundTasks / non-request sessions that have no get_db commit.
+        # commit required: callers are BackgroundTasks or standalone sessions (no get_db boundary commit).
         await self.db.commit()
         return obj
 
@@ -105,7 +105,7 @@ class NotificationService:
     async def purge_old_notifications(self, cutoff_days: int = 90) -> dict:
         """Called by APScheduler — not an API endpoint."""
         deleted = await self.repo.purge_old(cutoff_days)
-        # Intentional: purge runs from lifespan cleanup with a standalone session (no get_db).
+        # commit required: lifespan cleanup uses a standalone session (no get_db boundary commit).
         await self.db.commit()
         return {"deleted": deleted}
 

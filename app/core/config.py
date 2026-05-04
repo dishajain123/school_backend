@@ -1,8 +1,8 @@
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -50,10 +50,23 @@ class Settings(BaseSettings):
     APP_NAME: str = "SMS Backend"
     BACKEND_BASE_URL: str = "http://localhost:8000"
     APP_TIMEZONE: str = "Asia/Kolkata"
+    # production | staging | development | local — default is strict so undeployed
+    # misconfigurations never behave like dev. Set ENVIRONMENT=local (or development)
+    # on developer machines. See model_validator on DEBUG.
+    ENVIRONMENT: Literal["production", "staging", "development", "local"] = "production"
+    # Never enable DEBUG in production/staging: it relaxes startup checks, may expose
+    # stack traces to clients, and historically paired with unsafe OTP-in-JSON behavior.
+    # DEBUG=true is only accepted when ENVIRONMENT is "local" or "development".
     DEBUG: bool = False
     SQL_ECHO: bool = False
     ALLOWED_ORIGINS: str = "*"
     MINIO_ENABLED: bool = True
+    # Only when ENVIRONMENT is local/development: if true, forgot-password may echo
+    # the OTP in the JSON body for manual testing. Never enable in staging/production.
+    EXPOSE_OTP_HINT_IN_FORGOT_PASSWORD: bool = False
+    # If true, each request resolves permission codes from the DB (role → permissions) instead
+    # of trusting the JWT list (avoids stale grants until token refresh). One extra query per auth.
+    STRICT_RBAC_CHECK: bool = False
 
     # Single-school: UUID of the school row when token + user have no school_id.
     # Never infer from DB queries (avoids wrong-tenant style bugs if data is wrong).
@@ -71,7 +84,7 @@ class Settings(BaseSettings):
             raise ValueError("DEFAULT_SCHOOL_ID must be a valid UUID") from e
         return s
 
-    @field_validator("DEBUG", "SQL_ECHO", "MINIO_ENABLED", mode="before")
+    @field_validator("DEBUG", "SQL_ECHO", "MINIO_ENABLED", "STRICT_RBAC_CHECK", mode="before")
     @classmethod
     def validate_boolish(cls, v):
         if isinstance(v, bool):
@@ -83,6 +96,33 @@ class Settings(BaseSettings):
             if normalized in {"false", "0", "no", "off", "release", "production", "prod"}:
                 return False
         return v
+
+    @model_validator(mode="after")
+    def validate_debug_allowed_for_environment(self):
+        if self.DEBUG and self.ENVIRONMENT not in ("local", "development"):
+            raise ValueError(
+                "DEBUG=true is not allowed when ENVIRONMENT is "
+                f"{self.ENVIRONMENT!r}. DEBUG is for local troubleshooting only "
+                "(verbose errors, relaxed startup checks). In production or staging it "
+                "must remain false to avoid leaking sensitive data (e.g. OTPs, secrets) "
+                "and weakening security guarantees. Set ENVIRONMENT=local or "
+                "ENVIRONMENT=development if you need DEBUG=true."
+            )
+        return self
+
+    @property
+    def is_development_environment(self) -> bool:
+        return self.ENVIRONMENT in ("local", "development")
+
+    @property
+    def include_forgot_password_otp_hint(self) -> bool:
+        """Plain OTP in API responses: only when explicitly opted in on a dev environment."""
+        return self.is_development_environment and self.EXPOSE_OTP_HINT_IN_FORGOT_PASSWORD
+
+    @property
+    def minio_use_ssl(self) -> bool:
+        """Local/dev MinIO is often plain HTTP; staging/production typically use TLS."""
+        return self.ENVIRONMENT not in ("local", "development")
 
     @field_validator("DATABASE_URL")
     @classmethod

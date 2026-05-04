@@ -288,7 +288,6 @@ class FeeService:
                 structures.append(structure)
                 seen_structure_ids.add(structure.id)
 
-        await self.db.commit()
         for s in structures:
             await self.db.refresh(s)
 
@@ -363,7 +362,6 @@ class FeeService:
             await self._sync_ledgers_for_structure(school_id=school_id, structure=updated)
             updated_structures.append(updated)
 
-        await self.db.commit()
         for s in updated_structures:
             await self.db.refresh(s)
 
@@ -399,7 +397,6 @@ class FeeService:
             await self.repo.delete_ledgers_for_structure(structure_id, school_id)
 
         await self.repo.delete_structure(structure)
-        await self.db.commit()
 
     # ------------------------------------------------------------------
     # Fee Structure List
@@ -491,7 +488,6 @@ class FeeService:
             academic_year_id=resolved_year_id,
         )
         if not structures:
-            await self.db.commit()
             return LedgerGenerateResponse(
                 created=0,
                 skipped=0,
@@ -579,7 +575,6 @@ class FeeService:
                     )
                     created += 1
 
-        await self.db.commit()
         return LedgerGenerateResponse(
             created=created,
             skipped=skipped,
@@ -718,7 +713,6 @@ class FeeService:
                 )
                 created += 1
 
-        await self.db.commit()
         return LedgerGenerateResponse(created=created, skipped=skipped)
 
     # ------------------------------------------------------------------
@@ -905,7 +899,6 @@ class FeeService:
             },
         )
 
-        await self.db.commit()
         await self.db.refresh(payment)
         return PaymentResponse.model_validate(payment)
 
@@ -1016,7 +1009,6 @@ class FeeService:
                 )
             )
 
-        await self.db.commit()
         return PaymentAllocateResponse(
             student_id=body.student_id,
             payment_cycle=requested_cycle,
@@ -1043,7 +1035,6 @@ class FeeService:
             academic_year_id=resolved_year_id,
             as_of_date=today,
         )
-        await self.db.commit()
         return {"updated": count, "as_of_date": today.isoformat()}
 
     # ------------------------------------------------------------------
@@ -1104,8 +1095,6 @@ class FeeService:
 
         if any(ldr.status == FeeStatus.OVERDUE for ldr in ledgers):
             has_overdue = True
-
-        await self.db.commit()
 
         return FeeDashboardResponse(
             items=items,
@@ -1255,7 +1244,6 @@ class FeeService:
                 )
             )
 
-        await self.db.commit()
         return DefaulterListResponse(
             academic_year_id=resolved_year_id,
             report_date=today,
@@ -1624,7 +1612,6 @@ class FeeService:
                 )
             )
 
-        await self.db.commit()
         return FeeAnalyticsResponse(
             academic_year_id=resolved_year_id,
             report_date=report_date,
@@ -1814,7 +1801,6 @@ class FeeService:
 
         items.sort(key=lambda r: r.admission_number or "")
 
-        await self.db.commit()
         return ClassFeeStudentListResponse(
             items=items,
             total=len(items),

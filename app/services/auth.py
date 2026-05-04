@@ -41,7 +41,8 @@ class AuthService:
         self.otp_repo = OtpStoreRepository(db)
         self.jti_repo = JtiBlocklistRepository(db)
 
-    async def _get_permissions_for_role(self, role: RoleEnum) -> list[str]:
+    async def get_permission_codes_for_role(self, role: RoleEnum) -> list[str]:
+        """Load permission codes for a role from the database (authoritative RBAC source)."""
         from app.models.role import Role
         from app.models.permission import Permission
         from app.models.role_permission import RolePermission
@@ -76,7 +77,7 @@ class AuthService:
             return None
 
     async def _build_token_payload(self, user: User) -> dict:
-        permissions = await self._get_permissions_for_role(user.role)
+        permissions = await self.get_permission_codes_for_role(user.role)
 
         payload: dict = {
             "sub": str(user.id),
@@ -197,9 +198,11 @@ class AuthService:
 
         await self.otp_repo.create(user.id, hashed, expires_at)
 
+        # Never echo OTP unless local/dev ENVIRONMENT + EXPOSE_OTP_HINT_IN_FORGOT_PASSWORD
+        # (see Settings.include_forgot_password_otp_hint). Plain OTP in JSON is a credential leak.
         return {
             "message": "OTP has been sent to your registered email/phone",
-            "hint": otp_plain if settings.DEBUG else None,
+            "hint": otp_plain if settings.include_forgot_password_otp_hint else None,
         }
 
     async def verify_otp(self, email: Optional[str], phone: Optional[str], otp_code: str) -> dict:

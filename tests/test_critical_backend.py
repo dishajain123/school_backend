@@ -92,6 +92,34 @@ async def test_hydrate_rejects_jwt_school_mismatch_when_using_default_school():
 
 
 @pytest.mark.asyncio
+async def test_hydrate_with_strict_rbac_uses_db_permissions_not_jwt():
+    """STRICT_RBAC_CHECK ignores stale JWT permission claims."""
+    uid = uuid.uuid4()
+    school = uuid.uuid4()
+    payload = {
+        "sub": str(uid),
+        "role": RoleEnum.TEACHER.value,
+        "permissions": ["stale:jwt-only"],
+        "school_id": str(school),
+    }
+    db = AsyncMock()
+    db.execute = AsyncMock(
+        return_value=_user_row_result(UserStatus.ACTIVE, True, school, RoleEnum.TEACHER)
+    )
+
+    with patch("app.core.dependencies.settings") as mock_settings:
+        mock_settings.STRICT_RBAC_CHECK = True
+        with patch("app.services.auth.AuthService") as mock_auth_cls:
+            inst = mock_auth_cls.return_value
+            inst.get_permission_codes_for_role = AsyncMock(return_value=["from:db"])
+            user = await hydrate_current_user_from_access_payload(payload, db)
+            mock_auth_cls.assert_called_once_with(db)
+            inst.get_permission_codes_for_role.assert_awaited_once_with(RoleEnum.TEACHER)
+
+    assert user.permissions == ["from:db"]
+
+
+@pytest.mark.asyncio
 async def test_hydrate_user_without_school_uses_default_school_id_when_configured():
     uid = uuid.uuid4()
     default_sid = uuid.uuid4()
@@ -155,7 +183,7 @@ async def test_get_permissions_for_role_returns_codes_from_db():
     mock_db.execute = AsyncMock(return_value=result)
 
     svc = AuthService(mock_db)
-    perms = await svc._get_permissions_for_role(RoleEnum.TEACHER)
+    perms = await svc.get_permission_codes_for_role(RoleEnum.TEACHER)
 
     assert perms == ["student:read", "attendance:mark"]
     mock_db.execute.assert_awaited()
@@ -168,7 +196,7 @@ async def test_get_permissions_for_role_db_error_raises_internal():
 
     svc = AuthService(mock_db)
     with pytest.raises(InternalServerException, match="Unable to resolve role permissions"):
-        await svc._get_permissions_for_role(RoleEnum.PRINCIPAL)
+        await svc.get_permission_codes_for_role(RoleEnum.PRINCIPAL)
 
 
 @pytest.mark.asyncio

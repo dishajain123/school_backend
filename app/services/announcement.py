@@ -270,7 +270,6 @@ class AnnouncementService:
                 "school_id": school_id,
             }
         )
-        await self.db.commit()
         await self.db.refresh(announcement)
         await self.audit_service.log(
             action=AuditAction.ANNOUNCEMENT_CREATED,
@@ -486,7 +485,6 @@ class AnnouncementService:
             "is_active": announcement.is_active,
         }
         updated = await self.repo.update(announcement, update_data)
-        await self.db.commit()
         await self.db.refresh(updated)
         await self.audit_service.log(
             action=AuditAction.ANNOUNCEMENT_UPDATED,
@@ -548,7 +546,6 @@ class AnnouncementService:
             "is_active": announcement.is_active,
         }
         await self.repo.update(announcement, {"is_active": False})
-        await self.db.commit()
         await self.audit_service.log(
             action=AuditAction.ANNOUNCEMENT_DELETED,
             actor_id=current_user.id,

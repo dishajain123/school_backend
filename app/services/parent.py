@@ -126,7 +126,6 @@ class ParentService:
                     update_payload["relation"] = payload.relation
                 if update_payload:
                     await self.parent_repo.update(existing_parent, update_payload)
-                    await self.db.commit()
                 return await self.parent_repo.get_by_id(existing_parent.id, school_id)  # type: ignore[return-value]
 
             parent = await self.parent_repo.create(
@@ -137,7 +136,6 @@ class ParentService:
                     "relation": payload.relation,
                 }
             )
-            await self.db.commit()
             await self.db.refresh(parent)
             return await self.parent_repo.get_by_id(parent.id, school_id)  # type: ignore[return-value]
 
@@ -163,7 +161,6 @@ class ParentService:
             }
         )
 
-        await self.db.commit()
         await self.db.refresh(parent)
 
         # Reload with user eager-loaded
@@ -214,7 +211,6 @@ class ParentService:
 
         update_data = payload.model_dump(exclude_unset=True)
         updated = await self.parent_repo.update(parent, update_data)
-        await self.db.commit()
         await self.db.refresh(updated)
         return await self.parent_repo.get_by_id(parent_id, school_id)  # type: ignore[return-value]
 
@@ -315,7 +311,6 @@ class ParentService:
 
         student.parent_id = parent_id
         await self.db.flush()
-        await self.db.commit()
 
         children = await self.parent_repo.get_children(parent_id, school_id)
         return parent_id, children
@@ -377,7 +372,6 @@ class ParentService:
             student.parent_id = parent.id
 
         await self.db.flush()
-        await self.db.commit()
 
         children = await self.parent_repo.get_children(parent_id, school_id)
         return parent.id, children

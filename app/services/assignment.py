@@ -195,7 +195,6 @@ class AssignmentService:
                 "school_id": current_user.school_id,
             }
         )
-        await self.db.commit()
         await self.db.refresh(assignment)
 
         logger.info(
@@ -388,6 +387,5 @@ class AssignmentService:
 
         update_data = body.model_dump(exclude_none=True)
         updated = await self.repo.update(assignment, update_data)
-        await self.db.commit()
         await self.db.refresh(updated)
         return self._build_response(updated)

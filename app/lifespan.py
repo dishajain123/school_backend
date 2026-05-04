@@ -23,7 +23,7 @@ logger = get_logger(__name__)
 
 
 async def _assert_users_have_school_id() -> None:
-    """Single-school invariant: no NULL users.school_id (non-DEBUG logs only)."""
+    """Single-school invariant: no NULL users.school_id (strict except local dev + DEBUG)."""
     async with AsyncSessionLocal() as db:
         result = await db.execute(
             select(func.count()).select_from(User).where(User.school_id.is_(None))
@@ -35,8 +35,11 @@ async def _assert_users_have_school_id() -> None:
         f"{n} user(s) have NULL school_id. Set DEFAULT_SCHOOL_ID, run Alembic migration "
         "e8f4a2c91d00 (backfill + NOT NULL), then restart."
     )
-    if settings.DEBUG:
-        logger.warning("%s Startup continues because DEBUG=true.", msg)
+    if settings.DEBUG and settings.is_development_environment:
+        logger.warning(
+            "%s Startup continues because DEBUG is enabled in a development environment.",
+            msg,
+        )
     else:
         logger.error(msg)
         raise RuntimeError(msg)
@@ -80,9 +83,19 @@ async def _cleanup_loop(stop_event: asyncio.Event) -> None:
             continue
 
 
+def _assert_debug_not_enabled_in_production() -> None:
+    """Settings load already validates DEBUG+ENVIRONMENT; log explicit production posture."""
+    if settings.ENVIRONMENT == "production" and settings.DEBUG:
+        raise RuntimeError(
+            "Invalid configuration: DEBUG cannot be enabled in production. "
+            "This is blocked at settings validation; if you see this, configuration loading is broken."
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Starting up SMS backend...")
+    _assert_debug_not_enabled_in_production()
+    logger.info("Starting up SMS backend (environment=%s)...", settings.ENVIRONMENT)
     logger.info(
         "API usage tracking enabled: deprecated=%s unused_candidates=%s",
         len(DEPRECATED_APIS),

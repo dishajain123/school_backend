@@ -150,7 +150,7 @@ class BehaviourService:
                 "school_id": school_id,
             }
         )
-        # Intentional: background notifier may open a new session and must see this row.
+        # commit required before background task: parent notifier uses its own DB session.
         await self.db.commit()
         await self.db.refresh(log)
 

@@ -154,7 +154,6 @@ class EnrollmentService:
         submitted["academic_year_id"] = str(academic_year_id)
         user.submitted_data = submitted
         await self.db.flush()
-        await self.db.commit()
         return AnnualReenrollResponse(
             user_id=user.id,
             role=user.role,
@@ -390,7 +389,6 @@ class EnrollmentService:
             ),
         )
 
-        await self.db.commit()
         await self.db.refresh(mapping)
         return mapping
 
@@ -452,7 +450,6 @@ class EnrollmentService:
         student = await self._load_student(mapping.student_id, actor.school_id)
         await self._sync_student_flat_fields(student, mapping)
 
-        await self.db.commit()
         await self.db.refresh(mapping)
         return mapping
 
@@ -543,7 +540,6 @@ class EnrollmentService:
             after_state=after,
         )
 
-        await self.db.commit()
         await self.db.refresh(mapping)
         return mapping
 
@@ -598,7 +594,6 @@ class EnrollmentService:
             after_state={"status": self._status_text(data.status), "left_on": str(data.left_on)},
         )
 
-        await self.db.commit()
         await self.db.refresh(mapping)
         return mapping
 
@@ -646,7 +641,6 @@ class EnrollmentService:
             after_state={"status": EnrollmentStatus.COMPLETED.value},
         )
 
-        await self.db.commit()
         await self.db.refresh(mapping)
         return mapping
 
@@ -792,7 +786,6 @@ class EnrollmentService:
                     m.roll_number = roll_map[str(m.id)]
 
         await self.db.flush()
-        await self.db.commit()
 
         return {
             "assigned_count": len(mappings),

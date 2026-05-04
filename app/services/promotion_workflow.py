@@ -357,7 +357,6 @@ class PromotionWorkflowService:
                     )
                 )
 
-        await self.db.commit()
         return PromotionExecuteResponse(
             source_year_id=data.source_year_id,
             target_year_id=data.target_year_id,
@@ -400,7 +399,6 @@ class PromotionWorkflowService:
                 student,
                 data.target_year_id,
             )
-            await self.db.commit()
         return SingleReenrollResponse(
             student_id=created.student_id,
             admission_number=student.admission_number if student else None,
@@ -494,7 +492,6 @@ class PromotionWorkflowService:
                 f"{data.target_year_id}. copied={copied}, skipped={skipped}, errors={errors}"
             ),
         )
-        await self.db.commit()
         return CopyTeacherAssignmentsResponse(
             source_year_id=data.source_year_id,
             target_year_id=data.target_year_id,
@@ -602,9 +599,7 @@ class PromotionWorkflowService:
                 f"copied={copied}, skipped={skipped}, errors={errors}"
             ),
         )
-        await self.db.commit()
         await self._mark_user_reenrolled_to_year(teacher.user_id, data.target_year_id)
-        await self.db.commit()
         return TeacherReenrollResponse(
             teacher_id=teacher_id,
             source_year_id=data.source_year_id,

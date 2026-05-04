@@ -71,7 +71,6 @@ class MastersService:
                 "academic_year_id": payload.academic_year_id,
             }
         )
-        await self.db.commit()
         await self.db.refresh(obj)
         return obj
 
@@ -104,7 +103,6 @@ class MastersService:
                 )
 
         updated = await self.std_repo.update(obj, update_data)
-        await self.db.commit()
         await self.db.refresh(updated)
         return updated
 
@@ -113,7 +111,6 @@ class MastersService:
         if not obj:
             raise NotFoundException(detail="Standard not found")
         await self.std_repo.delete(obj)
-        await self.db.commit()
 
     # ── Subjects ──────────────────────────────────────────────────────────────
 
@@ -140,7 +137,6 @@ class MastersService:
                 "code": payload.code.upper().strip(),
             }
         )
-        await self.db.commit()
         await self.db.refresh(obj)
         return obj
 
@@ -179,7 +175,6 @@ class MastersService:
                     )
 
         updated = await self.sub_repo.update(obj, update_data)
-        await self.db.commit()
         await self.db.refresh(updated)
         return updated
 
@@ -188,7 +183,6 @@ class MastersService:
         if not obj:
             raise NotFoundException(detail="Subject not found")
         await self.sub_repo.delete(obj)
-        await self.db.commit()
 
     # ── Sections ─────────────────────────────────────────────────────────────
 
@@ -230,7 +224,6 @@ class MastersService:
                 "is_active": True,
             }
         )
-        await self.db.commit()
         await self.db.refresh(obj)
         return obj
 
@@ -258,7 +251,6 @@ class MastersService:
         if not obj:
             raise NotFoundException(detail="Section not found")
         updated = await self.section_repo.update(obj, payload.model_dump(exclude_unset=True))
-        await self.db.commit()
         await self.db.refresh(updated)
         return updated
 
@@ -267,7 +259,6 @@ class MastersService:
         if not obj:
             raise NotFoundException(detail="Section not found")
         await self.section_repo.delete(obj)
-        await self.db.commit()
 
     # ── Grade Master ──────────────────────────────────────────────────────────
 
@@ -294,7 +285,6 @@ class MastersService:
                 "grade_point": payload.grade_point,
             }
         )
-        await self.db.commit()
         await self.db.refresh(obj)
         return obj
 
@@ -329,7 +319,6 @@ class MastersService:
                     )
 
         updated = await self.grade_repo.update(obj, update_data)
-        await self.db.commit()
         await self.db.refresh(updated)
         return updated
 
@@ -338,7 +327,6 @@ class MastersService:
         if not obj:
             raise NotFoundException(detail="Grade not found")
         await self.grade_repo.delete(obj)
-        await self.db.commit()
 
     async def lookup_grade_by_percent(
         self, school_id: uuid.UUID, percent: float

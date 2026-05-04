@@ -97,7 +97,6 @@ class GalleryService:
                 "academic_year_id": academic_year_id,
             }
         )
-        await self.db.commit()
         await self.db.refresh(album)
         return self._album_response(AlbumResponse.model_validate(album))
 
@@ -123,7 +122,6 @@ class GalleryService:
             update_data["event_name"] = update_data["event_name"].strip()
 
         updated = await self.repo.update_album(album, update_data)
-        await self.db.commit()
         await self.db.refresh(updated)
         return self._album_response(AlbumResponse.model_validate(updated))
 
@@ -197,7 +195,6 @@ class GalleryService:
             await self.repo.update_photo(photo, {"is_featured": True})
             await self.repo.update_album(album, {"cover_photo_key": key})
 
-        await self.db.commit()
         await self.db.refresh(photo)
 
         data = PhotoResponse.model_validate(photo)
@@ -249,7 +246,6 @@ class GalleryService:
             elif album.cover_photo_key == photo.photo_key:
                 await self.repo.update_album(album, {"cover_photo_key": None})
 
-        await self.db.commit()
         await self.db.refresh(updated)
         data = PhotoResponse.model_validate(updated)
         data.photo_url = minio_client.generate_presigned_url(GALLERY_BUCKET, updated.photo_key)
@@ -279,7 +275,6 @@ class GalleryService:
                 )
 
         await self.repo.delete_album(album)
-        await self.db.commit()
 
     async def get_photo_interactions(
         self,
@@ -318,7 +313,6 @@ class GalleryService:
                 }
             )
 
-        await self.db.commit()
         return await self._interaction_response(photo_id, school_id, current_user.id)
 
     async def remove_reaction(
@@ -337,7 +331,6 @@ class GalleryService:
         if existing:
             await self.repo.delete_reaction(existing)
 
-        await self.db.commit()
         return await self._interaction_response(photo_id, school_id, current_user.id)
 
     async def add_comment(
@@ -363,7 +356,6 @@ class GalleryService:
             }
         )
 
-        await self.db.commit()
         return await self._interaction_response(photo_id, school_id, current_user.id)
 
     async def delete_comment(
@@ -387,5 +379,4 @@ class GalleryService:
             raise ForbiddenException("You can delete only your own comment")
 
         await self.repo.delete_comment(comment)
-        await self.db.commit()
         return await self._interaction_response(photo_id, school_id, current_user.id)

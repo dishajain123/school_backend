@@ -358,7 +358,7 @@ class ChatService:
                 }
             )
 
-        # Intentional: chat state must be visible to other sessions/WS before this request ends.
+        # commit required before other clients read this conversation (WS / separate HTTP session).
         await self.db.commit()
         full = await self.repo.get_conversation_by_id(conversation.id, school_id)
         if full is None:
@@ -704,7 +704,7 @@ class ChatService:
                 "school_id": school_id,
             }
         )
-        # Intentional: messages must be visible to other connections before WS/HTTP round-trip ends.
+        # commit required before other connections read this message (WS / poll).
         await self.db.commit()
         await self.db.refresh(message)
         hydrated = await self.repo.get_message_by_id(message.id, school_id)

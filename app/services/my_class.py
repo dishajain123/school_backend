@@ -461,7 +461,6 @@ class MyClassService:
             "description": payload.description,
             "order_index": payload.order_index,
         })
-        await self.db.commit()
         return await self._build_chapter_response(chapter)
 
     async def list_chapters(
@@ -523,7 +522,6 @@ class MyClassService:
 
         update_data = payload.model_dump(exclude_none=True)
         chapter = await self.chapter_repo.update(chapter, update_data)
-        await self.db.commit()
         return await self._build_chapter_response(chapter)
 
     async def delete_chapter(
@@ -547,7 +545,6 @@ class MyClassService:
             )
 
         await self.chapter_repo.delete(chapter)
-        await self.db.commit()
 
     # ─────────────────────────────────────────────────────────────────────────
     # Topic CRUD
@@ -591,7 +588,6 @@ class MyClassService:
             "description": payload.description,
             "order_index": payload.order_index,
         })
-        await self.db.commit()
         return await self._build_topic_response(topic)
 
     async def list_topics(
@@ -663,7 +659,6 @@ class MyClassService:
 
         update_data = payload.model_dump(exclude_none=True)
         topic = await self.topic_repo.update(topic, update_data)
-        await self.db.commit()
         return await self._build_topic_response(topic)
 
     async def delete_topic(
@@ -691,7 +686,6 @@ class MyClassService:
             )
 
         await self.topic_repo.delete(topic)
-        await self.db.commit()
 
     # ─────────────────────────────────────────────────────────────────────────
     # ContentItem CRUD
@@ -733,7 +727,6 @@ class MyClassService:
             "link_title": payload.link_title,
             "quiz_id": payload.quiz_id,
         })
-        await self.db.commit()
         return await self._inject_presigned_url(item)
 
     async def upload_content_file(
@@ -845,7 +838,6 @@ class MyClassService:
 
         update_data = payload.model_dump(exclude_none=True)
         item = await self.content_repo.update(item, update_data)
-        await self.db.commit()
         return await self._inject_presigned_url(item)
 
     async def delete_content(
@@ -869,7 +861,6 @@ class MyClassService:
             )
 
         await self.content_repo.delete(item)
-        await self.db.commit()
 
     # ─────────────────────────────────────────────────────────────────────────
     # Quiz CRUD
@@ -916,7 +907,6 @@ class MyClassService:
             "total_marks": payload.total_marks,
             "duration_minutes": payload.duration_minutes,
         })
-        await self.db.commit()
         return await self._build_quiz_response(quiz, include_answers=True)  # type: ignore[return-value]
 
     async def get_quiz(
@@ -998,7 +988,6 @@ class MyClassService:
 
         update_data = payload.model_dump(exclude_none=True)
         quiz = await self.quiz_repo.update(quiz, update_data)
-        await self.db.commit()
         return await self._build_quiz_response(quiz, include_answers=True)  # type: ignore[return-value]
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -1032,7 +1021,6 @@ class MyClassService:
         questions = await self.question_repo.list_by_quiz(payload.quiz_id)
         total = sum(q.marks for q in questions)
         await self.quiz_repo.update(quiz, {"total_marks": total})
-        await self.db.commit()
         return QuestionResponse.model_validate(question)
 
     async def update_question(
@@ -1060,7 +1048,6 @@ class MyClassService:
         questions = await self.question_repo.list_by_quiz(quiz.id)
         total = sum(q.marks for q in questions)
         await self.quiz_repo.update(quiz, {"total_marks": total})
-        await self.db.commit()
         return QuestionResponse.model_validate(question)
 
     async def delete_question(
@@ -1085,7 +1072,6 @@ class MyClassService:
         questions = await self.question_repo.list_by_quiz(quiz.id)
         total = sum(q.marks for q in questions)
         await self.quiz_repo.update(quiz, {"total_marks": total})
-        await self.db.commit()
 
     # ─────────────────────────────────────────────────────────────────────────
     # Quiz Attempt (Student)
@@ -1177,7 +1163,6 @@ class MyClassService:
             "total_marks": total_marks,
             "is_completed": True,
         })
-        await self.db.commit()
 
         resp = AttemptResultResponse.model_validate(attempt)
         return resp.model_copy(update={

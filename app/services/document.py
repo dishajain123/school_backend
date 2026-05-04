@@ -493,7 +493,6 @@ class DocumentService:
                 note=body.note,
                 updated_by=current_user.id,
             )
-        await self.db.commit()
         await self.db.refresh(doc)
 
         return self._serialize_document_response(doc)
@@ -594,7 +593,6 @@ class DocumentService:
                 body=f"{document_type.value.replace('_', ' ').title()} uploaded and sent for verification.",
                 reference_id=doc.id,
             )
-        await self.db.commit()
         await self.db.refresh(doc)
         return self._serialize_document_response(doc)
 
@@ -801,7 +799,6 @@ class DocumentService:
             },
             school_id=school_id,
         )
-        await self.db.commit()
         await self.db.refresh(doc)
         review_meta_map = await self._get_review_meta_map(school_id)
         return self._serialize_document_response(doc, review_meta_map)
@@ -858,7 +855,6 @@ class DocumentService:
             payload=payload,
             updated_by=current_user.id,
         )
-        await self.db.commit()
         return DocumentRequirementsResponse(
             items=[
                 DocumentRequirementResponse(

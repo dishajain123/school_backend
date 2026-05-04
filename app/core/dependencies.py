@@ -45,6 +45,10 @@ async def hydrate_current_user_from_access_payload(
     database (or ``DEFAULT_SCHOOL_ID`` when the user row has no school during legacy
     transition). Optional ``school_id`` / ``role`` claims on the token are validated
     against the DB but never used to derive the school.
+
+    Permission codes default to the JWT ``permissions`` claim (no extra query). When
+    ``settings.STRICT_RBAC_CHECK`` is true, permissions are reloaded from the database
+    for the user's DB role so revocations take effect immediately on the next request.
     """
     school_id_raw = payload.get("school_id")
     parent_id_raw = payload.get("parent_id")
@@ -99,9 +103,14 @@ async def hydrate_current_user_from_access_payload(
         )
         resolved_parent_id = parent_row.scalar_one_or_none()
 
-    perms = payload.get("permissions", [])
-    if not isinstance(perms, list):
-        perms = []
+    if settings.STRICT_RBAC_CHECK:
+        from app.services.auth import AuthService
+
+        perms = await AuthService(db).get_permission_codes_for_role(user_role)
+    else:
+        perms = payload.get("permissions", [])
+        if not isinstance(perms, list):
+            perms = []
 
     return CurrentUser(
         id=uuid.UUID(str(payload["sub"])),
@@ -123,7 +132,9 @@ async def get_current_user_from_access_token(
 ) -> CurrentUser:
     """
     Full access-token auth: decode, type + JTI + blocklist, then hydrate.
-    Used by HTTP Bearer and WebSocket first-frame auth so behavior stays identical.
+
+    When ``settings.STRICT_RBAC_CHECK`` is true, ``hydrate_current_user_from_access_payload``
+    reloads permission codes from the database (see that function).
     """
     payload = decode_token(token)
 

@@ -55,14 +55,15 @@ async def _seed_integration_users() -> dict:
     from app.utils.enums import RegistrationSource, RoleEnum, UserStatus
 
     suffix = uuid.uuid4().hex[:8]
-    principal_email = f"int_principal_{suffix}@test.local"
-    student_email = f"int_student_{suffix}@test.local"
+    # Avoid .local / reserved TLDs (Pydantic email-validator rejects them).
+    principal_email = f"int_principal_{suffix}@example.com"
+    student_email = f"int_student_{suffix}@example.com"
     password = "IntegrationTest1!"
 
     async with AsyncSessionLocal() as session:
         school = School(
             name=f"Integration School {suffix}",
-            contact_email=f"school_{suffix}@test.local",
+            contact_email=f"school_{suffix}@example.com",
             is_active=True,
         )
         session.add(school)
@@ -115,7 +116,7 @@ async def _seed_integration_users() -> dict:
         perm_id = perm_row.scalar_one_or_none()
         if role_id and perm_id:
             existing = await session.execute(
-                select(RolePermission.id).where(
+                select(RolePermission.role_id).where(
                     RolePermission.role_id == role_id,
                     RolePermission.permission_id == perm_id,
                 )
@@ -138,14 +139,31 @@ async def _seed_integration_users() -> dict:
         }
 
 
+async def _dispose_engine_pool() -> None:
+    """Drop pooled asyncpg connections so TestClient's thread loop can open fresh ones."""
+    from app.db.session import engine
+
+    await engine.dispose()
+
+
+async def _seed_integration_users_then_dispose_pool() -> dict:
+    ctx = await _seed_integration_users()
+    await _dispose_engine_pool()
+    return ctx
+
+
 @pytest.fixture(scope="module")
 def integration_ctx() -> dict:
-    return asyncio.run(_seed_integration_users())
+    return asyncio.run(_seed_integration_users_then_dispose_pool())
 
 
 @pytest.fixture(scope="module")
 def client(integration_ctx: dict):  # noqa: ARG001 — seed DB before app lifespan touches it
-    with patch("app.lifespan.ensure_buckets_exist", new_callable=AsyncMock):
+    # Startup checks use the same DATABASE_URL as the seed; unrelated rows may exist locally.
+    # Skip global NULL-school guard so tests only validate the routes under test.
+    with patch("app.lifespan.ensure_buckets_exist", new_callable=AsyncMock), patch(
+        "app.lifespan._assert_users_have_school_id", new_callable=AsyncMock
+    ):
         from app.main import app
 
         with TestClient(app) as c:

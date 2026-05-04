@@ -190,7 +190,6 @@ class LeaveService:
                 "school_id": school_id,
             }
         )
-        await self.db.commit()
         await self.db.refresh(leave)
 
         background_tasks.add_task(
@@ -248,7 +247,6 @@ class LeaveService:
             academic_year_id=updated.academic_year_id,
             leave_type=updated.leave_type,
         )
-        await self.db.commit()
         await self.db.refresh(updated)
 
         # Notify teacher synchronously (small payload, no background task needed)
@@ -402,7 +400,6 @@ class LeaveService:
                 academic_year_id=academic_year_id,
                 leave_type=item.leave_type,
             )
-        await self.db.commit()
         balances = await self.repo.list_balances(teacher_id, academic_year_id)
         results = []
         for b in balances:

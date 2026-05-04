@@ -156,7 +156,6 @@ class RoleProfileService:
         if data.section is not None:
             student.section = data.section
 
-        await self.db.commit()
         await self.db.refresh(student)
 
         return StudentProfileResponse(
@@ -198,7 +197,6 @@ class RoleProfileService:
             custom_employee_id=data.custom_employee_id,
         )
 
-        await self.db.commit()
         await self.db.refresh(teacher)
 
         return TeacherProfileResponse(
@@ -245,7 +243,6 @@ class RoleProfileService:
             school_id=school_id,
         )
 
-        await self.db.commit()
         await self.db.refresh(parent)
 
         return ParentProfileResponse(
@@ -457,7 +454,6 @@ class RoleProfileService:
                 )
             )
 
-        await self.db.commit()
         return items
 
     async def upsert_identifier_config(
@@ -518,7 +514,6 @@ class RoleProfileService:
             if cfg.is_locked
             else None
         )
-        await self.db.commit()
         return IdentifierConfigResponse(
             identifier_type=cfg.identifier_type,
             format_template=cfg.format_template,
