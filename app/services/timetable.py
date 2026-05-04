@@ -222,7 +222,6 @@ class TimetableService:
                 section=normalized_section,
                 updated_by=current_user.id,
             )
-            await self.db.commit()
             await self.db.refresh(updated)
             data = TimetableUploadResponse.model_validate(updated)
             data.uploaded_by_name = (
@@ -248,7 +247,6 @@ class TimetableService:
                 section=normalized_section,
                 updated_by=current_user.id,
             )
-            await self.db.commit()
             await self.db.refresh(created)
             data = TimetableUploadResponse.model_validate(created)
             data.uploaded_by_name = (
@@ -320,7 +318,6 @@ class TimetableService:
 
         file_key = timetable.file_key
         await self.repo.delete(timetable)
-        await self.db.commit()
 
         try:
             minio_client.delete_file(TIMETABLE_BUCKET, file_key)

@@ -18,12 +18,20 @@ from app.core.security import (
     decode_refresh_token,
     decode_reset_token,
 )
-from app.core.exceptions import UnauthorizedException, NotFoundException, ValidationException
+from app.core.exceptions import (
+    InternalServerException,
+    NotFoundException,
+    UnauthorizedException,
+    ValidationException,
+)
+from app.core.logging import get_logger
 from app.core.config import settings
 from app.models.user import User
 from app.utils.enums import RoleEnum, UserStatus
 from app.utils.helpers import generate_otp
 from app.utils.constants import OTP_EXPIRE_MINUTES, RESET_TOKEN_TYPE
+
+logger = get_logger(__name__)
 
 
 class AuthService:
@@ -37,7 +45,6 @@ class AuthService:
         from app.models.role import Role
         from app.models.permission import Permission
         from app.models.role_permission import RolePermission
-        from sqlalchemy import join
 
         try:
             stmt = (
@@ -48,8 +55,14 @@ class AuthService:
             )
             result = await self.db.execute(stmt)
             return list(result.scalars().all())
-        except Exception:
-            return []
+        except Exception as exc:
+            logger.exception(
+                "RBAC permission query failed for role=%s; refusing empty permissions",
+                role.value,
+            )
+            raise InternalServerException(
+                detail="Unable to resolve role permissions. Please try again later.",
+            ) from exc
 
     async def _get_parent_id_for_user(self, user_id: uuid.UUID) -> Optional[uuid.UUID]:
         try:
@@ -68,7 +81,8 @@ class AuthService:
         payload: dict = {
             "sub": str(user.id),
             "role": user.role.value,
-            "school_id": str(user.school_id) if user.school_id else None,
+            # Informational copy of DB state for clients; never used as tenant source on the server.
+            "school_id": str(user.school_id),
             "permissions": permissions,
             "full_name": user.full_name,
             "email": user.email,
@@ -116,7 +130,7 @@ class AuthService:
         payload = await self._build_token_payload(user)
 
         access_token = create_access_token(payload)
-        refresh_token = create_refresh_token({"sub": str(user.id), "school_id": payload["school_id"]})
+        refresh_token = create_refresh_token({"sub": str(user.id)})
 
         return {
             "access_token": access_token,

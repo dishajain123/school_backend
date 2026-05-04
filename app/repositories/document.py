@@ -63,7 +63,7 @@ class DocumentRepository:
             )
         )
         if academic_year_id is not None:
-            stmt = stmt.where(Student.academic_year_id == academic_year_id)
+            stmt = stmt.where(Document.academic_year_id == academic_year_id)
         if standard_id is not None:
             stmt = stmt.where(Student.standard_id == standard_id)
         if section is not None:

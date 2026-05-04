@@ -1,4 +1,18 @@
+# Byte-compiled / cache
 __pycache__/
-.env
+*.py[cod]
+*$py.class
 *.pyc
+
+# Virtual environments (local interpreter installs — never commit)
+.venv/
 venv/
+env/
+
+# Environment and secrets (use .env.example for templates)
+.env
+.env.local
+.env.*.local
+
+# OS / editor noise
+.DS_Store

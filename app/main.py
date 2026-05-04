@@ -11,8 +11,9 @@ from app.middleware.request_id import RequestIdMiddleware
 from app.core.exceptions import (
     AppException,
     app_exception_handler,
-    validation_exception_handler,
     http_exception_handler,
+    unhandled_exception_handler,
+    validation_exception_handler,
 )
 
 
@@ -29,10 +30,12 @@ def create_app() -> FastAPI:
     # Keep CORS outermost so even error responses include CORS headers.
     setup_cors(app)
 
-    # Register exception handlers so all errors return consistent JSON
+    # Register exception handlers so all errors return consistent JSON.
+    # Order does not override MRO: specific types match before the generic Exception handler.
     app.add_exception_handler(AppException, app_exception_handler)
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)
+    app.add_exception_handler(Exception, unhandled_exception_handler)
 
     @app.get("/")
     async def health_check():

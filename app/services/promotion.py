@@ -181,5 +181,4 @@ class PromotionService:
                 )
             )
 
-        await self.db.commit()
         return RolloverResponse(processed=processed, skipped=skipped)

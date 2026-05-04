@@ -10,12 +10,36 @@ from app.core.api_usage_tracker import (
     UNUSED_CANDIDATE_APIS,
     api_usage_tracker,
 )
+from sqlalchemy import func, select
+
+from app.core.config import settings
 from app.db.session import AsyncSessionLocal
+from app.models.user import User
 from app.repositories.otp_store import OtpStoreRepository
 from app.repositories.jti_blocklist import JtiBlocklistRepository
 from app.repositories.notification import NotificationRepository
 
 logger = get_logger(__name__)
+
+
+async def _assert_users_have_school_id() -> None:
+    """Single-school invariant: no NULL users.school_id (non-DEBUG logs only)."""
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(func.count()).select_from(User).where(User.school_id.is_(None))
+        )
+        n = int(result.scalar_one())
+    if n == 0:
+        return
+    msg = (
+        f"{n} user(s) have NULL school_id. Set DEFAULT_SCHOOL_ID, run Alembic migration "
+        "e8f4a2c91d00 (backfill + NOT NULL), then restart."
+    )
+    if settings.DEBUG:
+        logger.warning("%s Startup continues because DEBUG=true.", msg)
+    else:
+        logger.error(msg)
+        raise RuntimeError(msg)
 
 
 async def _cleanup_loop(stop_event: asyncio.Event) -> None:
@@ -66,6 +90,7 @@ async def lifespan(app: FastAPI):
     )
     await init_db()
     logger.info("Database initialized successfully")
+    await _assert_users_have_school_id()
     try:
         await ensure_buckets_exist()
         logger.info("MinIO buckets verified")

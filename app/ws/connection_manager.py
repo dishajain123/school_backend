@@ -9,7 +9,7 @@ class ConnectionManager:
         self.active: Dict[str, List[WebSocket]] = defaultdict(list)
 
     async def connect(self, ws: WebSocket, conversation_id: str) -> None:
-        await ws.accept()
+        """Register an already-accepted WebSocket (caller runs auth then accept)."""
         self.active[conversation_id].append(ws)
 
     def disconnect(self, ws: WebSocket, conversation_id: str) -> None:

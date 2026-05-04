@@ -46,6 +46,20 @@ class ValidationException(AppException):
         super().__init__(status_code=422, detail=detail, error_code="VALIDATION_ERROR")
 
 
+class MisconfigurationException(AppException):
+    """Deployment invariant violated (e.g. single-school count)."""
+
+    def __init__(self, detail: str):
+        super().__init__(status_code=503, detail=detail, error_code="MISCONFIGURED")
+
+
+class InternalServerException(AppException):
+    """Unexpected server-side failure (e.g. RBAC query); never mask as empty data."""
+
+    def __init__(self, detail: str = "An internal error occurred"):
+        super().__init__(status_code=500, detail=detail, error_code="INTERNAL_ERROR")
+
+
 async def app_exception_handler(request: Request, exc: AppException) -> JSONResponse:
     request_id = getattr(request.state, "request_id", None) or request.headers.get("X-Request-ID", str(uuid.uuid4()))
     trace_id = getattr(request.state, "trace_id", None) or request.headers.get("X-Trace-ID", request_id)
@@ -130,4 +144,27 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
             details=exc.detail,
             request_id=request_id,
         ),
+    )
+
+
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """
+    Last-resort handler for bugs / unexpected failures.
+    More specific handlers (AppException, validation, HTTPException) win via MRO.
+    """
+    request_id = getattr(request.state, "request_id", None) or request.headers.get("X-Request-ID", str(uuid.uuid4()))
+    trace_id = getattr(request.state, "trace_id", None) or request.headers.get("X-Trace-ID", request_id)
+    user_id = getattr(request.state, "user_id", None)
+    logger.error(
+        "unhandled_exception method=%s path=%s request_id=%s trace_id=%s user_id=%s",
+        request.method,
+        request.url.path,
+        request_id,
+        trace_id,
+        user_id or "anonymous",
+        exc_info=exc,
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"message": "Internal server error"},
     )

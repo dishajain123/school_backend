@@ -1,13 +1,23 @@
+"""
+HTTP rate limiting middleware.
+
+Uses a :class:`~app.middleware.rate_limit_backend.RateLimiter` implementation.
+Default is :class:`~app.middleware.rate_limit_backend.InMemoryRateLimiter` (single
+process only—not safe for multi-instance production; see ``rate_limit_backend``).
+"""
+
+from __future__ import annotations
+
+from typing import Optional
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from collections import defaultdict
-import time
+
 from app.core.logging import get_logger
 from app.core.response import error_response
+from app.middleware.rate_limit_backend import InMemoryRateLimiter, RateLimiter
 
 logger = get_logger(__name__)
-
-_request_counts: dict[str, list[float]] = defaultdict(list)
 
 RATE_LIMIT_OVERRIDES: dict[str, int] = {
     "/api/v1/auth/login": 5,
@@ -29,20 +39,23 @@ GENERAL_RATE_LIMIT = 60
 WINDOW_SECONDS = 60
 
 
-def _is_rate_limited(key: str, limit: int) -> bool:
-    now = time.time()
-    window_start = now - WINDOW_SECONDS
+def setup_rate_limiter(
+    app: FastAPI,
+    *,
+    backend: Optional[RateLimiter] = None,
+) -> None:
+    """
+    Register sliding-window rate limit middleware.
 
-    _request_counts[key] = [t for t in _request_counts[key] if t > window_start]
+    Args:
+        app: FastAPI application.
+        backend: Optional :class:`~app.middleware.rate_limit_backend.RateLimiter`.
+            Defaults to :class:`~app.middleware.rate_limit_backend.InMemoryRateLimiter`
+            (single-process; **not** appropriate for scaled-out production—use a
+            shared-store implementation such as Redis once implemented).
+    """
+    limiter: RateLimiter = backend or InMemoryRateLimiter()
 
-    if len(_request_counts[key]) >= limit:
-        return True
-
-    _request_counts[key].append(now)
-    return False
-
-
-def setup_rate_limiter(app: FastAPI) -> None:
     @app.middleware("http")
     async def rate_limit_middleware(request: Request, call_next):
         client_ip = request.client.host if request.client else "unknown"
@@ -61,7 +74,7 @@ def setup_rate_limiter(app: FastAPI) -> None:
             key_scope = "general"
         key = f"{client_ip}:{key_scope}"
 
-        if _is_rate_limited(key, limit):
+        if limiter.is_limited(key, limit, WINDOW_SECONDS):
             logger.warning(
                 "rate_limit_exceeded ip=%s path=%s key_scope=%s limit=%s window_seconds=%s request_id=%s trace_id=%s",
                 client_ip,

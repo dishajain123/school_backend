@@ -31,7 +31,7 @@ class UserResponse(BaseModel):
     email: Optional[str]
     phone: Optional[str]
     role: RoleEnum
-    school_id: Optional[uuid.UUID]
+    school_id: uuid.UUID
     status: UserStatus
     registration_source: RegistrationSource
     is_active: bool

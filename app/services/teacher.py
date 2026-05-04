@@ -90,8 +90,6 @@ class TeacherService:
             }
         )
 
-        await self.db.commit()
-
         # Reload with user eager-loaded
         return await self.teacher_repo.get_by_id(teacher.id, school_id)  # type: ignore[return-value]
 
@@ -161,7 +159,6 @@ class TeacherService:
                 )
 
         updated = await self.teacher_repo.update(teacher, update_data)
-        await self.db.commit()
 
         return await self.teacher_repo.get_by_id(teacher_id, school_id)  # type: ignore[return-value]
 

@@ -1,7 +1,9 @@
+import uuid
 from pathlib import Path
-from pydantic_settings import BaseSettings
-from pydantic import field_validator
 from typing import Optional
+
+from pydantic import field_validator
+from pydantic_settings import BaseSettings
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -52,6 +54,22 @@ class Settings(BaseSettings):
     SQL_ECHO: bool = False
     ALLOWED_ORIGINS: str = "*"
     MINIO_ENABLED: bool = True
+
+    # Single-school: UUID of the school row when token + user have no school_id.
+    # Never infer from DB queries (avoids wrong-tenant style bugs if data is wrong).
+    DEFAULT_SCHOOL_ID: Optional[str] = None
+
+    @field_validator("DEFAULT_SCHOOL_ID", mode="before")
+    @classmethod
+    def validate_default_school_id(cls, v):
+        if v is None or (isinstance(v, str) and not str(v).strip()):
+            return None
+        s = str(v).strip()
+        try:
+            uuid.UUID(s)
+        except ValueError as e:
+            raise ValueError("DEFAULT_SCHOOL_ID must be a valid UUID") from e
+        return s
 
     @field_validator("DEBUG", "SQL_ECHO", "MINIO_ENABLED", mode="before")
     @classmethod

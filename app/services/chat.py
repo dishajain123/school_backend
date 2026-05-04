@@ -358,6 +358,7 @@ class ChatService:
                 }
             )
 
+        # Intentional: chat state must be visible to other sessions/WS before this request ends.
         await self.db.commit()
         full = await self.repo.get_conversation_by_id(conversation.id, school_id)
         if full is None:
@@ -703,6 +704,7 @@ class ChatService:
                 "school_id": school_id,
             }
         )
+        # Intentional: messages must be visible to other connections before WS/HTTP round-trip ends.
         await self.db.commit()
         await self.db.refresh(message)
         hydrated = await self.repo.get_message_by_id(message.id, school_id)
@@ -733,7 +735,6 @@ class ChatService:
                 count += 1
             except Exception:
                 continue
-        await self.db.commit()
         return count
 
     async def upload_file(
@@ -778,7 +779,6 @@ class ChatService:
             raise ForbiddenException("You are not part of this conversation")
 
         await self.repo.delete_conversation(conversation)
-        await self.db.commit()
 
     async def react_to_message(
         self,
@@ -827,7 +827,6 @@ class ChatService:
                 }
             )
 
-        await self.db.commit()
         updated = await self.repo.get_message_by_id(message_id, school_id)
         if updated is None:
             raise NotFoundException("Message")

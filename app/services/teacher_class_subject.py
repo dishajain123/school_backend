@@ -210,7 +210,6 @@ class TeacherClassSubjectService:
             academic_year_id=payload.academic_year_id,
             section=normalized_section,
         )
-        await self.db.commit()
 
         return await self.repo.get_by_id(obj.id)  # type: ignore[return-value]
 
@@ -230,7 +229,6 @@ class TeacherClassSubjectService:
         self._ensure_teacher_is_approved(teacher)
 
         await self.repo.delete(obj)
-        await self.db.commit()
 
     async def update_assignment(
         self,
@@ -307,7 +305,6 @@ class TeacherClassSubjectService:
             academic_year_id=payload.academic_year_id,
             section=normalized_section,
         )
-        await self.db.commit()
         return await self.repo.get_by_id(updated.id)  # type: ignore[return-value]
 
     async def list_by_teacher(

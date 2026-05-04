@@ -65,6 +65,8 @@ class UserService:
         data: UserCreate,
         school_id: uuid.UUID,
     ) -> User:
+        if school_id is None:
+            raise ValidationException("school_id is required to create a user")
         if not data.email and not data.phone:
             raise ValidationException("Either email or phone is required")
 

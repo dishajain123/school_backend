@@ -209,7 +209,6 @@ class ApprovalService:
         )
         self.db.add(audit)
         await self.db.flush()
-        await self.db.commit()
         await self.db.refresh(user)
 
         return user, issues, duplicates, now

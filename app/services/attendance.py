@@ -131,6 +131,7 @@ class AttendanceService:
         ]
 
         rowcount, _ = await self.repo.bulk_upsert(records)
+        # Intentional: _notify_attendance_updates uses its own session and reads these rows.
         await self.db.commit()
 
         # 4. Background notifications for ABSENT / LATE students

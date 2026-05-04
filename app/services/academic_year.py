@@ -264,7 +264,6 @@ class AcademicYearService:
             summary={"skipped": skipped, "warnings": warnings},
         )
         self.db.add(copy_record)
-        await self.db.commit()
 
         return AcademicStructureCopyResponse(
             source_year_name=src_year.name if src_year else "Unknown",

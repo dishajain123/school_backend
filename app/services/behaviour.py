@@ -150,6 +150,7 @@ class BehaviourService:
                 "school_id": school_id,
             }
         )
+        # Intentional: background notifier may open a new session and must see this row.
         await self.db.commit()
         await self.db.refresh(log)
 

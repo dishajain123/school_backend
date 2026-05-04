@@ -184,7 +184,6 @@ class HomeworkService:
                 "school_id": school_id,
             }
         )
-        await self.db.commit()
         await self.db.refresh(homework)
 
         background_tasks.add_task(
@@ -436,7 +435,6 @@ class HomeworkService:
                 "school_id": school_id,
             }
         )
-        await self.db.commit()
         await self.db.refresh(submission)
         hydrated = await self.submission_repo.get_by_id(submission.id, school_id)
         return self._build_submission_response(hydrated or submission)
@@ -534,7 +532,6 @@ class HomeworkService:
                 "reviewed_at": datetime.now(tz=timezone.utc),
             },
         )
-        await self.db.commit()
         await self.db.refresh(updated)
         hydrated = await self.submission_repo.get_by_id(updated.id, school_id)
         return self._build_submission_response(hydrated or updated)

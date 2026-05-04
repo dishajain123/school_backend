@@ -164,7 +164,6 @@ class ExamScheduleService:
                 "school_id": school_id,
             }
         )
-        await self.db.commit()
         await self.db.refresh(series)
         return ExamSeriesResponse.model_validate(series)
 
@@ -199,7 +198,6 @@ class ExamScheduleService:
                 "is_cancelled": False,
             }
         )
-        await self.db.commit()
         await self.db.refresh(entry)
         return ExamEntryResponse.model_validate(entry)
 
@@ -226,7 +224,6 @@ class ExamScheduleService:
             return ExamSeriesResponse.model_validate(series)
 
         updated = await self.repo.update_series(series, {"is_published": True})
-        await self.db.commit()
         await self.db.refresh(updated)
 
         background_tasks.add_task(
@@ -261,7 +258,6 @@ class ExamScheduleService:
             )
 
         updated = await self.repo.update_entry(entry, {"is_cancelled": True})
-        await self.db.commit()
         await self.db.refresh(updated)
         return ExamEntryResponse.model_validate(updated)
 

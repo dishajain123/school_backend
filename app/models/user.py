@@ -22,10 +22,10 @@ class User(BaseModel):
         SQLEnum(RoleEnum, name="roleenum", create_type=False),
         nullable=False,
     )
-    school_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    school_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("schools.id", ondelete="CASCADE"),
-        nullable=True,
+        nullable=False,
         index=True,
     )
     # Phase 1 onboarding state
@@ -57,4 +57,4 @@ class User(BaseModel):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     profile_photo_key: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
 
-    school: Mapped[Optional["School"]] = relationship("School", foreign_keys=[school_id], lazy="select")
+    school: Mapped["School"] = relationship("School", foreign_keys=[school_id], lazy="select")

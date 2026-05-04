@@ -145,7 +145,6 @@ class ComplaintService:
                 "is_anonymous": body.is_anonymous,
             }
         )
-        await self.db.commit()
         await self.db.refresh(complaint)
 
         # Reload with eager-loaded relationships to avoid async lazy-load issues.
@@ -225,7 +224,6 @@ class ComplaintService:
                 "resolved_by": current_user.id,
             },
         )
-        await self.db.commit()
         await self.db.refresh(updated)
 
         if updated.submitted_by:
@@ -258,6 +256,5 @@ class ComplaintService:
                 "school_id": school_id,
             }
         )
-        await self.db.commit()
         await self.db.refresh(feedback)
         return FeedbackResponse.model_validate(feedback)

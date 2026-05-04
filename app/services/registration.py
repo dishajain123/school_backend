@@ -324,8 +324,7 @@ class RegistrationService:
             current_status=UserStatus.PENDING_APPROVAL,
         )
         self.db.add(registration_request)
-        
-        await self.db.commit()
+
         await self.db.refresh(user)
         return user
 
@@ -336,7 +335,7 @@ class RegistrationService:
         if not user.full_name or not user.full_name.strip():
             issues.append({"field": "full_name", "message": "full_name is required"})
 
-        if not user.school_id and user.role != RoleEnum.SUPERADMIN:
+        if not user.school_id:
             issues.append({"field": "school_id", "message": "school_id is required"})
 
         if not user.email and not user.phone:

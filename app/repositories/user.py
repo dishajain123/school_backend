@@ -2,9 +2,9 @@ import uuid
 from typing import Optional
 from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.exceptions import ValidationException
 from app.models.user import User
-from app.utils.enums import RoleEnum
-from app.utils.enums import UserStatus
+from app.utils.enums import RoleEnum, UserStatus
 
 
 class UserRepository:
@@ -12,6 +12,10 @@ class UserRepository:
         self.db = db
 
     async def create(self, data: dict) -> User:
+        if data.get("school_id") is None:
+            raise ValidationException(
+                "school_id is required for every user (single-school deployment)."
+            )
         user = User(**data)
         self.db.add(user)
         await self.db.flush()
@@ -79,6 +83,8 @@ class UserRepository:
         return list(result.scalars().all()), total
 
     async def update(self, user: User, data: dict) -> User:
+        if "school_id" in data and data["school_id"] is None:
+            raise ValidationException("school_id cannot be cleared once assigned.")
         for key, value in data.items():
             setattr(user, key, value)
         await self.db.flush()

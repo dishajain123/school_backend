@@ -92,8 +92,6 @@ class DiaryService:
                 "school_id": school_id,
             }
         )
-        await self.db.commit()
-        await self.db.refresh(entry)
         return self._to_response(entry)
 
     async def list_entries(

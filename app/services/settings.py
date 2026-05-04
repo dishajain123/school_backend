@@ -38,7 +38,6 @@ class SettingsService:
             items=[{"key": i.key, "value": i.value} for i in payload.items],
             updated_by=current_user.id,
         )
-        await self.db.commit()
         return await self.list_settings(current_user)
 
     async def get(self, school_id: uuid.UUID, key: str) -> Optional[str]:

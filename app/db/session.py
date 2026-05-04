@@ -1,9 +1,8 @@
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from app.core.config import settings
-from app.core.logging import get_logger
 from typing import AsyncGenerator
 
-logger = get_logger(__name__)
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from app.core.config import settings
 
 engine = create_async_engine(
     settings.DATABASE_URL,
@@ -24,6 +23,14 @@ AsyncSessionLocal = async_sessionmaker(
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    """Yield one session per request (or WebSocket connection).
+
+    Commits once after the route handler finishes successfully. Prefer letting
+    that boundary persist changes: avoid ``await session.commit()`` in services
+    unless something outside this session must read committed data before the
+    handler returns (e.g. background tasks with a new session, or long-lived
+    WebSocket handlers where other clients need visibility before disconnect).
+    """
     async with AsyncSessionLocal() as session:
         try:
             yield session

@@ -1,52 +1,65 @@
+import asyncio
 import json
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
+from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 
+from app.core.dependencies import get_current_user_from_access_token
+from app.core.exceptions import ForbiddenException, UnauthorizedException
 from app.db.session import get_db
-from app.core.security import decode_token
-from app.models.jti_blocklist import JtiBlocklist
-from app.core.exceptions import UnauthorizedException
-from app.services.chat import ChatService
 from app.schemas.chat import MessageCreate
-from app.ws.connection_manager import manager
+from app.services.chat import ChatService
 from app.utils.enums import MessageType
+from app.ws.connection_manager import manager
 
 ws_router = APIRouter(prefix="/ws")
 
-
-async def _validate_ws_token(token: str, db: AsyncSession) -> uuid.UUID:
-    payload = decode_token(token)
-    if payload.get("type") != "access":
-        raise UnauthorizedException(detail="Invalid token type")
-
-    jti = payload.get("jti")
-    if not jti:
-        raise UnauthorizedException(detail="Token missing JTI")
-
-    result = await db.execute(select(JtiBlocklist).where(JtiBlocklist.jti == jti))
-    if result.scalar_one_or_none():
-        raise UnauthorizedException(detail="Token revoked")
-
-    return uuid.UUID(payload["sub"])
+# Query-string JWTs appear in proxy/access logs, browser history, and referrer headers.
+# Auth must happen after connect via a dedicated first frame (or Sec-WebSocket-Protocol).
 
 
 @ws_router.websocket("/chat")
 async def chat_ws(
     ws: WebSocket,
-    token: str,
     conversation_id: str,
     db: AsyncSession = Depends(get_db),
 ):
     """
-    ws://.../api/v1/ws/chat?token=JWT&conversation_id=<uuid>
+    WebSocket: /api/v1/ws/chat?conversation_id=<uuid> (no token in URL).
+
+    First text frame must be JSON: {"type":"auth","access_token":"<jwt>"}
+    (legacy alias key "token" is accepted for access_token).
     """
+    await ws.accept()
+
     try:
-        user_id = await _validate_ws_token(token, db)
+        raw_first = await asyncio.wait_for(ws.receive_text(), timeout=30.0)
+    except asyncio.TimeoutError:
+        await ws.close(code=1008)
+        return
     except Exception:
+        await ws.close(code=1008)
+        return
+
+    token: Optional[str] = None
+    try:
+        obj = json.loads(raw_first)
+        if isinstance(obj, dict) and obj.get("type") == "auth":
+            raw_tok = obj.get("access_token") or obj.get("token")
+            if isinstance(raw_tok, str):
+                token = raw_tok.strip() or None
+    except json.JSONDecodeError:
+        token = None
+
+    if not token:
+        await ws.close(code=1008)
+        return
+
+    try:
+        current_user = await get_current_user_from_access_token(token, db)
+    except (UnauthorizedException, ForbiddenException):
         await ws.close(code=1008)
         return
 
@@ -73,7 +86,7 @@ async def chat_ws(
                     message_type=message_type,
                     file_key=file_key,
                 ),
-                current_user=await _ws_current_user(user_id, db),
+                current_user=current_user,
             )
 
             await manager.broadcast(
@@ -91,25 +104,3 @@ async def chat_ws(
             )
     except WebSocketDisconnect:
         manager.disconnect(ws, conversation_id)
-
-
-async def _ws_current_user(user_id: uuid.UUID, db: AsyncSession):
-    from app.models.user import User
-    from app.utils.enums import RoleEnum
-    from app.core.dependencies import CurrentUser
-
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
-    if not user:
-        raise UnauthorizedException(detail="User not found")
-
-    return CurrentUser(
-        id=user.id,
-        role=RoleEnum(user.role),
-        school_id=user.school_id,
-        parent_id=None,
-        permissions=[],
-        email=user.email,
-        phone=user.phone,
-        is_active=user.is_active,
-    )

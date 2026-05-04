@@ -27,6 +27,7 @@ from app.services.academic_year import get_active_year
 from app.services.audit_log import AuditLogService
 from app.integrations.minio_client import minio_client
 from app.integrations import pdf_service
+from app.utils.constants import MAX_FILE_SIZE_BYTES
 from app.utils.enums import (
     RoleEnum,
     DocumentStatus,
@@ -520,6 +521,10 @@ class DocumentService:
         content = await file.read()
         if not content:
             raise ValidationException("Uploaded file is empty")
+        if len(content) > MAX_FILE_SIZE_BYTES:
+            raise ValidationException(
+                f"Uploaded file exceeds maximum size of {MAX_FILE_SIZE_BYTES // (1024 * 1024)} MB"
+            )
         if current_user.role in (RoleEnum.STUDENT, RoleEnum.PARENT):
             required_types = await self._required_doc_type_set(school_id)
             if required_types and document_type not in required_types:
@@ -820,16 +825,15 @@ class DocumentService:
 
         dedup: dict[str, dict] = {}
         for item in body.items:
-            key = item.document_type.value.upper()
             note = " ".join((item.note or "").strip().split()) or None
-            if key == DocumentType.OTHER.value and not note:
+            if item.document_type == DocumentType.OTHER and not note:
                 raise ValidationException(
                     "Custom name is required for OTHER document type"
                 )
             year_key = str(item.academic_year_id) if item.academic_year_id else None
             standard_key = str(item.standard_id) if item.standard_id else None
             row = {
-                "document_type": key,
+                "document_type": item.document_type.value.upper(),
                 "is_mandatory": bool(item.is_mandatory),
                 "note": note,
                 "academic_year_id": year_key,

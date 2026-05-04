@@ -49,6 +49,7 @@ class NotificationService:
                 "reference_id": reference_id,
             }
         )
+        # Intentional: invoked from BackgroundTasks / non-request sessions that have no get_db commit.
         await self.db.commit()
         return obj
 
@@ -89,24 +90,22 @@ class NotificationService:
             raise ValidationException("At least one notification id is required")
 
         updated = await self.repo.mark_read(payload.ids, current_user.id)
-        await self.db.commit()
         return {"updated": updated, "message": f"{updated} notification(s) marked as read"}
 
     async def mark_all_read(self, current_user: CurrentUser) -> dict:
         updated = await self.repo.mark_all_read(current_user.id)
-        await self.db.commit()
         return {"updated": updated, "message": f"{updated} notification(s) marked as read"}
 
     # ── Cleanup ───────────────────────────────────────────────────────────────
 
     async def clear_read(self, current_user: CurrentUser) -> dict:
         deleted = await self.repo.delete_read(current_user.id)
-        await self.db.commit()
         return {"deleted": deleted, "message": f"{deleted} read notification(s) cleared"}
 
     async def purge_old_notifications(self, cutoff_days: int = 90) -> dict:
         """Called by APScheduler — not an API endpoint."""
         deleted = await self.repo.purge_old(cutoff_days)
+        # Intentional: purge runs from lifespan cleanup with a standalone session (no get_db).
         await self.db.commit()
         return {"deleted": deleted}
 

@@ -1925,6 +1925,10 @@ async def seed_demo(db: AsyncSession) -> dict[str, str]:
                 )
             )
 
+    # Status semantics (aligned with DocumentService):
+    # - READY: issued/verified file available
+    # - PROCESSING: file uploaded, awaiting admin verification (must have file_key)
+    # - PENDING: requested by family or admin, no file yet
     document_rows = [
         (
             students[3],
@@ -1943,7 +1947,7 @@ async def seed_demo(db: AsyncSession) -> dict[str, str]:
         (
             students[1],
             DocumentType.BONAFIDE,
-            None,
+            f"demo/documents/{students[1].admission_number.lower()}-bonafide-upload.pdf",
             DocumentStatus.PROCESSING,
             None,
         ),
