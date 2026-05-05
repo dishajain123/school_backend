@@ -17,6 +17,10 @@ router = APIRouter(prefix="/timetable", tags=["Timetable"])
 async def upload_timetable(
     standard_id: uuid.UUID = Form(...),
     academic_year_id: Optional[uuid.UUID] = Form(None),
+    exam_id: Optional[uuid.UUID] = Form(
+        None,
+        description="Examination schedule PDF for this exam only. Omit for class daily timetable.",
+    ),
     section: Optional[str] = Form(None, description="Section (e.g. A, B). Leave blank for all sections."),
     file: UploadFile = File(..., description="Timetable file (PDF or image)"),
     current_user: CurrentUser = Depends(
@@ -34,6 +38,7 @@ async def upload_timetable(
         current_user=current_user,
         file=file,
         section=section,
+        exam_id=exam_id,
     )
 
 
@@ -63,6 +68,10 @@ async def get_timetable(
     standard_id: uuid.UUID,
     academic_year_id: Optional[uuid.UUID] = Query(None),
     section: Optional[str] = Query(None, description="Section filter"),
+    exam_id: Optional[uuid.UUID] = Query(
+        None,
+        description="Examination schedule for this exam. Omit for class daily timetable.",
+    ),
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -75,6 +84,7 @@ async def get_timetable(
         academic_year_id=academic_year_id,
         current_user=current_user,
         section=section,
+        exam_id=exam_id,
     )
 
 
@@ -83,6 +93,10 @@ async def delete_timetable(
     standard_id: uuid.UUID,
     academic_year_id: Optional[uuid.UUID] = Query(None),
     section: Optional[str] = Query(None, description="Section filter"),
+    exam_id: Optional[uuid.UUID] = Query(
+        None,
+        description="Delete examination schedule for this exam only.",
+    ),
     current_user: CurrentUser = Depends(
         require_roles(RoleEnum.PRINCIPAL, RoleEnum.TEACHER, RoleEnum.STAFF_ADMIN)
     ),
@@ -93,6 +107,7 @@ async def delete_timetable(
         academic_year_id=academic_year_id,
         current_user=current_user,
         section=section,
+        exam_id=exam_id,
     )
 
 

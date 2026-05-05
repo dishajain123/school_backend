@@ -5,19 +5,24 @@ from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy import and_, select, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.masters import Standard
+from app.models.parent import Parent
 from app.models.section import Section
 from app.repositories.student import StudentRepository
 from app.repositories.settings import SettingsRepository
-from app.schemas.student import StudentCreate, StudentUpdate, StudentPromotionUpdate
-from app.models.student import Student
-from app.models.student_behaviour_log import StudentBehaviourLog
 from app.schemas.student import (
+    StudentBehaviourSummary,
+    StudentCreate,
     StudentDetailResponse,
     StudentParentSummary,
-    StudentBehaviourSummary,
+    StudentPromotionUpdate,
+    StudentResponse,
+    StudentUpdate,
 )
+from app.models.student import Student
+from app.models.student_behaviour_log import StudentBehaviourLog
 from app.core.dependencies import CurrentUser
 from app.core.exceptions import (
     NotFoundException,
@@ -221,22 +226,34 @@ class StudentService:
         self,
         student: Student,
     ) -> StudentDetailResponse:
+        parent_entity = student.parent
+        if parent_entity is None and student.parent_id:
+            row = await self.db.execute(
+                select(Parent)
+                .options(selectinload(Parent.user))
+                .where(
+                    Parent.id == student.parent_id,
+                    Parent.school_id == student.school_id,
+                )
+            )
+            parent_entity = row.scalar_one_or_none()
+
         parent_summary: Optional[StudentParentSummary] = None
-        if student.parent:
+        if parent_entity:
             relation_value = None
-            if student.parent.relation is not None:
+            if parent_entity.relation is not None:
                 relation_value = getattr(
-                    student.parent.relation,
+                    parent_entity.relation,
                     "value",
-                    str(student.parent.relation),
+                    str(parent_entity.relation),
                 )
             parent_summary = StudentParentSummary(
-                id=student.parent.id,
+                id=parent_entity.id,
                 relation=relation_value,
-                full_name=student.parent.user.full_name if student.parent.user else None,
-                email=student.parent.user.email if student.parent.user else None,
-                phone=student.parent.user.phone if student.parent.user else None,
-                occupation=student.parent.occupation,
+                full_name=parent_entity.user.full_name if parent_entity.user else None,
+                email=parent_entity.user.email if parent_entity.user else None,
+                phone=parent_entity.user.phone if parent_entity.user else None,
+                occupation=parent_entity.occupation,
             )
 
         latest_row = (
@@ -280,7 +297,9 @@ class StudentService:
             neutral_count=counts_row[2] or 0,
         )
 
-        payload = StudentDetailResponse.model_validate(student).model_dump()
+        # Use StudentResponse for the ORM→dict step: Student ORM has a `parent`
+        # relationship (Parent model) that must not be validated as StudentParentSummary.
+        payload = StudentResponse.model_validate(student).model_dump()
         payload["parent"] = parent_summary.model_dump() if parent_summary else None
         payload["behaviour_summary"] = behaviour_summary.model_dump()
         return StudentDetailResponse.model_validate(payload)

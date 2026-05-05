@@ -13,6 +13,7 @@ from typing import Optional
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from app.core.config import settings
 from app.core.logging import get_logger
 from app.core.response import error_response
 from app.middleware.rate_limit_backend import InMemoryRateLimiter, RateLimiter
@@ -35,8 +36,19 @@ PUBLIC_ENDPOINTS = {
     "/api/v1/auth/reset-password",
 }
 PUBLIC_RATE_LIMIT = 30
-GENERAL_RATE_LIMIT = 60
 WINDOW_SECONDS = 60
+
+
+def _authorization_header(request: Request) -> str:
+    return (request.headers.get("authorization") or "").strip()
+
+
+def _is_bearer_authenticated_api(path: str, request: Request) -> bool:
+    """Logged-in clients hit /api/v1/* with Bearer tokens; allow a higher burst budget."""
+    if not path.startswith("/api/v1/"):
+        return False
+    auth = _authorization_header(request).lower()
+    return auth.startswith("bearer ") and len(auth) > len("bearer ")
 
 
 def setup_rate_limiter(
@@ -58,6 +70,9 @@ def setup_rate_limiter(
 
     @app.middleware("http")
     async def rate_limit_middleware(request: Request, call_next):
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
         client_ip = request.client.host if request.client else "unknown"
         path = request.url.path
         request_id = getattr(request.state, "request_id", None) or request.headers.get("X-Request-ID", "unknown")
@@ -69,8 +84,11 @@ def setup_rate_limiter(
         elif path in PUBLIC_ENDPOINTS:
             limit = PUBLIC_RATE_LIMIT
             key_scope = path
+        elif _is_bearer_authenticated_api(path, request):
+            limit = settings.RATE_LIMIT_AUTHENTICATED_PER_MINUTE
+            key_scope = "api_bearer"
         else:
-            limit = GENERAL_RATE_LIMIT
+            limit = settings.RATE_LIMIT_UNAUTHENTICATED_PER_MINUTE
             key_scope = "general"
         key = f"{client_ip}:{key_scope}"
 
@@ -87,6 +105,7 @@ def setup_rate_limiter(
             )
             return JSONResponse(
                 status_code=429,
+                headers={"Retry-After": str(WINDOW_SECONDS)},
                 content=error_response(
                     message="Too many requests. Please try again later.",
                     code="RATE_LIMIT_EXCEEDED",

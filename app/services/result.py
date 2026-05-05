@@ -16,6 +16,7 @@ from app.core.exceptions import (
 )
 from app.repositories.result import ResultRepository
 from app.repositories.notification import NotificationRepository
+from app.repositories.student import StudentRepository
 from app.repositories.teacher_class_subject import TeacherClassSubjectRepository
 from app.schemas.result import (
     ExamCreate,
@@ -177,6 +178,48 @@ class ResultService:
 
         return None
 
+    async def _resolve_report_card_url_with_documents(
+        self,
+        *,
+        school_id: uuid.UUID,
+        student_id: uuid.UUID,
+        exam_id: uuid.UUID,
+    ) -> Optional[str]:
+        """
+        Same as _resolve_report_card_url, then scan `documents` for any REPORT_CARD
+        row for this student whose file key references this exam (admin or teacher
+        uploads can share the canonical key or a legacy key).
+        """
+        direct = self._resolve_report_card_url(
+            school_id=school_id,
+            student_id=student_id,
+            exam_id=exam_id,
+        )
+        if direct:
+            return direct
+
+        from app.models.document import Document
+
+        exam_key_suffix = f"{exam_id}"
+        res = await self.db.execute(
+            select(Document.file_key).where(
+                and_(
+                    Document.student_id == student_id,
+                    Document.school_id == school_id,
+                    Document.document_type == DocumentType.REPORT_CARD,
+                    Document.file_key.is_not(None),
+                )
+            )
+        )
+        for (file_key,) in res.all():
+            if not file_key or exam_key_suffix not in file_key:
+                continue
+            if minio_client.file_exists(DOCUMENTS_BUCKET, file_key):
+                return minio_client.generate_presigned_url(
+                    DOCUMENTS_BUCKET, file_key
+                )
+        return None
+
     async def _assert_exam_student_access(
         self,
         *,
@@ -236,6 +279,7 @@ class ResultService:
             row = student_row.one_or_none()
             student_standard_id = row[0] if row else None
             student_section = row[1].strip() if row and row[1] else None
+            student_section_upper = (student_section or "").strip().upper()
 
             if not student_standard_id or student_standard_id != exam.standard_id:
                 raise ForbiddenException("Student not in this exam's class")
@@ -249,8 +293,9 @@ class ResultService:
             teaches_class_or_section = any(
                 assignment.standard_id == exam.standard_id
                 and (
-                    student_section is None
-                    or (assignment.section or "").strip() == student_section
+                    not student_section_upper
+                    or (assignment.section or "").strip().upper()
+                    == student_section_upper
                 )
                 for assignment in teacher_assignments
             )
@@ -393,6 +438,67 @@ class ResultService:
             skipped_count=len(skipped_standard_ids),
         )
 
+    async def _list_exams_for_learner(
+        self,
+        *,
+        school_id: uuid.UUID,
+        student_id: uuid.UUID,
+        academic_year_id: Optional[uuid.UUID],
+        standard_id: Optional[uuid.UUID],
+    ) -> list:
+        """Exams with published marks and/or an uploaded report-card PDF for this student."""
+        from app.models.student import Student
+
+        row = await self.db.execute(
+            select(Student).where(
+                and_(
+                    Student.id == student_id,
+                    Student.school_id == school_id,
+                )
+            )
+        )
+        student = row.scalar_one_or_none()
+        if not student:
+            raise NotFoundException("Student")
+
+        eff_standard_id = standard_id or student.standard_id
+        if eff_standard_id is None:
+            return []
+
+        merged: dict = {}
+        exams_pub = await self.repo.list_exams(
+            school_id=school_id,
+            academic_year_id=academic_year_id,
+            standard_id=eff_standard_id,
+            student_id=student_id,
+            published_only=True,
+        )
+        for e in exams_pub:
+            merged[e.id] = e
+
+        candidates = await self.repo.list_exams(
+            school_id=school_id,
+            academic_year_id=academic_year_id,
+            standard_id=eff_standard_id,
+            student_id=None,
+            published_only=False,
+        )
+        for exam in candidates:
+            if exam.id in merged:
+                continue
+            if self._resolve_report_card_url(
+                school_id=school_id,
+                student_id=student_id,
+                exam_id=exam.id,
+            ):
+                merged[exam.id] = exam
+
+        return sorted(
+            merged.values(),
+            key=lambda e: (e.start_date, e.created_at),
+            reverse=True,
+        )
+
     async def list_exams(
         self,
         current_user: CurrentUser,
@@ -509,14 +615,24 @@ class ResultService:
                 reverse=True,
             )
         else:
-            exams = await self.repo.list_exams(
-                school_id=school_id,
-                academic_year_id=academic_year_id,
-                standard_id=standard_id,
-                standard_ids=teacher_standard_ids if standard_id is None else None,
-                student_id=resolved_student_id,
-                published_only=published_only,
-            )
+            if current_user.role in (RoleEnum.STUDENT, RoleEnum.PARENT) and (
+                resolved_student_id is not None
+            ):
+                exams = await self._list_exams_for_learner(
+                    school_id=school_id,
+                    student_id=resolved_student_id,
+                    academic_year_id=academic_year_id,
+                    standard_id=standard_id,
+                )
+            else:
+                exams = await self.repo.list_exams(
+                    school_id=school_id,
+                    academic_year_id=academic_year_id,
+                    standard_id=standard_id,
+                    standard_ids=teacher_standard_ids if standard_id is None else None,
+                    student_id=resolved_student_id,
+                    published_only=published_only,
+                )
         return [ExamResponse.model_validate(exam) for exam in exams]
 
     async def bulk_enter_results(
@@ -743,9 +859,9 @@ class ResultService:
             student_id=student_id,
             exam_id=exam_id,
             published_only=published_only,
-            entered_by=current_user.id if current_user.role == RoleEnum.TEACHER else None,
+            entered_by=None,
         )
-        report_card_url = self._resolve_report_card_url(
+        report_card_url = await self._resolve_report_card_url_with_documents(
             school_id=school_id,
             student_id=student_id,
             exam_id=exam_id,
@@ -772,25 +888,13 @@ class ResultService:
             current_user=current_user,
         )
 
-        uploaded_file_key = (
-            self._uploaded_report_card_key(school_id, student_id, exam_id)
+        existing_url = await self._resolve_report_card_url_with_documents(
+            school_id=school_id,
+            student_id=student_id,
+            exam_id=exam_id,
         )
-        if minio_client.file_exists(DOCUMENTS_BUCKET, uploaded_file_key):
-            return ReportCardResponse(
-                url=minio_client.generate_presigned_url(
-                    DOCUMENTS_BUCKET, uploaded_file_key
-                )
-            )
-
-        generated_file_key = self._generated_report_card_key(
-            school_id, student_id, exam_id
-        )
-        if minio_client.file_exists(DOCUMENTS_BUCKET, generated_file_key):
-            return ReportCardResponse(
-                url=minio_client.generate_presigned_url(
-                    DOCUMENTS_BUCKET, generated_file_key
-                )
-            )
+        if existing_url:
+            return ReportCardResponse(url=existing_url)
 
         results = await self.repo.list_results(
             school_id=school_id,
@@ -836,6 +940,9 @@ class ResultService:
                 ),
                 error_code="PDF_GENERATION_UNAVAILABLE",
             ) from exc
+        generated_file_key = self._generated_report_card_key(
+            school_id, student_id, exam_id
+        )
         file_key = generated_file_key
         minio_client.upload_file(
             bucket=DOCUMENTS_BUCKET,
@@ -936,7 +1043,7 @@ class ResultService:
         rows = await self.repo.list_results_by_exam(
             school_id=school_id,
             exam_id=exam_id,
-            entered_by=current_user.id if current_user.role == RoleEnum.TEACHER else None,
+            entered_by=None,
         )
         teacher_has_class_scope = False
         teacher_assigned_sections: set[str] = set()
@@ -955,7 +1062,7 @@ class ResultService:
             ]
             if class_assignments:
                 teacher_assigned_sections = {
-                    (assignment.section or "").strip()
+                    (assignment.section or "").strip().upper()
                     for assignment in class_assignments
                     if (assignment.section or "").strip()
                 }
@@ -964,8 +1071,8 @@ class ResultService:
                     for assignment in class_assignments
                 )
             else:
-                # No current assignment for this class: allow teacher to review
-                # only historically entered marks (rows already scoped by entered_by).
+                # No current assignment for this class: still allow viewing when
+                # results exist for this exam (merged below without entered_by filter).
                 teacher_has_class_scope = True
         elif current_user.role not in (
             RoleEnum.PRINCIPAL,
@@ -974,7 +1081,9 @@ class ResultService:
         ):
             raise ForbiddenException("Only management or assigned teachers can view exam distribution")
 
-        normalized_section = section.strip() if section and section.strip() else None
+        normalized_section = (
+            section.strip().upper() if section and section.strip() else None
+        )
         if normalized_section is not None:
             if current_user.role == RoleEnum.TEACHER:
                 if (
@@ -984,7 +1093,8 @@ class ResultService:
                     raise ForbiddenException("You can only view your assigned sections")
             rows = [
                 row for row in rows
-                if row.student and (row.student.section or "").strip() == normalized_section
+                if row.student
+                and (row.student.section or "").strip().upper() == normalized_section
             ]
 
         if student_id is not None:
@@ -1028,7 +1138,7 @@ class ResultService:
             if not student_name:
                 student_name = "Student"
 
-            report_card_url = self._resolve_report_card_url(
+            report_card_url = await self._resolve_report_card_url_with_documents(
                 school_id=school_id,
                 student_id=student_rows[0].student_id,
                 exam_id=exam_id,
@@ -1049,6 +1159,63 @@ class ResultService:
                     subjects=subject_items,
                 )
             )
+
+        # Students with an uploaded/generated report PDF but no entered marks
+        # rows are omitted from `grouped` above — merge them from the class roster
+        # so admin/teacher UI can show PDF-only uploads and presigned view URLs.
+        present_ids = {i.student_id for i in items}
+        student_repo = StudentRepository(self.db)
+        assigned_sections_upper = {
+            (s or "").strip().upper() for s in teacher_assigned_sections if (s or "").strip()
+        }
+        roster_page = 1
+        roster_page_size = 500
+        while True:
+            roster, roster_total = await student_repo.list_by_school(
+                school_id=school_id,
+                standard_id=exam.standard_id,
+                section=normalized_section,
+                academic_year_id=exam.academic_year_id,
+                page=roster_page,
+                page_size=roster_page_size,
+            )
+            for st in roster:
+                if st.id in present_ids:
+                    continue
+                if student_id is not None and st.id != student_id:
+                    continue
+                if current_user.role == RoleEnum.TEACHER:
+                    st_sec = (st.section or "").strip().upper()
+                    if normalized_section is None and not teacher_has_class_scope:
+                        if st_sec not in assigned_sections_upper:
+                            continue
+                rc_url = await self._resolve_report_card_url_with_documents(
+                    school_id=school_id,
+                    student_id=st.id,
+                    exam_id=exam_id,
+                )
+                if rc_url is None:
+                    continue
+                name = st.student_name or st.admission_number or "Student"
+                items.append(
+                    ResultDistributionStudentItem(
+                        student_id=st.id,
+                        student_name=name,
+                        admission_number=st.admission_number or "",
+                        section=st.section,
+                        roll_number=st.roll_number,
+                        total_obtained=0.0,
+                        total_max=0.0,
+                        overall_percentage=0.0,
+                        report_card_url=rc_url,
+                        has_report_card=True,
+                        subjects=[],
+                    )
+                )
+                present_ids.add(st.id)
+            if len(roster) < roster_page_size or roster_page * roster_page_size >= roster_total:
+                break
+            roster_page += 1
 
         items.sort(key=lambda i: i.student_name.lower())
         return ResultDistributionResponse(

@@ -68,6 +68,11 @@ class Settings(BaseSettings):
     # of trusting the JWT list (avoids stale grants until token refresh). One extra query per auth.
     STRICT_RBAC_CHECK: bool = False
 
+    # HTTP rate limits (sliding window per client IP; see rate_limiter middleware).
+    # Authenticated SPA traffic (Bearer /api/v1/*) needs a higher ceiling than 60/min.
+    RATE_LIMIT_AUTHENTICATED_PER_MINUTE: int = 600
+    RATE_LIMIT_UNAUTHENTICATED_PER_MINUTE: int = 80
+
     # Single-school: UUID of the school row when token + user have no school_id.
     # Never infer from DB queries (avoids wrong-tenant style bugs if data is wrong).
     DEFAULT_SCHOOL_ID: Optional[str] = None

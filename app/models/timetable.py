@@ -4,7 +4,7 @@ import uuid
 from datetime import date
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import String, Date, ForeignKey, UniqueConstraint
+from sqlalchemy import String, Date, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -13,21 +13,14 @@ from app.db.base import BaseModel
 if TYPE_CHECKING:
     from app.models.masters import Standard
     from app.models.academic_year import AcademicYear
+    from app.models.exam import Exam
     from app.models.school import School
     from app.models.user import User
 
 
 class Timetable(BaseModel):
     __tablename__ = "timetables"
-    __table_args__ = (
-        UniqueConstraint(
-            "school_id",
-            "standard_id",
-            "section",
-            "academic_year_id",
-            name="uq_timetable_standard_section_year_school",
-        ),
-    )
+    # Uniqueness: partial indexes in DB — class daily (exam_id NULL) vs per-exam schedule PDF.
 
     standard_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -40,6 +33,12 @@ class Timetable(BaseModel):
         UUID(as_uuid=True),
         ForeignKey("academic_years.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
+    )
+    exam_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("exams.id", ondelete="CASCADE"),
+        nullable=True,
         index=True,
     )
     file_key: Mapped[str] = mapped_column(String(500), nullable=False)
@@ -58,6 +57,9 @@ class Timetable(BaseModel):
         index=True,
     )
 
+    exam: Mapped[Optional["Exam"]] = relationship(
+        "Exam", foreign_keys=[exam_id], lazy="select"
+    )
     standard: Mapped["Standard"] = relationship(
         "Standard", foreign_keys=[standard_id], lazy="select"
     )

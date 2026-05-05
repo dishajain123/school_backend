@@ -150,6 +150,7 @@ class TimetableService:
         current_user: CurrentUser,
         file: UploadFile,
         section: Optional[str] = None,
+        exam_id: Optional[uuid.UUID] = None,
     ) -> TimetableUploadResponse:
         school_id = self._ensure_school(current_user)
         normalized_section = self._normalize_section(section)
@@ -157,6 +158,22 @@ class TimetableService:
         resolved_year_id = academic_year_id
         if not resolved_year_id:
             resolved_year_id = (await get_active_year(school_id, self.db)).id
+
+        if exam_id is not None:
+            from app.models.exam import Exam
+
+            row = await self.db.execute(
+                select(Exam).where(
+                    and_(Exam.id == exam_id, Exam.school_id == school_id)
+                )
+            )
+            exam_row = row.scalar_one_or_none()
+            if not exam_row:
+                raise NotFoundException("Exam")
+            if exam_row.standard_id != standard_id:
+                raise ValidationException("Exam does not match the selected class")
+            if exam_row.academic_year_id != resolved_year_id:
+                raise ValidationException("Exam does not match the academic year")
 
         if current_user.role == RoleEnum.TEACHER:
             from app.models.teacher_class_subject import TeacherClassSubject
@@ -193,10 +210,16 @@ class TimetableService:
         if file.content_type and file.content_type not in ALLOWED_FILE_TYPES:
             raise HTTPException(status_code=422, detail="Unsupported file type")
 
-        file_key = (
-            f"{school_id}/{standard_id}/{resolved_year_id}/"
-            f"{uuid.uuid4()}_{file.filename}"
-        )
+        if exam_id is not None:
+            file_key = (
+                f"{school_id}/{standard_id}/{resolved_year_id}/exam_{exam_id}/"
+                f"{uuid.uuid4()}_{file.filename}"
+            )
+        else:
+            file_key = (
+                f"{school_id}/{standard_id}/{resolved_year_id}/"
+                f"{uuid.uuid4()}_{file.filename}"
+            )
         minio_client.upload_file(
             bucket=TIMETABLE_BUCKET,
             key=file_key,
@@ -209,6 +232,7 @@ class TimetableService:
             standard_id=standard_id,
             academic_year_id=resolved_year_id,
             section=normalized_section,
+            exam_id=exam_id,
         )
         if existing:
             updated = await self.repo.update(
@@ -224,17 +248,15 @@ class TimetableService:
             )
             await self.db.refresh(updated)
             data = TimetableUploadResponse.model_validate(updated)
-            data.uploaded_by_name = (
-                updated.uploader.full_name.strip()
-                if updated.uploader and updated.uploader.full_name
-                else None
-            )
+            # Avoid lazy-loading `uploader` on async session (MissingGreenlet).
+            data.uploaded_by_name = (current_user.full_name or "").strip() or None
         else:
             created = await self.repo.create(
                 {
                     "standard_id": standard_id,
                     "section": normalized_section,
                     "academic_year_id": resolved_year_id,
+                    "exam_id": exam_id,
                     "file_key": file_key,
                     "uploaded_by": current_user.id,
                     "school_id": school_id,
@@ -249,11 +271,7 @@ class TimetableService:
             )
             await self.db.refresh(created)
             data = TimetableUploadResponse.model_validate(created)
-            data.uploaded_by_name = (
-                created.uploader.full_name.strip()
-                if created.uploader and created.uploader.full_name
-                else None
-            )
+            data.uploaded_by_name = (current_user.full_name or "").strip() or None
 
         data.file_url = minio_client.generate_presigned_url(
             TIMETABLE_BUCKET, file_key
@@ -266,6 +284,7 @@ class TimetableService:
         academic_year_id: Optional[uuid.UUID],
         current_user: CurrentUser,
         section: Optional[str] = None,
+        exam_id: Optional[uuid.UUID] = None,
     ) -> None:
         school_id = self._ensure_school(current_user)
         normalized_section = self._normalize_section(section)
@@ -298,6 +317,7 @@ class TimetableService:
                     standard_id=standard_id,
                     academic_year_id=resolved_year_id,
                     section=None,
+                    exam_id=exam_id,
                 )
                 if class_wide is None:
                     if len(teacher_sections) == 1:
@@ -312,6 +332,7 @@ class TimetableService:
             standard_id=standard_id,
             academic_year_id=resolved_year_id,
             section=normalized_section,
+            exam_id=exam_id,
         )
         if not timetable:
             raise NotFoundException("Timetable")
@@ -331,6 +352,7 @@ class TimetableService:
         academic_year_id: Optional[uuid.UUID],
         current_user: CurrentUser,
         section: Optional[str] = None,
+        exam_id: Optional[uuid.UUID] = None,
     ) -> TimetableResponse:
         school_id = self._ensure_school(current_user)
         normalized_section = self._normalize_section(section)
@@ -365,6 +387,7 @@ class TimetableService:
                     standard_id=standard_id,
                     academic_year_id=resolved_year_id,
                     section=None,
+                    exam_id=exam_id,
                 )
                 if class_wide is None:
                     if len(teacher_sections) == 1:
@@ -394,13 +417,14 @@ class TimetableService:
                 normalized_section = own_section
 
         elif current_user.role == RoleEnum.PARENT:
+            # Do not require Student.academic_year_id to match — it may be unset or stale
+            # while the child is still enrolled in this standard (same as exam-schedule APIs).
             result = await self.db.execute(
                 select(Student.section).where(
                     and_(
                         Student.standard_id == standard_id,
                         Student.parent_id == current_user.parent_id,
                         Student.school_id == school_id,
-                        Student.academic_year_id == resolved_year_id,
                     )
                 )
             )
@@ -425,18 +449,23 @@ class TimetableService:
                     raise ForbiddenException(
                         "Please select your child's section to view timetable"
                     )
-        elif current_user.role in (RoleEnum.PRINCIPAL, RoleEnum.STAFF_ADMIN):
+        elif current_user.role in (
+            RoleEnum.PRINCIPAL,
+            RoleEnum.TRUSTEE,
+            RoleEnum.STAFF_ADMIN,
+        ):
             pass
         else:
             raise ForbiddenException(
                 "Timetable is visible only to assigned teachers and students"
             )
 
-        timetable = await self.repo.get_by_standard(
+        timetable = await self.repo.get_by_standard_with_section_fallback(
             school_id=school_id,
             standard_id=standard_id,
             academic_year_id=resolved_year_id,
             section=normalized_section,
+            exam_id=exam_id,
         )
         if not timetable:
             raise NotFoundException("Timetable")

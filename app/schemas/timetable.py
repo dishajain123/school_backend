@@ -8,6 +8,7 @@ from pydantic import BaseModel
 class TimetableUploadResponse(BaseModel):
     id: uuid.UUID
     standard_id: uuid.UUID
+    exam_id: Optional[uuid.UUID] = None
     section: Optional[str] = None
     academic_year_id: uuid.UUID
     file_key: str
@@ -26,6 +27,7 @@ class TimetableUploadResponse(BaseModel):
 class TimetableResponse(BaseModel):
     id: uuid.UUID
     standard_id: uuid.UUID
+    exam_id: Optional[uuid.UUID] = None
     section: Optional[str] = None
     academic_year_id: uuid.UUID
     file_key: str
