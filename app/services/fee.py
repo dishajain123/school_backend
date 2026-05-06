@@ -6,6 +6,8 @@ import uuid
 from datetime import date, datetime, timezone
 from typing import Optional
 
+from collections import defaultdict
+
 from fastapi import HTTPException
 from sqlalchemy import select, and_, func, distinct, case
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1642,51 +1644,67 @@ class FeeService:
         section: Optional[str] = None,
         payment_cycle: Optional[str] = None,
         status_filter: Optional[str] = None,
+        page: int = 1,
+        page_size: int = 50,
     ) -> ClassFeeStudentListResponse:
         school_id = self._ensure_school(current_user)
         resolved_year_id = await self._resolve_academic_year(school_id, academic_year_id)
         today = datetime.now(timezone.utc).date()
 
-        # Refresh overdue statuses first
         await self.repo.mark_overdue_ledgers(
             school_id=school_id,
             academic_year_id=resolved_year_id,
             as_of_date=today,
         )
 
-        ledgers, _ = await self.repo.list_all_ledgers_paginated(
-            school_id=school_id,
-            academic_year_id=resolved_year_id,
-            standard_id=standard_id,
-            status=None,
-            page=1,
-            page_size=2000,
+        total, page_ids, eff_page, eff_size = (
+            await self.repo.count_and_page_class_fee_student_ids(
+                school_id=school_id,
+                standard_id=standard_id,
+                academic_year_id=resolved_year_id,
+                section=section,
+                payment_cycle=payment_cycle,
+                status_filter=status_filter,
+                page=page,
+                page_size=page_size,
+            )
         )
+
+        total_pages = max(1, math.ceil(total / eff_size)) if total else 1
+
+        if total == 0 or not page_ids:
+            return ClassFeeStudentListResponse(
+                items=[],
+                total=total,
+                page=eff_page,
+                page_size=eff_size,
+                total_pages=total_pages,
+                total_billed=0.0,
+                total_paid=0.0,
+                total_outstanding=0.0,
+            )
+
         from app.models.parent import Parent
 
-        student_result = await self.db.execute(
-            # Parent/user details are required for class-wise fee verification rows.
-            # Imported locally to avoid circular import side effects at module load.
+        st_result = await self.db.execute(
             select(Student)
+            .where(Student.id.in_(page_ids))
             .options(
                 selectinload(Student.user),
                 selectinload(Student.parent).selectinload(Parent.user),
                 selectinload(Student.standard),
             )
-            .where(
-                and_(
-                    Student.school_id == school_id,
-                    Student.standard_id == standard_id,
-                    *([Student.section == section.strip()] if section and section.strip() else []),
-                    (Student.academic_year_id == resolved_year_id)
-                    | (Student.academic_year_id.is_(None)),
-                )
-            )
-            .order_by(Student.admission_number.asc())
         )
-        students = list(student_result.scalars().all())
+        students = list(st_result.scalars().all())
+        pos = {pid: i for i, pid in enumerate(page_ids)}
+        students.sort(key=lambda s: pos[s.id])
 
-        from collections import defaultdict
+        ledgers = await self.repo.list_ledgers_class_fee_for_students(
+            school_id=school_id,
+            standard_id=standard_id,
+            academic_year_id=resolved_year_id,
+            student_ids=page_ids,
+        )
         student_ledgers: dict[str, list] = defaultdict(list)
         for ledger in ledgers:
             student_ledgers[str(ledger.student_id)].append(ledger)
@@ -1694,7 +1712,11 @@ class FeeService:
         def _resolve_cycle(installments: list[StudentInstallmentSummary]) -> str:
             if not installments:
                 return "UNASSIGNED"
-            names = [i.installment_name.lower() for i in installments if i.installment_name]
+            names = [
+                i.installment_name.lower()
+                for i in installments
+                if i.installment_name
+            ]
             if any("month" in n for n in names):
                 return "MONTHLY"
             if any("quarter" in n for n in names):
@@ -1709,7 +1731,9 @@ class FeeService:
                 return "YEARLY"
             return "CUSTOM"
 
-        def _resolve_status(has_overdue: bool, total_paid: float, total_outstanding: float) -> str:
+        def _resolve_status(
+            has_overdue: bool, total_paid: float, total_outstanding: float
+        ) -> str:
             if has_overdue:
                 return FeeStatus.OVERDUE.value
             if total_outstanding <= 0.01 and (total_paid > 0):
@@ -1719,7 +1743,7 @@ class FeeService:
             return FeeStatus.PENDING.value
 
         items: list[StudentFeeRow] = []
-        grand_billed = grand_paid = grand_outstanding = 0.0
+        page_billed = page_paid = page_outstanding = 0.0
 
         for student in students:
             student_id_str = str(student.id)
@@ -1744,7 +1768,9 @@ class FeeService:
                 fee_head = ""
                 if ledger.fee_structure:
                     cfh = (ledger.fee_structure.custom_fee_head or "").strip()
-                    fee_head = cfh if cfh else str(ledger.fee_structure.fee_category.value)
+                    fee_head = (
+                        cfh if cfh else str(ledger.fee_structure.fee_category.value)
+                    )
 
                 installments.append(
                     StudentInstallmentSummary(
@@ -1761,23 +1787,22 @@ class FeeService:
                 )
 
             total_outstanding = max(total_billed - total_paid, 0.0)
-            student_status = _resolve_status(has_overdue, total_paid, total_outstanding)
-            if status_filter and student_status != status_filter.upper():
-                continue
-
+            student_status = _resolve_status(
+                has_overdue, total_paid, total_outstanding
+            )
             cycle = _resolve_cycle(installments)
-            if payment_cycle and cycle != payment_cycle.strip().upper():
-                continue
-            grand_billed += total_billed
-            grand_paid += total_paid
-            grand_outstanding += total_outstanding
+            page_billed += total_billed
+            page_paid += total_paid
+            page_outstanding += total_outstanding
 
             items.append(
                 StudentFeeRow(
                     student_id=student_id_str,
                     student_name=student.student_name,
                     admission_number=student.admission_number,
-                    standard_name=student.standard.name if student.standard else None,
+                    standard_name=student.standard.name
+                    if student.standard
+                    else None,
                     section=student.section,
                     parent_name=student.parent.user.full_name
                     if student.parent and student.parent.user
@@ -1799,12 +1824,13 @@ class FeeService:
                 )
             )
 
-        items.sort(key=lambda r: r.admission_number or "")
-
         return ClassFeeStudentListResponse(
             items=items,
-            total=len(items),
-            total_billed=round(grand_billed, 2),
-            total_paid=round(grand_paid, 2),
-            total_outstanding=round(grand_outstanding, 2),
+            total=total,
+            page=eff_page,
+            page_size=eff_size,
+            total_pages=total_pages,
+            total_billed=round(page_billed, 2),
+            total_paid=round(page_paid, 2),
+            total_outstanding=round(page_outstanding, 2),
         )

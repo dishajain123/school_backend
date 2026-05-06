@@ -255,6 +255,10 @@ class StudentFeeRow(BaseModel):
 class ClassFeeStudentListResponse(BaseModel):
     items: list[StudentFeeRow]
     total: int
+    page: int = 1
+    page_size: int = 50
+    total_pages: int = 1
+    # Summed only for students in ``items`` (current page), not the whole class.
     total_billed: float = 0.0
     total_paid: float = 0.0
     total_outstanding: float = 0.0

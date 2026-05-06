@@ -174,11 +174,17 @@ async def list_class_fee_students(
         None, description="MONTHLY|QUARTERLY|YEARLY|CUSTOM|UNASSIGNED"
     ),
     status: Optional[str] = Query(None, description="PENDING|PARTIAL|PAID|OVERDUE"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=100),
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Admin: one row per student for a class, with parent info and installment breakdown.
+
+    Filters and pagination are evaluated in the database (count + page of student IDs),
+    then ledger lines are loaded only for that page. Aggregate money fields on the
+    response refer to the current page only.
     Automatically refreshes overdue statuses before returning.
     """
     _assert_fee_read(current_user)
@@ -189,6 +195,8 @@ async def list_class_fee_students(
         section=section,
         payment_cycle=payment_cycle,
         status_filter=status,
+        page=page,
+        page_size=page_size,
     )
 
 

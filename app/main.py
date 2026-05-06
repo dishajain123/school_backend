@@ -24,20 +24,19 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    setup_rate_limiter(app)
+    # Middleware (correct order)
     app.add_middleware(RequestIdMiddleware)
     app.add_middleware(ApiUsageLoggingMiddleware)
-    # Keep CORS outermost so even error responses include CORS headers.
+    setup_rate_limiter(app)
     setup_cors(app)
 
-    # Register exception handlers so all errors return consistent JSON.
-    # Order does not override MRO: specific types match before the generic Exception handler.
+    # Exception handlers
     app.add_exception_handler(AppException, app_exception_handler)
     app.add_exception_handler(RequestValidationError, validation_exception_handler)
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)
     app.add_exception_handler(Exception, unhandled_exception_handler)
 
-    @app.get("/")
+    @app.get("/health", tags=["Health"])
     async def health_check():
         return {"status": "ok"}
 
@@ -45,7 +44,7 @@ def create_app() -> FastAPI:
     app.include_router(api_router, prefix="/api/v1")
 
     from app.ws.chat_router import ws_router
-    app.include_router(ws_router, prefix="/api/v1")
+    app.include_router(ws_router, prefix="/api/v1/ws")
 
     return app
 

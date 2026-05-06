@@ -4,7 +4,17 @@ import uuid
 from datetime import date
 from typing import Optional
 
-from sqlalchemy import select, and_, update, func, distinct, delete
+from sqlalchemy import (
+    String,
+    and_,
+    case,
+    delete,
+    func,
+    literal,
+    or_,
+    select,
+    update,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -321,4 +331,212 @@ class FeeRepository:
             )
             .order_by(Payment.payment_date.desc(), Payment.created_at.desc())
         )
+        return list(result.scalars().all())
+
+    # ------------------------------------------------------------------
+    # Class fee student list (admin console) — DB-level pagination
+    # ------------------------------------------------------------------
+
+    def _class_fee_rollup_subquery(
+        self,
+        *,
+        school_id: uuid.UUID,
+        standard_id: uuid.UUID,
+        academic_year_id: uuid.UUID,
+    ):
+        """
+        One row per student_id with ledger aggregates for structures in
+        this standard + academic year only (matches legacy list behavior).
+        """
+        _str = String(20)
+        od_ct = func.coalesce(
+            func.sum(
+                case((FeeLedger.status == FeeStatus.OVERDUE, 1), else_=0)
+            ),
+            0,
+        ).label("od_ct")
+        mh = func.coalesce(
+            func.sum(
+                case((FeeLedger.installment_name.ilike("%month%"), 1), else_=0)
+            ),
+            0,
+        ).label("mh")
+        qh = func.coalesce(
+            func.sum(
+                case((FeeLedger.installment_name.ilike("%quarter%"), 1), else_=0)
+            ),
+            0,
+        ).label("qh")
+        yh = func.coalesce(
+            func.sum(
+                case((FeeLedger.installment_name.ilike("%year%"), 1), else_=0)
+            ),
+            0,
+        ).label("yh")
+        return (
+            select(
+                FeeLedger.student_id.label("student_id"),
+                func.coalesce(func.sum(FeeLedger.total_amount), 0).label("tb"),
+                func.coalesce(func.sum(FeeLedger.paid_amount), 0).label("tp"),
+                func.count(FeeLedger.id).label("lcnt"),
+                od_ct,
+                mh,
+                qh,
+                yh,
+            )
+            .join(FeeStructure, FeeStructure.id == FeeLedger.fee_structure_id)
+            .where(
+                FeeLedger.school_id == school_id,
+                FeeStructure.academic_year_id == academic_year_id,
+                FeeStructure.standard_id == standard_id,
+            )
+            .group_by(FeeLedger.student_id)
+        ).subquery()
+
+    async def count_and_page_class_fee_student_ids(
+        self,
+        *,
+        school_id: uuid.UUID,
+        standard_id: uuid.UUID,
+        academic_year_id: uuid.UUID,
+        section: Optional[str],
+        payment_cycle: Optional[str],
+        status_filter: Optional[str],
+        page: int,
+        page_size: int,
+    ) -> tuple[int, list[uuid.UUID], int, int]:
+        """
+        Applies the same derived status / payment-cycle rules as FeeService
+        (mirrored in SQL), counts matching students, returns one page of IDs
+        ordered by admission_number ascending.
+
+        Returns ``(total_matches, student_ids, effective_page, effective_page_size)``.
+        """
+        R = self._class_fee_rollup_subquery(
+            school_id=school_id,
+            standard_id=standard_id,
+            academic_year_id=academic_year_id,
+        )
+
+        tb_c = func.coalesce(R.c.tb, 0)
+        tp_c = func.coalesce(R.c.tp, 0)
+        lcnt_c = func.coalesce(R.c.lcnt, 0)
+        mh_c = func.coalesce(R.c.mh, 0)
+        qh_c = func.coalesce(R.c.qh, 0)
+        yh_c = func.coalesce(R.c.yh, 0)
+
+        outstanding = func.greatest(tb_c - tp_c, 0)
+        has_overdue = func.coalesce(R.c.od_ct, 0) >= 1
+
+        _pay = String(24)
+        rollup_cycle = case(
+            (lcnt_c == 0, literal("UNASSIGNED", type_=_pay)),
+            (mh_c > 0, literal("MONTHLY", type_=_pay)),
+            (qh_c > 0, literal("QUARTERLY", type_=_pay)),
+            (yh_c > 0, literal("YEARLY", type_=_pay)),
+            (lcnt_c >= 10, literal("MONTHLY", type_=_pay)),
+            (lcnt_c == 4, literal("QUARTERLY", type_=_pay)),
+            (lcnt_c <= 2, literal("YEARLY", type_=_pay)),
+            else_=literal("CUSTOM", type_=_pay),
+        )
+
+        rollup_status = case(
+            (has_overdue, literal("OVERDUE", type_=_pay)),
+            (
+                and_(outstanding <= 0.01, tp_c > 0),
+                literal("PAID", type_=_pay),
+            ),
+            (
+                and_(tp_c > 0, outstanding > 0.01),
+                literal("PARTIAL", type_=_pay),
+            ),
+            else_=literal("PENDING", type_=_pay),
+        )
+
+        year_rel = or_(
+            Student.academic_year_id == academic_year_id,
+            Student.academic_year_id.is_(None),
+        )
+        stu_where = and_(
+            Student.school_id == school_id,
+            Student.standard_id == standard_id,
+            year_rel,
+        )
+        if section is not None and section.strip():
+            stu_where = and_(stu_where, Student.section == section.strip())
+
+        filtered = (
+            select(
+                Student.id.label("student_id"),
+                Student.admission_number.label("adm"),
+            )
+            .select_from(Student)
+            .outerjoin(R, R.c.student_id == Student.id)
+            .where(stu_where)
+        )
+
+        if status_filter and status_filter.strip():
+            filtered = filtered.where(
+                rollup_status == status_filter.strip().upper()
+            )
+        if payment_cycle and payment_cycle.strip():
+            filtered = filtered.where(
+                rollup_cycle == payment_cycle.strip().upper()
+            )
+
+        filtered_sq = filtered.subquery()
+
+        count_stmt = select(func.count()).select_from(filtered_sq)
+        total = int((await self.db.execute(count_stmt)).scalar_one() or 0)
+
+        safe_size = max(1, min(page_size, 100))
+        safe_page = max(1, page)
+        total_pages = max(1, math.ceil(total / safe_size)) if total else 1
+        if total and safe_page > total_pages:
+            safe_page = total_pages
+        offset = (safe_page - 1) * safe_size
+
+        page_stmt = (
+            select(filtered_sq.c.student_id)
+            .select_from(filtered_sq)
+            .order_by(filtered_sq.c.adm.asc())
+            .offset(offset)
+            .limit(safe_size)
+        )
+        rows = (await self.db.execute(page_stmt)).scalars().all()
+
+        return total, list(rows), safe_page, safe_size
+
+    async def list_ledgers_class_fee_for_students(
+        self,
+        *,
+        school_id: uuid.UUID,
+        standard_id: uuid.UUID,
+        academic_year_id: uuid.UUID,
+        student_ids: list[uuid.UUID],
+    ) -> list[FeeLedger]:
+        """Ledgers for given students, scoped to class structures only."""
+        if not student_ids:
+            return []
+        stmt = (
+            select(FeeLedger)
+            .join(FeeStructure, FeeStructure.id == FeeLedger.fee_structure_id)
+            .where(
+                FeeLedger.school_id == school_id,
+                FeeStructure.academic_year_id == academic_year_id,
+                FeeStructure.standard_id == standard_id,
+                FeeLedger.student_id.in_(student_ids),
+            )
+            .order_by(
+                FeeLedger.student_id.asc(),
+                FeeLedger.due_date.asc().nullsfirst(),
+                FeeLedger.created_at.asc(),
+            )
+        )
+        stmt = stmt.options(
+            selectinload(FeeLedger.fee_structure).selectinload(
+                FeeStructure.standard
+            ),
+        )
+        result = await self.db.execute(stmt)
         return list(result.scalars().all())

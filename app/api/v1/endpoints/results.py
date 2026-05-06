@@ -46,6 +46,10 @@ async def list_exams(
     student_id: Optional[uuid.UUID] = Query(None),
     academic_year_id: Optional[uuid.UUID] = Query(None),
     standard_id: Optional[uuid.UUID] = Query(None),
+    include_class_exams: bool = Query(
+        False,
+        description="When true for student/parent, return all exams defined for the student's class.",
+    ),
     current_user: CurrentUser = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -54,6 +58,7 @@ async def list_exams(
         student_id=student_id,
         academic_year_id=academic_year_id,
         standard_id=standard_id,
+        include_class_exams=include_class_exams,
     )
 
 

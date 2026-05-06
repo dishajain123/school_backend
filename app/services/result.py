@@ -505,6 +505,7 @@ class ResultService:
         student_id: Optional[uuid.UUID],
         academic_year_id: Optional[uuid.UUID] = None,
         standard_id: Optional[uuid.UUID] = None,
+        include_class_exams: bool = False,
     ) -> list[ExamResponse]:
         school_id = self._ensure_school(current_user)
 
@@ -615,7 +616,34 @@ class ResultService:
                 reverse=True,
             )
         else:
-            if current_user.role in (RoleEnum.STUDENT, RoleEnum.PARENT) and (
+            if (
+                include_class_exams
+                and current_user.role in (RoleEnum.STUDENT, RoleEnum.PARENT)
+                and resolved_student_id is not None
+            ):
+                learner_row = await self.db.execute(
+                    select(Student.standard_id).where(
+                        and_(
+                            Student.id == resolved_student_id,
+                            Student.school_id == school_id,
+                        )
+                    )
+                )
+                learner_standard_id = learner_row.scalar_one_or_none()
+                if learner_standard_id is None:
+                    return []
+                if standard_id is not None and standard_id != learner_standard_id:
+                    raise ForbiddenException(
+                        "You can only view exams for your class"
+                    )
+                exams = await self.repo.list_exams(
+                    school_id=school_id,
+                    academic_year_id=academic_year_id,
+                    standard_id=learner_standard_id,
+                    student_id=None,
+                    published_only=False,
+                )
+            elif current_user.role in (RoleEnum.STUDENT, RoleEnum.PARENT) and (
                 resolved_student_id is not None
             ):
                 exams = await self._list_exams_for_learner(
