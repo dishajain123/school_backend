@@ -13,6 +13,12 @@ env/
 .env
 .env.local
 .env.*.local
+.env.probe
 
 # OS / editor noise
 .DS_Store
+
+# Runtime / local generated artifacts
+local_storage/
+.pytest_cache/
+*.log

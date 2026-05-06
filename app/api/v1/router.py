@@ -1,7 +1,3 @@
-# 🔁 UPDATED — app/api/v1/router.py
-# CHANGE: added my_class_router import + include_router call
-# All existing lines preserved exactly.
-
 from fastapi import APIRouter
 
 from app.api.v1.endpoints.academic_years import router as academic_years_router
@@ -16,7 +12,7 @@ from app.api.v1.endpoints.chat import router as chat_router
 from app.api.v1.endpoints.complaints import router as complaints_router
 from app.api.v1.endpoints.diary import router as diary_router
 from app.api.v1.endpoints.documents import router as documents_router
-from app.api.v1.endpoints.enrollments import router as enrollments_router   # Phase 6/7
+from app.api.v1.endpoints.enrollments import router as enrollments_router
 from app.api.v1.endpoints.exam_schedule import router as exam_schedule_router
 from app.api.v1.endpoints.fees import router as fees_router
 from app.api.v1.endpoints.files import router as files_router
@@ -25,13 +21,12 @@ from app.api.v1.endpoints.health import router as health_router
 from app.api.v1.endpoints.homework import router as homework_router
 from app.api.v1.endpoints.leave import router as leave_router
 from app.api.v1.endpoints.masters import router as masters_router
-# 🔥 NEW
 from app.api.v1.endpoints.my_class import router as my_class_router
 from app.api.v1.endpoints.notifications import router as notifications_router
 from app.api.v1.endpoints.parents import router as parents_router
 from app.api.v1.endpoints.profile import router as profile_router
 from app.api.v1.endpoints.principal_reports import router as principal_reports_router
-from app.api.v1.endpoints.promotions import router as promotions_router     # Phase 7
+from app.api.v1.endpoints.promotions import router as promotions_router
 from app.api.v1.endpoints.registrations import router as registrations_router
 from app.api.v1.endpoints.results import router as results_router
 from app.api.v1.endpoints.role_profiles import router as role_profiles_router
@@ -56,7 +51,7 @@ api_router.include_router(chat_router)
 api_router.include_router(complaints_router)
 api_router.include_router(diary_router)
 api_router.include_router(documents_router)
-api_router.include_router(enrollments_router)        # Phase 6/7
+api_router.include_router(enrollments_router)
 api_router.include_router(exam_schedule_router)
 api_router.include_router(fees_router)
 api_router.include_router(files_router)
@@ -65,13 +60,12 @@ api_router.include_router(health_router)
 api_router.include_router(homework_router)
 api_router.include_router(leave_router)
 api_router.include_router(masters_router)
-# 🔥 NEW
 api_router.include_router(my_class_router)
 api_router.include_router(notifications_router)
 api_router.include_router(parents_router)
 api_router.include_router(profile_router)
 api_router.include_router(principal_reports_router)
-api_router.include_router(promotions_router)         # Phase 7
+api_router.include_router(promotions_router)
 api_router.include_router(results_router)
 api_router.include_router(registrations_router)
 api_router.include_router(role_profiles_router)
